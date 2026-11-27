@@ -1,4 +1,4 @@
-import { CITY_TZ, fromLocal, temporaryPresenceWindow, type City } from "@thenetwork/core";
+import { CITY_TZ, fromLocal, isCity, localParts, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
   decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
@@ -7,9 +7,41 @@ import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 import { presenceOf } from "./snapshot.ts";
 
-const CITY_NAME: Record<City, string> = { nyc: "New York City", sf: "San Francisco", la: "Los Angeles" };
+const CITY_NAME: Record<City, string> = {
+  nyc: "New York City",
+  sf: "San Francisco",
+  la: "Los Angeles",
+  chicago: "Chicago",
+  miami: "Miami",
+};
+const MONTHS: Record<string, number> = {
+  january: 1, jan: 1, february: 2, feb: 2, march: 3, mar: 3, april: 4, apr: 4,
+  may: 5, june: 6, jun: 6, july: 7, jul: 7, august: 8, aug: 8,
+  september: 9, sept: 9, sep: 9, october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
+};
+const MONTH_RX = Object.keys(MONTHS).sort((a, b) => b.length - a.length).join("|");
+const NATURAL_SAME_MONTH = new RegExp(
+  `^(?:from )?(${MONTH_RX})\\.? (\\d{1,2})(?:st|nd|rd|th)?\\s*(?:-|–|—|to|until|through|thru)\\s*(\\d{1,2})(?:st|nd|rd|th)?(?:,? ([1-9]\\d{3}))?$`,
+  "i",
+);
+const NATURAL_TWO_MONTHS = new RegExp(
+  `^(?:from )?(${MONTH_RX})\\.? (\\d{1,2})(?:st|nd|rd|th)?(?:,? ([1-9]\\d{3}))?\\s*(?:-|–|—|to|until|through|thru)\\s*(${MONTH_RX})\\.? (\\d{1,2})(?:st|nd|rd|th)?(?:,? ([1-9]\\d{3}))?$`,
+  "i",
+);
 const EMPTY_WINDOW: PresenceWindow = { from: 0, to: 0 };
 type TravelCommand = { city: City; dates?: { from: string; to: string; window: PresenceWindow } };
+
+function isoDate(year: number, month: number, day: number): string | undefined {
+  const iso = `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const date = new Date(`${iso}T00:00:00Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === iso ? iso : undefined;
+}
+
+function nextIsoDay(iso: string): string | undefined {
+  const date = new Date(`${iso}T00:00:00Z`);
+  if (!Number.isFinite(date.getTime())) return;
+  return new Date(date.getTime() + 86_400_000).toISOString().slice(0, 10);
+}
 
 function localMidnight(input: string, city: City): number | undefined {
   const date = new Date(`${input}T00:00:00Z`);
@@ -17,19 +49,65 @@ function localMidnight(input: string, city: City): number | undefined {
   return fromLocal(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate(), 0, CITY_TZ[city]);
 }
 
+function parseNaturalDates(tail: string, city: City, now?: number): TravelCommand["dates"] | undefined {
+  const same = NATURAL_SAME_MONTH.exec(tail);
+  const two = !same ? NATURAL_TWO_MONTHS.exec(tail) : null;
+  if (!same && !two) return;
+  let startMonth: number, startDay: number, endMonth: number, endDay: number;
+  let explicitStartYear: number | undefined, explicitEndYear: number | undefined;
+  if (same) {
+    startMonth = MONTHS[same[1]!.toLowerCase()]!;
+    startDay = Number(same[2]);
+    endMonth = startMonth;
+    endDay = Number(same[3]);
+    if (same[4]) explicitStartYear = explicitEndYear = Number(same[4]);
+  } else {
+    startMonth = MONTHS[two![1]!.toLowerCase()]!;
+    startDay = Number(two![2]);
+    endMonth = MONTHS[two![4]!.toLowerCase()]!;
+    endDay = Number(two![5]);
+    if (two![3]) explicitStartYear = Number(two![3]);
+    if (two![6]) explicitEndYear = Number(two![6]);
+  }
+  const baseYear = explicitStartYear ?? explicitEndYear ?? (now !== undefined ? localParts(now, CITY_TZ[city]).year : undefined);
+  if (baseYear === undefined) return;
+  const resolveForYear = (startYear: number) => {
+    const endYear = explicitEndYear ?? (endMonth < startMonth || (endMonth === startMonth && endDay < startDay) ? startYear + 1 : startYear);
+    const fromIso = isoDate(startYear, startMonth, startDay);
+    const inclusiveEndIso = isoDate(endYear, endMonth, endDay);
+    if (!fromIso || !inclusiveEndIso) return;
+    const toIso = nextIsoDay(inclusiveEndIso);
+    if (!toIso) return;
+    const start = localMidnight(fromIso, city);
+    const end = localMidnight(toIso, city);
+    if (start === undefined || end === undefined || start >= end) return;
+    return { from: fromIso, to: toIso, window: { from: start, to: end } };
+  };
+  let resolved = resolveForYear(explicitStartYear ?? baseYear);
+  if (resolved && explicitStartYear === undefined && explicitEndYear === undefined && now !== undefined && resolved.window.to <= now) {
+    resolved = resolveForYear(baseYear + 1);
+  }
+  return resolved;
+}
+
 /** A direct first-person travel statement. Only exact dates are eligible to write. */
-export function travelPresenceCommand(text: string): TravelCommand | undefined {
+export function travelPresenceCommand(text: string, now?: number): TravelCommand | undefined {
   const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
-  const declaration = /^(?:i will|i['’]ll) be in (new york city|new york|nyc|san francisco|sf|los angeles|la)(?: (.*))?$/i.exec(line);
+  const declaration = /^(?:(?:i will|i['’]ll) be in|(?:i am|i['’]m) (?:visiting|in|going to|heading to|traveling to|travelling to)) (new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)(?: (.*))?$/i.exec(line);
   if (!declaration) return;
   const named = declaration[1]!.toLowerCase();
-  const city = homeCityOf(named) ?? (named === "la" || named === "los angeles" ? "la" : undefined);
+  const resolved = homeCityOf(named) ?? resolveCity(named);
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
   if (!city) return;
-  const dates = /^from ([1-9]\d{3}-\d{2}-\d{2}) (?:until|to) ([1-9]\d{3}-\d{2}-\d{2})$/i.exec(declaration[2] ?? "");
-  if (!dates) return { city };
-  const from = dates[1]!, to = dates[2]!;
-  const start = localMidnight(from, city), end = localMidnight(to, city);
-  return start === undefined || end === undefined ? { city } : { city, dates: { from, to, window: { from: start, to: end } } };
+  const tail = (declaration[2] ?? "").trim();
+  const dates = /^from ([1-9]\d{3}-\d{2}-\d{2}) (?:until|to) ([1-9]\d{3}-\d{2}-\d{2})$/i.exec(tail);
+  if (dates) {
+    const from = dates[1]!, to = dates[2]!;
+    const start = localMidnight(from, city), end = localMidnight(to, city);
+    return start === undefined || end === undefined ? { city } : { city, dates: { from, to, window: { from: start, to: end } } };
+  }
+  const natural = tail ? parseNaturalDates(tail, city, now) : undefined;
+  return natural ? { city, dates: natural } : { city };
 }
 
 /** Same canonical and app-local guard on the write and on any later reply replay. */

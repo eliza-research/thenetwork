@@ -22,7 +22,7 @@
 
 import { RealClock } from "../../../../packages/core/src/clock.ts";
 import { canAuthorizeSpend } from "../../../../packages/core/src/generated/marketingPolicy.ts";
-import { RENTAHUMAN_MCP_ENDPOINT } from "../constants.ts";
+import { DEFAULT_APOLLO_CENTS_PER_CREDIT, RENTAHUMAN_MCP_ENDPOINT } from "../constants.ts";
 import type { Campaign, Clock, FetchFn, ImplementationTier } from "../types.ts";
 
 export type { FetchFn };
@@ -49,7 +49,8 @@ export type PaidAdapterId =
   | "qr_links"
   | "events"
   | "media_video"
-  | "payouts";
+  | "payouts"
+  | "enrichment";
 
 export type AdapterReadiness = "ready" | "dry_run" | "missing_credentials";
 
@@ -226,6 +227,17 @@ export interface PayoutInput {
   products?: string[];
 }
 
+export interface ApolloEnrichmentInput {
+  apolloPersonId?: string;
+  firstName?: string;
+  lastName?: string;
+  organizationName?: string;
+  domain?: string;
+  linkedinUrl?: string;
+  email?: string;
+  creditsRequested?: number;
+}
+
 export interface PaidAdapterInputMap {
   email: EmailSendInput;
   sms_voice: SmsVoiceInput;
@@ -235,6 +247,7 @@ export interface PaidAdapterInputMap {
   events: EventsInput;
   media_video: MediaVideoInput;
   payouts: PayoutInput;
+  enrichment: ApolloEnrichmentInput;
 }
 
 export interface PaidAdapter<TInput, TResult = Record<string, unknown>> {
@@ -1712,6 +1725,85 @@ const PAYOUTS_DEF: AdapterDefinition<PayoutInput> = {
   },
 };
 
+const ENRICHMENT_DEF: AdapterDefinition<ApolloEnrichmentInput> = {
+  id: "enrichment",
+  label: "Apollo.io B2B Contact Enrichment (Work Email Only)",
+  tier: 3,
+  providers: [
+    {
+      id: "apollo",
+      label: "Apollo.io",
+      requiredEnv: ["APOLLO_API_KEY"],
+      endpoint: "https://api.apollo.io/api/v1/people/match",
+    },
+  ],
+  estimateCostCents: (input) => {
+    const credits = Math.max(1, Math.min(10, Math.round(input.creditsRequested ?? 1)));
+    return credits * DEFAULT_APOLLO_CENTS_PER_CREDIT;
+  },
+  explicitChargeCents: (input) => {
+    const credits = Math.max(1, Math.min(10, Math.round(input.creditsRequested ?? 1)));
+    return credits * DEFAULT_APOLLO_CENTS_PER_CREDIT;
+  },
+  validateInput: (input) => {
+    const hasLookup = Boolean(
+      input.apolloPersonId?.trim() ||
+        input.linkedinUrl?.trim() ||
+        input.email?.trim() ||
+        (input.firstName?.trim() && (input.lastName?.trim() || input.organizationName?.trim() || input.domain?.trim())),
+    );
+    if (!hasLookup) {
+      return "Apollo enrichment requires apolloPersonId, linkedinUrl, email, or firstName + lastName/organizationName/domain.";
+    }
+    if (input.linkedinUrl && !isValidHttpsUrl(input.linkedinUrl)) {
+      return "Apollo enrichment linkedinUrl must be a valid HTTP(S) URL.";
+    }
+    return null;
+  },
+  buildDryRunPayload: (providerId, input, amountCents) => ({
+    provider: providerId,
+    operation: "people_match",
+    apolloPersonId: input.apolloPersonId ?? null,
+    linkedinUrl: input.linkedinUrl ?? null,
+    domain: input.domain ?? null,
+    reveal_personal_emails: false,
+    reveal_phone_number: false,
+    amountCents,
+  }),
+  async dispatchLive(provider, input, _authorizedAmountCents, idempotencyKey, env, fetchFn) {
+    const res = await requestJson(
+      fetchFn,
+      "POST",
+      provider.endpoint,
+      {
+        "x-api-key": env["APOLLO_API_KEY"] ?? "",
+        "cache-control": "no-cache",
+      },
+      {
+        id: input.apolloPersonId,
+        first_name: input.firstName,
+        last_name: input.lastName,
+        organization_name: input.organizationName,
+        domain: input.domain,
+        linkedin_url: input.linkedinUrl,
+        email: input.email,
+        reveal_personal_emails: false,
+        reveal_phone_number: false,
+      },
+    );
+    if (!res.ok) throw new Error(`Apollo HTTP ${res.status}`);
+    const person =
+      res.json["person"] && typeof res.json["person"] === "object"
+        ? (res.json["person"] as Record<string, unknown>)
+        : null;
+    const ref =
+      typeof person?.["id"] === "string"
+        ? `apollo:${person["id"]}`
+        : `apollo:${idempotencyKey}`;
+    return { externalRef: ref, data: res.json };
+  },
+};
+
 /**
  * Unified Tier-3/4 Credit-Card Plug-and-Play Paid Adapter Registry.
  * Safe at $0 by default: every execute() call checks `canAuthorizeSpend(...)`,
@@ -1746,6 +1838,7 @@ export class PaidAdapterRegistry {
       events: buildAdapter(EVENTS_DEF, runtime),
       media_video: buildAdapter(MEDIA_VIDEO_DEF, runtime),
       payouts: buildAdapter(PAYOUTS_DEF, runtime),
+      enrichment: buildAdapter(ENRICHMENT_DEF, runtime),
     };
   }
 

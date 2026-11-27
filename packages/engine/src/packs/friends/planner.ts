@@ -30,7 +30,7 @@
 //   likely free; the probe carries them and the group books the option most yes-sayers picked.
 //
 // Engine-visible inputs only (the World, availability evidence, the Network's own outcome records).
-import type { Category, MemberId } from "@thenetwork/core";
+import type { Category, City, MemberId } from "@thenetwork/core";
 import { ageSideOf, CITY_TZ, DAY, HOUR, MINUTE, fromLocal, localParts } from "@thenetwork/core";
 import { teenRosterMaximum, teenSideFits } from "../../../../core/src/generated/friendIntroAge.ts";
 import {
@@ -45,6 +45,7 @@ import { candidateSlots, type TimeSlot } from "../../attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "../../config.ts";
 import { isMinor, memberReason, pairReason, teenGroupReason } from "../../filters.ts";
 import { sha256 } from "../../hash.ts";
+import { humanVectorOf, spendTierRank, venueCostFitsTier, type SpendComfortTier } from "../../humanVector.ts";
 import { circleEvidence, type Circle } from "../../match/circles.ts";
 import { compareText } from "../../match/profile.ts";
 import {
@@ -54,7 +55,7 @@ import {
 import { World } from "../../world.ts";
 import { activityById, type ActivityType, type Venue } from "../network/activities.ts";
 import { familiarCircle } from "./generators.ts";
-import { chooseVenue, FRIENDS_CITY, hood, NEIGHBORHOODS, transitMinutes, type Neighborhood } from "./geo.ts";
+import { chooseVenueForCity, cityNeighborhoods, cityZones, FRIENDS_CITY, hoodForCity, NEIGHBORHOODS, transitMinutes, transitMinutesInCity, type Neighborhood } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 import { friendsRosterVerified, friendsSeatVerified } from "./rules.ts";
 
@@ -133,6 +134,21 @@ const ZONE_HUB: ReadonlyMap<string, Neighborhood> = new Map(ZONES.map(zone => {
   return [zone, [...inZone].sort((x, y) => (worst(x) - worst(y)) || compareText(x.id, y.id))[0]!];
 }));
 
+const ZONE_HUB_CACHE = new Map<string, Neighborhood>();
+function zoneHubForCity(city: City, zone: string): Neighborhood | undefined {
+  if (city === "nyc") return ZONE_HUB.get(zone);
+  const key = `${city}:${zone}`;
+  let h = ZONE_HUB_CACHE.get(key);
+  if (!h) {
+    const inZone = cityNeighborhoods(city).filter(n => n.zone === zone);
+    if (!inZone.length) return undefined;
+    const worst = (cand: Neighborhood) => Math.max(...inZone.map(n => transitMinutesInCity(city, cand, n)));
+    h = [...inZone].sort((x, y) => (worst(x) - worst(y)) || compareText(x.id, y.id))[0]!;
+    ZONE_HUB_CACHE.set(key, h);
+  }
+  return h;
+}
+
 export type FriendsPlanSource = "crew_session" | "crew_offer" | "repeat" | "new" | "partner";
 export interface FriendsPlan extends Plan {
   /** Time options offered in the probe (the plan's window first). */
@@ -142,7 +158,8 @@ export interface FriendsPlan extends Plan {
   source: FriendsPlanSource;
 }
 export interface FriendsWeekInput {
-  now: number; tz: string;
+  now: number; tz?: string;
+  city?: City;
   evidence: ReadonlyMap<MemberId, PlanEvidence>;
   venues: readonly Venue[];
   /** Live crews (formed, opted in). */
@@ -154,6 +171,10 @@ export interface FriendsWeekInput {
   /** Serving can reject a repeat before its seats are reserved for the week. */
   repeatAllowed?: (plan: FriendsPlan) => boolean;
   lastPlannedAt?: ReadonlyMap<MemberId, number>;
+  /** Optional venue exclusions (e.g. visited/rejected/quarantined venues per member). */
+  venueExcluded?: (venueId: string, participants: readonly MemberId[]) => boolean;
+  /** Optional lowest budget ceiling for participants (priceTier <= maxBudgetTier). */
+  maxBudgetTierOf?: (participants: readonly MemberId[]) => number | undefined;
 }
 export interface FriendsWeek { sessions: FriendsPlan[]; offers: { crew: Crew; first: FriendsPlan }[]; repeats: FriendsPlan[]; plans: FriendsPlan[]; partners: FriendsPlan[] }
 
@@ -212,8 +233,15 @@ function seatWorld(w: World, seat: (id: MemberId) => boolean): World {
 /** The one weekly planner of friends.help (production and simulator). */
 export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPolicy = DEFAULT_FRIENDS_POLICY, pcfg: PlansConfig = FRIENDS_PLANS, att: AttentionConfig = DEFAULT_ATTENTION): FriendsWeek {
   const info = friendsInfo(w);
-  const { now, tz } = inp;
-  const homeOf = (id: MemberId): Neighborhood | undefined => info.get(id)?.home;
+  const city: City = inp.city ?? FRIENDS_CITY;
+  const now = inp.now;
+  const tz = inp.tz ?? CITY_TZ[city] ?? CITY_TZ.nyc;
+  const zones = city === "nyc" ? ZONES : cityZones(city);
+  const homeOf = (id: MemberId): Neighborhood | undefined => {
+    const fi = info.get(id);
+    if (!fi?.home) return undefined;
+    return fi.city && fi.city !== city ? undefined : fi.home;
+  };
   const tolOf = (id: MemberId) => info.get(id)?.tolerance ?? 40;
   const eligible = (id: MemberId) => !!w.get(id) && !planMemberReason(w, id);
   const teenTableMember = (id: MemberId) => isMinor(w, id) || teenSideFits(ageSideOf(w.get(id)!.m), w.minDay, w.maxDay);
@@ -269,14 +297,14 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   /** Estimated one-way minutes from a member's home to a place (45 when the place is unknown; 99 without a home). */
   const tripMinutes = (id: MemberId, at: Neighborhood | undefined): number => {
     const home = homeOf(id);
-    return home ? (at ? transitMinutes(home, at) : 45) : 99;
+    return home ? (at ? transitMinutesInCity(city, home, at) : 45) : 99;
   };
   /** The travel rule: an invitee's trip fits the stated tolerance (x slack). */
   const withinTravelLimit = (id: MemberId, minutes: number) => minutes <= tolOf(id) * pol.toleranceSlack;
   const tripFits = (id: MemberId, at: Neighborhood | undefined) => withinTravelLimit(id, tripMinutes(id, at));
   /** Some venue in the city offers the activity and is open for it at this time. */
   const venueOpenFor = (a: ActivityType, slot: TimeSlot, teen: boolean) =>
-    inp.venues.some(v => v.city === FRIENDS_CITY && v.activities.includes(a.id) && planPlaceOffered(teen, a, v) && venueOpen(v, slot, a.durationMin, tz, att));
+    inp.venues.some(v => v.city === city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v) && venueOpen(v, slot, a.durationMin, tz, att));
 
   const finish = (p: Plan, source: FriendsPlanSource): FriendsPlan | null => {
     const a = activityById.get(p.activityId);
@@ -289,9 +317,21 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (source === "new" || source === "partner") {
       const inv = new Map(p.invited.filter(id => homes.has(id)).map(id => [id, homes.get(id)!]));
       const minimumAge = Math.min(...p.invited.map(id => w.get(id)!.m.age));
-      const best = chooseVenue(inp.venues, inv, v => v.city === p.city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v)
-        && v.ageMin <= minimumAge && venueOpen(v, p.window, a.durationMin, tz, att), withinTravelLimit);
-      // A new plan without an open venue is not offered, so it holds no seats.
+      const maxBudget = inp.maxBudgetTierOf?.(p.invited);
+      let strictestBudget: SpendComfortTier | undefined;
+      if (!teen) {
+        for (const id of p.invited) {
+          const tier = humanVectorOf(w, id)?.horizontal.lifestyle.spendComfortTier;
+          if (tier === "free" || tier === "low") {
+            if (!strictestBudget || spendTierRank(tier) < spendTierRank(strictestBudget)) strictestBudget = tier;
+          }
+        }
+      }
+      const baseOk = (v: Venue) => v.city === p.city && v.activities.includes(a.id) && planPlaceOffered(teen, a, v)
+        && v.ageMin <= minimumAge && (maxBudget === undefined || v.priceTier <= maxBudget)
+        && !inp.venueExcluded?.(v.id, p.invited) && venueOpen(v, p.window, a.durationMin, tz, att);
+      const best = (strictestBudget ? chooseVenueForCity(p.city, inp.venues, inv, v => baseOk(v) && venueCostFitsTier(strictestBudget!, v.priceTier), withinTravelLimit) : undefined)
+        ?? chooseVenueForCity(p.city, inp.venues, inv, baseOk, withinTravelLimit);
       if (!best) return null;
       venue = best.venue;
     }
@@ -299,7 +339,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (!teen && venue && !planPlaceOffered(false, a, venue)) return null;
     // A recurring plan's previous venue must still be open for this session.
     if (venue && !venueOpen(venue, p.window, a.durationMin, tz, att)) return null;
-    const at = hood(venue?.area ?? p.place.area);
+    const at = hoodForCity(p.city, venue?.area ?? p.place.area);
     const minutes: Record<MemberId, number> = {};
     for (const id of homes.keys()) minutes[id] = tripMinutes(id, at);
     const fits = (id: MemberId) => tripFits(id, at);
@@ -371,7 +411,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     if (crew.handedOff) continue;
     const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
     // The pair values are read for the members the session can seat: eligible, and within travel tolerance.
-    const members = valuedSubset(crew.members.filter(id => eligible(id) && tripFits(id, hood(v?.area))));
+    const members = valuedSubset(crew.members.filter(id => eligible(id) && tripFits(id, hoodForCity(city, v?.area))));
     if (members.length < 2) continue;
     const p = crewSessionPlan(w, { ...crew, members }, now, v, pcfg);
     if (!p) continue;
@@ -383,8 +423,12 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   // 2. crew offers (after one great plan) and 3. same table again
   // "Would do it again" = rated it positively, or (mutualPositive) said "see again" about someone who
   // said it back: the private answers after the meetup (domain research C4 consent flow step 5).
+  const seeAgainSet = new Set<string>();
+  for (const f of w.feedback) {
+    if (f.wouldMeetAgain === true) seeAgainSet.add(`${f.from}|${f.about}|${f.opportunityId ?? ""}`);
+  }
   const mutualSee = (o: PlanOutcomeRecord) => {
-    const said = (a: MemberId, b: MemberId) => w.feedback.some(f => f.from === a && f.about === b && f.opportunityId === o.planId && f.wouldMeetAgain === true);
+    const said = (a: MemberId, b: MemberId) => seeAgainSet.has(`${a}|${b}|${o.planId}`);
     return o.attended.filter(a => o.attended.some(b => b !== a && said(a, b) && said(b, a)));
   };
   const recent = inp.outcomes.filter(o => now - o.at < pol.repeatWindowDays * DAY && o.at <= now)
@@ -394,7 +438,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
     const proposed = detectCrews(recent, [...inp.crews, ...inp.offered], id => w.get(id)?.isHost ?? false, pcfg);
     for (const crew of proposed) {
       const v = crew.venueId ? venueById.get(crew.venueId) : undefined;
-      const members = valuedSubset(crew.members.filter(id => eligible(id) && recurringAvailable(week, id) && tripFits(id, hood(v?.area))));
+      const members = valuedSubset(crew.members.filter(id => eligible(id) && recurringAvailable(week, id) && tripFits(id, hoodForCity(city, v?.area))));
       if (members.length < pcfg.crews.minMembers) continue;
       const c2: Crew = { ...crew, members, hostRotation: crew.hostRotation.filter(m => members.includes(m)).length ? crew.hostRotation.filter(m => members.includes(m)) : members };
       const p = crewSessionPlan(w, c2, now, v, pcfg);
@@ -424,7 +468,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const window = activityWindow(start, a.durationMin);
       const alternates = compatibleAlternates(ids, o.attended.filter(id => !ids.includes(id) && eligible(id) && recurringAvailable(week, id)), partner ? 0 : 2, window.end);
       const base: Plan = {
-        id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id, ...(v ? { venueId: v.id } : {}),
+        id: `plan_${sha256(`repeat|${o.planId}|${start}|${ids.join(",")}`).slice(0, 16)}`, city, activityId: a.id, ...(v ? { venueId: v.id } : {}),
         place: v ? { name: v.name, area: v.area } : { name: "the same spot" }, window,
         invited: ids, alternates, partner, repeatOf: o.planId,
         size: partner ? { min: 2, target: 2, max: 2 } : { min: 3, target: ids.length, max: 6 }, quorum: partner ? 2 : Math.min(3, ids.length),
@@ -450,7 +494,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   };
   const seatable = (id: MemberId) => inp.evidence.has(id) && now - (inp.lastPlannedAt?.get(id) ?? -Infinity) >= pcfg.memberCooldownDays * DAY;
   const open = (id: MemberId) => newPlanAvailable(week, id) && seatable(id) && eligible(id) && !!w.match.profileIn(id, "Friend");
-  const placeable = (w.pack.plans?.activities ?? []).filter(a => inp.venues.some(v => v.city === FRIENDS_CITY && v.activities.includes(a.id)));
+  const placeable = (w.pack.plans?.activities ?? []).filter(a => inp.venues.some(v => v.city === city && v.activities.includes(a.id)));
 
   // spec/groupFormation.md, "A primary circle values every pair and keeps a narrow standing spread"
   const friendLimits = laneLimits("Friend");
@@ -542,7 +586,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
         const { start } = window;
         const invited = table.members.slice(0, pcfg.size.max), alternates = table.members.slice(pcfg.size.max);
         const plan: Plan = {
-          id: `plan_${sha256(`table|${a.id}|${start}|${[...invited].sort().join(",")}|${now}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: a.id,
+          id: `plan_${sha256(`table|${a.id}|${start}|${[...invited].sort().join(",")}|${now}`).slice(0, 16)}`, city, activityId: a.id,
           place: { name: a.label }, window, invited, alternates, partner: false,
           size: { min: pcfg.size.min, target: invited.length, max: pcfg.size.max }, quorum: pcfg.quorum.group,
           probeDeadline: Math.min(start - pcfg.deadlineBeforeStartHours * HOUR, now + pcfg.probeWindowHours * HOUR),
@@ -566,22 +610,25 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
   // coffee open to anyone first, then stated activities, then activities in a family the member likes.
   const ids = [...inp.evidence.keys()].sort(compareText);
   const near = (zone: string, radius: number) => {
-    const hub = ZONE_HUB.get(zone)!;
-    return ids.filter(id => { const h = homeOf(id); return !!h && (h.zone === zone || transitMinutes(h, hub) <= radius); });
+    const hub = zoneHubForCity(city, zone);
+    if (!hub) return [];
+    return ids.filter(id => { const h = homeOf(id); return !!h && (h.zone === zone || transitMinutesInCity(city, h, hub) <= radius); });
   };
-  const inBorough = (borough: string) => ids.filter(id => homeOf(id)?.borough === borough);
+  const macroGroups: readonly { match: (h: Neighborhood) => boolean }[] =
+    city === "nyc" ? BOROUGHS.map(b => ({ match: (h: Neighborhood) => h.borough === b })) : [{ match: () => true }];
+  const inMacro = (grp: { match: (h: Neighborhood) => boolean }) => ids.filter(id => { const h = homeOf(id); return !!h && grp.match(h); });
   const universalFloor = Math.min(pcfg.minFit, pol.universalFit);
-  if (pol.universal) for (const radius of ZONE_RADII) for (const z of ZONES) tables(near(z, radius), true, universalFloor);
-  for (const radius of ZONE_RADII) for (const z of ZONES) tables(near(z, radius), false, pcfg.minFit);
-  for (const b of BOROUGHS) tables(inBorough(b), false, pcfg.minFit);
-  for (const z of ZONES) tables(near(z, ZONE_RADII[ZONE_RADII.length - 1]), pol.universal, pcfg.familyFit);
-  for (const b of BOROUGHS) tables(inBorough(b), pol.universal, pcfg.familyFit);
+  if (pol.universal) for (const radius of ZONE_RADII) for (const z of zones) tables(near(z, radius), true, universalFloor);
+  for (const radius of ZONE_RADII) for (const z of zones) tables(near(z, radius), false, pcfg.minFit);
+  for (const grp of macroGroups) tables(inMacro(grp), false, pcfg.minFit);
+  for (const z of zones) tables(near(z, ZONE_RADII[ZONE_RADII.length - 1]), pol.universal, pcfg.familyFit);
+  for (const grp of macroGroups) tables(inMacro(grp), pol.universal, pcfg.familyFit);
   // Last, members no larger table reached: a table of as few as size.min invitees is better than none.
-  for (const z of ZONES) tables(near(z, ZONE_RADII[ZONE_RADII.length - 1]), pol.universal, pcfg.familyFit, pcfg.size.min);
+  for (const z of zones) tables(near(z, ZONE_RADII[ZONE_RADII.length - 1]), pol.universal, pcfg.familyFit, pcfg.size.min);
   const teenPasses: readonly [boolean, number][] = [...(pol.universal ? [[true, universalFloor] as [boolean, number]] : []), [false, pcfg.minFit], [pol.universal, pcfg.familyFit]];
   for (const [universal, floor] of teenPasses) {
-    for (const radius of ZONE_RADII) for (const z of ZONES) tables(near(z, radius), universal, floor, pcfg.size.min, true);
-    for (const b of BOROUGHS) tables(inBorough(b), universal, floor, pcfg.size.min, true);
+    for (const radius of ZONE_RADII) for (const z of zones) tables(near(z, radius), universal, floor, pcfg.size.min, true);
+    for (const grp of macroGroups) tables(inMacro(grp), universal, floor, pcfg.size.min, true);
   }
 
   // 5. activity partners (one-to-one, intro cap): each plannable member's searched partners, the
@@ -611,7 +658,7 @@ export function planFriendsWeek(w: World, inp: FriendsWeekInput, pol: FriendsPol
       const window = slots[0]!.sl;
       const { start } = window;
       const plan: Plan = {
-        id: `plan_${sha256(`partner|${key}|${start}`).slice(0, 16)}`, city: FRIENDS_CITY, activityId: act.id, place: { name: act.label }, window,
+        id: `plan_${sha256(`partner|${key}|${start}`).slice(0, 16)}`, city, activityId: act.id, place: { name: act.label }, window,
         invited: [a, b], alternates: [], partner: true, size: { min: 2, target: 2, max: 2 }, quorum: 2, probeDeadline: start - pcfg.deadlineBeforeStartHours * HOUR,
         score: Math.round((1e4 * value) / pairValueScale) / 1e4, u: {}, familiar: {}, createdAt: now, category: "hobby",
       };

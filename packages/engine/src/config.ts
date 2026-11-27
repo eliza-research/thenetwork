@@ -93,6 +93,7 @@ export interface EngineConfig {
     screen: { enabled: boolean; topK: number; groupTopK: number; maxTokens: number };
     /** Pass 3 (deep review, judgeDeep.ts) on the best survivors of passes 1-2. Can only remove candidates. */
     deep: { enabled: boolean; topK: number; maxTokens: number };
+    postSelection?: boolean | { enabled?: boolean; minConfidence?: number; maxConfidence?: number; backups?: number };
   };
   selection: { maxProposalsPerCity: number; runLoadPenalty: number; exposureFloorShare: number; exposureDebtWeight: number; exposureDebtCap: number };
   inviteTtlMs: number; sameDayInviteTtlMs: number;
@@ -116,7 +117,7 @@ function defaultParticipationBudgets(): EngineConfig["budgets"] {
 export const DEFAULT_CONFIG: EngineConfig = {
   seed: 1,
   cities: ["sf", "nyc"],
-  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York" },
+  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles", chicago: "America/Chicago", miami: "America/New_York" },
   windowDays: 7,
   minOverlapHours: 3,
   ageMin: 18,
@@ -381,8 +382,35 @@ export function engineSupplyBudgets(att: AttentionConfig = DEFAULT_ATTENTION): E
   for (const st of Object.keys(att.caps) as ParticipationState[]) out[st] = { limit: att.caps[st].limit * Math.max(1, att.maxItems[st]), periodDays: att.caps[st].periodDays };
   return { budgets: out };
 }
+function stableStringifyConfig(v: unknown): string {
+  if (v === Infinity) return JSON.stringify("Infinity");
+  if (v === null || v === undefined) return "null";
+  const t = typeof v;
+  if (t === "number") return Number.isFinite(v as number) ? JSON.stringify(v) : "null";
+  if (t === "boolean" || t === "string") return JSON.stringify(v);
+  if (t !== "object") return "null";
+  if (Array.isArray(v)) {
+    const parts = new Array<string>(v.length);
+    for (let i = 0; i < v.length; i++) {
+      const el = v[i];
+      parts[i] = el === undefined || typeof el === "function" || typeof el === "symbol" ? "null" : stableStringifyConfig(el);
+    }
+    return `[${parts.join(",")}]`;
+  }
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o).sort();
+  const entries: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i]!;
+    const val = o[k];
+    if (val === undefined || typeof val === "function" || typeof val === "symbol") continue;
+    entries.push(`${JSON.stringify(k)}:${stableStringifyConfig(val)}`);
+  }
+  return `{${entries.join(",")}}`;
+}
+
 export function attentionConfigHash(cfg: AttentionConfig): string {
-  return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
+  return sha256(stableStringifyConfig(cfg)).slice(0, 16);
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -396,18 +424,52 @@ function merge<T>(base: T, over: any): T {
   return out;
 }
 
+export const POST_SELECTION_JUDGE_DEFAULTS = {
+  enabled: true,
+  minConfidence: 0.35,
+  maxConfidence: 0.72,
+  backups: 1,
+} as const;
+
+export function withPostSelectionJudge(
+  base: EngineConfigInput = {},
+  overrides: { enabled?: boolean; minConfidence?: number; maxConfidence?: number; backups?: number } = {},
+): EngineConfigInput {
+  return {
+    ...base,
+    judge: {
+      ...base.judge,
+      postSelection: {
+        ...POST_SELECTION_JUDGE_DEFAULTS,
+        ...(typeof base.judge?.postSelection === "object" ? base.judge.postSelection : {}),
+        ...overrides,
+      },
+    },
+  };
+}
+
 export function resolveConfig(input: EngineConfigInput = {}): EngineConfig {
   const cfg = merge(DEFAULT_CONFIG, input);
   if (cfg.exploration.rate < 0 || cfg.exploration.rate > cfg.exploration.maxShare)
     throw new Error(`exploration.rate must be within [0, maxShare=${cfg.exploration.maxShare}]`);
   if (cfg.group.minSize < 3 || cfg.group.maxSize > 6 || cfg.group.minSize > cfg.group.maxSize)
     throw new Error("group size must be within 3..6 (Section 33.4)");
+  if (cfg.judge.postSelection && typeof cfg.judge.postSelection === "object") {
+    const { minConfidence, maxConfidence, backups } = cfg.judge.postSelection;
+    if (minConfidence !== undefined && (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1))
+      throw new Error("judge.postSelection.minConfidence must be within [0, 1]");
+    if (maxConfidence !== undefined && (!Number.isFinite(maxConfidence) || maxConfidence < 0 || maxConfidence > 1))
+      throw new Error("judge.postSelection.maxConfidence must be within [0, 1]");
+    if (minConfidence !== undefined && maxConfidence !== undefined && minConfidence > maxConfidence)
+      throw new Error("judge.postSelection.minConfidence must be <= maxConfidence");
+    if (backups !== undefined && (!Number.isInteger(backups) || backups < 0 || backups > 3))
+      throw new Error("judge.postSelection.backups must be an integer within 0..3");
+  }
   return cfg;
 }
 
 export function configHash(cfg: EngineConfig): string {
-  // Infinity is not JSON; stringify it explicitly.
-  return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
+  return sha256(stableStringifyConfig(cfg)).slice(0, 16);
 }
 
 // ------------------------------------------------------------------------------------------------

@@ -28,7 +28,7 @@ import {
   llmAttemptIsPriced, meteredPhotoQuantity, otpCostBasis, photoRaterIsMetered, photoResultIsBillable, relayCostBasis,
 } from "../../core/src/generated/costLedger.ts";
 import type { Clock } from "@thenetwork/core";
-import type { ClientOptions, ResponseInfo } from "@thenetwork/core";
+import type { ClientOptions, FallbackInfo, ResponseInfo } from "@thenetwork/core";
 import type { AppId, AppInfo } from "../../platform/src/apps.ts";
 import type { OtpProvider } from "../../platform/src/otp.ts";
 import { retryParts, withRetry, type PhotoRater } from "../../platform/src/photos.ts";
@@ -220,15 +220,62 @@ export class CostLedger {
    * Hooks for a core LLM client (defaultLLM(ledger.llmHooks(app, "understand"))): one llm row per
    * HTTP attempt that the provider priced. Attempts with no cost (a timeout, a 5xx) write nothing.
    */
-  llmHooks(app: CostApp, purpose: string): Pick<ClientOptions, "onResponse"> {
+  llmHooks(app: CostApp, purpose: string): Pick<ClientOptions, "onResponse" | "onFallback"> {
+    let pendingFallbacks = 0;
+    let lastFallbackFrom: string | undefined;
+    let lastFallbackTo: string | undefined;
     return {
+      onFallback: (fb: FallbackInfo) => {
+        pendingFallbacks++;
+        lastFallbackFrom = fb.from;
+        lastFallbackTo = fb.to;
+      },
       onResponse: (i: ResponseInfo) => {
         if (!llmAttemptIsPriced(i.costMicro)) return;
         let provider = "unknown";
         try { provider = new URL(i.baseUrl).hostname || "unknown"; } catch { /* malformed baseUrl */ }
+        const fallbackCount = Math.max(pendingFallbacks, i.fallback ? 1 : 0);
+        const fallbackFrom = i.fallback?.from ?? (pendingFallbacks > 0 ? lastFallbackFrom : undefined);
+        const fallbackTo = i.fallback?.to ?? (pendingFallbacks > 0 ? lastFallbackTo : undefined);
+        pendingFallbacks = 0;
+        lastFallbackFrom = undefined;
+        lastFallbackTo = undefined;
+        const usage = i.usage as ResponseInfo["usage"] & { cachedPromptTokens?: number; cachedTokens?: number };
+        const cachedPromptTokens = usage.cachedPromptTokens ?? usage.cachedTokens;
+        const cacheWriteTokens = usage.cacheWriteTokens;
+        const hasExtendedTelemetry = cachedPromptTokens !== undefined
+          || cacheWriteTokens !== undefined
+          || i.usage.reasoningTokens > 0
+          || i.regrows > 0
+          || i.finishReason !== undefined
+          || i.ok === false
+          || (typeof i.status === "number" && i.status !== 200)
+          || fallbackCount > 0;
+        const detail: CostRow["detail"] = {
+          purpose,
+          model: i.model,
+          promptTokens: i.usage.promptTokens,
+          completionTokens: i.usage.completionTokens,
+          ...(cachedPromptTokens ? { cachedTokens: cachedPromptTokens } : {}),
+          ...(cacheWriteTokens ? { cacheWriteTokens } : {}),
+          attempt: i.attempt,
+          ...(hasExtendedTelemetry ? {
+            cachedPromptTokens: cachedPromptTokens ?? 0,
+            cacheWriteTokens: cacheWriteTokens ?? 0,
+            reasoningTokens: i.usage.reasoningTokens ?? 0,
+            ...(typeof i.latencyMs === "number" && Number.isFinite(i.latencyMs) ? { latencyMs: Math.round(i.latencyMs) } : {}),
+            ...(typeof i.regrows === "number" ? { regrows: i.regrows } : {}),
+            ...(i.finishReason ? { finishReason: i.finishReason } : {}),
+            ...(typeof i.status === "number" ? { status: i.status } : {}),
+            ...(typeof i.ok === "boolean" ? { ok: i.ok } : {}),
+            ...(fallbackCount > 0 ? { fallbackCount } : {}),
+            ...(fallbackFrom ? { fallbackFrom } : {}),
+            ...(fallbackTo ? { fallbackTo } : {}),
+          } : {}),
+        };
         void this.record({
           app, kind: "llm", provider, costUsd: i.costMicro / costMicrosPerUsd, estimated: !i.costKnown,
-          detail: { purpose, model: i.model, promptTokens: i.usage.promptTokens, completionTokens: i.usage.completionTokens, attempt: i.attempt },
+          detail,
         });
       },
     };

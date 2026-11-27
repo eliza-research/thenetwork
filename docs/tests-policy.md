@@ -72,7 +72,7 @@ Helper of the integration files: `packages/network/test/mini.ts` (`START`, the s
 | `deploy/backend/ops-catalog.integration.test.ts` | The public event catalog alert starts after a day and one retry hour without a successful scan, and the next scan resolves it |
 | `deploy/backend/selection-delivery.integration.test.ts` | Through `createBackend` on Postgres: a selected pair waits in review with nobody contacted, and a staff approval of the held item leads the tick to a dry-run delivery to the pair |
 
-The security suite is part of the integration suite. `pnpm run security` runs it alone (the file list is in `package.json`). AGENTS.md has the same list. The 11 files (2026-10-09):
+The security suite is part of the integration suite. `pnpm run security` runs it alone (the file list is in `package.json`). AGENTS.md has the same list. The 12 files:
 
 | File | What it checks |
 |---|---|
@@ -81,6 +81,7 @@ The security suite is part of the integration suite. `pnpm run security` runs it
 | `packages/platform/test/proxy.test.ts` | The trusted proxy: the router's signed client IP and host, under 60 s old |
 | `packages/platform/test/cloud-auth.pg.test.ts` | Eliza Cloud phone sign-in through the signed site router and platform sessions |
 | `packages/platform/test/notify-retention.pg.test.ts` | Account erasure and Notify retention |
+| `packages/platform/test/meetup-venues-external.pg.test.ts` | Venue/external-event/matchmaker constraints, cross-app holds, `is_suppressed_phone_hash` bridge, and fail-closed `slop`-only RLS |
 | `packages/mcp/test/oauth.test.ts` | MCP OAuth with PKCE |
 | `packages/mcp/test/pg.test.ts` | MCP OAuth on Postgres |
 | `deploy/backend/backend.test.ts` | The backend's "two logins" row-level security check |

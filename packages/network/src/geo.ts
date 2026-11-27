@@ -2,7 +2,10 @@
 // real public venues (approximate WGS84 coordinates), a transit-time estimate, and meeting-spot
 // selection. Venues are public places (parks, libraries, plazas, markets): the MVP suggests where
 // to meet but never books, and never uses anyone's home (PRD 32.12, 17.5).
-import { ADULT_AGE, type Category, type City } from "@thenetwork/core";
+import {
+  ADULT_AGE, CITIES, CITY_IDS, chooseFairMidpoint, estimateTravelMinutes, findNeighborhood, getCity, seedVenuesForCity,
+  type Category, type City, type VenuePriceTier, type VenueRecord,
+} from "@thenetwork/core";
 import { km, type Borough, type LatLng } from "@thenetwork/core/src/geo.ts";
 import { teenActivityOffered, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 export { km, type Borough, type LatLng };
@@ -82,6 +85,8 @@ export const SF_NEIGHBORHOOD = new Map(SF_NEIGHBORHOODS.map(n => [n.name, n]));
 export const CITY_CENTER: Record<Exclude<City, "nyc">, LatLng> = {
   sf: { lat: 37.7749, lng: -122.4194 },
   la: { lat: 34.0522, lng: -118.2437 },
+  chicago: { lat: 41.8819, lng: -87.6278 },
+  miami: { lat: 25.7617, lng: -80.1918 },
 };
 
 const V = (id: string, name: string, neighborhood: string, kind: Venue["kind"], lat: number, lng: number, tags: string[],
@@ -200,14 +205,56 @@ export function neighborhood(name: string | undefined): Neighborhood {
  * A public place that suits the activity and keeps everyone's trip short: minimizes the worst
  * travel time over participants (fairness), with a bonus for matching tags.
  */
-export function meetingSpot(areasIn: (string | undefined)[], category: Category | undefined, tags: string[] = [], rosterHasMinor = false): { venue: Venue; minutes: Record<string, number>; worst: number } {
-  // Unknown areas are left out (never a default); with none known, the most central public places win.
+export interface MeetingSpotOptions {
+  excludeIds?: ReadonlySet<string>;
+  nonDrinker?: boolean;
+  maxBudgetTier?: VenuePriceTier;
+  venues?: readonly VenueRecord[];
+}
+
+export function meetingSpot(
+  areasIn: (string | undefined)[],
+  category: Category | undefined,
+  tags: string[] = [],
+  rosterHasMinor = false,
+  city: City = "nyc",
+  opts?: MeetingSpotOptions,
+): { venue: Venue; minutes: Record<string, number>; worst: number } {
+  const want = new Set([...(category ? TAG_HINTS[category] ?? [] : []), ...tags.flatMap(t => TAG_HINTS[t] ?? [t])]);
+  if (city !== "nyc" || opts?.venues) {
+    const rawPool = (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city)).filter(v => {
+      if (v.status !== "active" || !v.public) return false;
+      if (opts?.excludeIds?.has(v.id)) return false;
+      if (rosterHasMinor && (v.allAges !== true || v.isAlcoholCentric === true || (v.ageMin ?? 0) > teenFriendMinAge || v.isBarOnly || !v.alcoholOptional)) return false;
+      if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
+      if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;
+      return true;
+    });
+    const pool = rawPool.map(seedVenueToGeoVenue);
+    const known = areasIn.filter((a): a is string => !!a && !!findNeighborhood(city, a));
+    const fallbackArea = getCity(city)?.neighborhoods[0]?.name ?? "Central";
+    const areas = known.length ? known : [fallbackArea];
+    const midpoint = chooseFairMidpoint(city, areas, "date");
+    let best: { venue: Venue; minutes: Record<string, number>; worst: number; cost: number } | undefined;
+    for (const v of pool) {
+      const mins = areas.map(a => estimateTravelMinutes(city, a, v.neighborhood));
+      const worst = Math.max(...mins);
+      const match = v.tags.filter(t => want.has(t)).length;
+      const midBonus = midpoint && midpoint.neighborhood.name === v.neighborhood ? 4 : 0;
+      const cost = worst - 9 * Math.min(2, match) - midBonus;
+      if (!best || cost < best.cost || (cost === best.cost && v.id < best.venue.id)) {
+        best = { venue: v, minutes: Object.fromEntries(areas.map((a, i) => [a, mins[i]!])), worst, cost };
+      }
+    }
+    if (best) return { venue: best.venue, minutes: best.minutes, worst: best.worst };
+  }
   const known = areasIn.filter((a): a is string => !!a && NEIGHBORHOOD.has(a));
   const areas = known.length ? known : ["Midtown"];
   const homes = areas.map(neighborhood);
-  const want = new Set([...(category ? TAG_HINTS[category] ?? [] : []), ...tags.flatMap(t => TAG_HINTS[t] ?? [t])]);
+  const candidates = VENUES.filter(x => teenActivityOffered(rosterHasMinor, x.allAges, x.adultPlans) && !opts?.excludeIds?.has(x.id));
+  const pool = candidates.length ? candidates : VENUES.filter(x => teenActivityOffered(rosterHasMinor, x.allAges, x.adultPlans));
   let best: { venue: Venue; minutes: Record<string, number>; worst: number; cost: number } | undefined;
-  for (const v of VENUES.filter(x => teenActivityOffered(rosterHasMinor, x.allAges, x.adultPlans))) {
+  for (const v of pool) {
     const mins = homes.map(h => travelMinutes(h, v));
     const worst = Math.max(...mins);
     const match = v.tags.filter(t => want.has(t)).length;
@@ -218,10 +265,26 @@ export function meetingSpot(areasIn: (string | undefined)[], category: Category 
 }
 
 /** Public suggestions near an area for a concierge answer (no people involved). Unknown area: by fit only, nearest to the center. */
-export function nearbyVenues(area: string | undefined, tags: string[] = [], n = 3, exclude: ReadonlySet<string> = new Set()): Venue[] {
-  const home = neighborhood(area && NEIGHBORHOOD.has(area) ? area : "Midtown");
+export function nearbyVenues(
+  area: string | undefined,
+  tags: string[] = [],
+  n = 3,
+  exclude: ReadonlySet<string> = new Set(),
+  city: City = "nyc",
+  rosterHasMinor = false,
+): Venue[] {
   const want = new Set(tags.flatMap(t => TAG_HINTS[t] ?? [t]));
-  return VENUES.filter(v => v.adultPlans && !exclude.has(v.id))
+  if (city !== "nyc") {
+    const pool = venuesForCity(city).filter(v => !exclude.has(v.id) && (!rosterHasMinor || v.allAges));
+    const resolved = (area && findNeighborhood(city, area)?.name) || getCity(city)?.neighborhoods[0]?.name || "";
+    return pool
+      .map(v => ({ v, s: estimateTravelMinutes(city, resolved, v.neighborhood) - 5 * Math.min(2, v.tags.filter(t => want.has(t)).length) }))
+      .sort((a, b) => a.s - b.s || a.v.id.localeCompare(b.v.id))
+      .slice(0, n)
+      .map(x => x.v);
+  }
+  const home = neighborhood(area && NEIGHBORHOOD.has(area) ? area : "Midtown");
+  return VENUES.filter(v => (rosterHasMinor ? v.allAges : v.adultPlans) && !exclude.has(v.id))
     .map(v => ({ v, s: travelMinutes(home, v) - 5 * Math.min(2, v.tags.filter(t => want.has(t)).length) }))
     .sort((a, b) => a.s - b.s).slice(0, n).map(x => x.v);
 }
@@ -239,11 +302,108 @@ function sfNeighborhood(area: string): CityNeighborhood | undefined {
 /** Deterministic jitter so members in one neighborhood don't sit on one point (map display). */
 export function memberPoint(memberId: string, area: string | undefined, city?: City): LatLng {
   let c: LatLng;
-  if (city === "sf") c = (area && sfNeighborhood(area)) || CITY_CENTER.sf;
-  else if (city === "la") c = CITY_CENTER.la;
+  if (city === "sf") c = (area && sfNeighborhood(area)) || (area && findNeighborhood("sf", area)) || CITY_CENTER.sf;
+  else if (city && city !== "nyc") c = (area && findNeighborhood(city, area)) || getCity(city)?.center || CITY_CENTER[city];
   else c = neighborhood(area);
   let h = 2166136261;
   for (let i = 0; i < memberId.length; i++) { h ^= memberId.charCodeAt(i); h = Math.imul(h, 16777619); }
   const a = ((h >>> 0) % 3600) / 3600 * Math.PI * 2, r = 0.0025 + (((h >>> 12) % 1000) / 1000) * 0.006;
   return { lat: c.lat + Math.sin(a) * r, lng: c.lng + Math.cos(a) * r * 1.3 };
+}
+
+export function seedVenueToGeoVenue(v: VenueRecord): Venue {
+  const kindMap: Partial<Record<VenueRecord["category"], Venue["kind"]>> = {
+    food_hall: "market",
+    coffee_shop: "cafe_district",
+    bakery_cafe: "cafe_district",
+    coffee_casual: "cafe_district",
+    cafe_tea_bar: "cafe_district",
+    tea_house: "cafe_district",
+    dessert_cafe: "cafe_district",
+    bookstore_cafe: "library",
+    board_game_cafe: "cafe_district",
+    game_store: "rec_center",
+    community_space: "rec_center",
+    climbing_gym: "courts",
+    bowling_arcade: "rec_center",
+    museum_gallery: "museum",
+    brewery: "plaza",
+    brewery_garden: "plaza",
+    wine_beer_patio: "plaza",
+    wine_bar: "cafe_district",
+    cocktail_bar: "cafe_district",
+    cocktail_lounge: "cafe_district",
+    diner: "cafe_district",
+    casual_bistro: "cafe_district",
+    park: "park",
+    waterfront_park: "waterfront",
+  };
+  const tags = new Set<string>(["social"]);
+  if (v.category === "park" || v.category === "waterfront_park") { tags.add("outdoors"); tags.add("walk"); tags.add("running"); tags.add("photography"); tags.add("picnic"); }
+  if (v.category === "food_hall" || v.category === "diner" || v.category === "bakery_cafe" || v.category === "casual_bistro" || v.category === "dessert_cafe") { tags.add("food"); tags.add("market"); }
+  if (v.category === "coffee_shop" || v.category === "cafe_tea_bar" || v.category === "coffee_casual" || v.category === "tea_house") { tags.add("coffee"); tags.add("cowork"); tags.add("professional"); tags.add("quiet"); }
+  if (v.category === "bookstore_cafe") { tags.add("books"); tags.add("writing"); tags.add("quiet"); tags.add("arts"); }
+  if (v.category === "board_game_cafe" || v.category === "game_store" || v.category === "bowling_arcade" || v.category === "community_space") { tags.add("games"); }
+  if (v.category === "museum_gallery") { tags.add("museums"); tags.add("arts"); }
+  if (v.category === "climbing_gym") { tags.add("sports"); }
+  if (v.category === "brewery" || v.category === "brewery_garden" || v.category === "wine_beer_patio") { tags.add("food"); tags.add("outdoors"); }
+  const allAges = v.allAges === true && !v.isAlcoholCentric && (v.ageMin ?? 0) <= teenFriendMinAge && !v.isBarOnly && v.alcoholOptional;
+  return {
+    id: v.id,
+    name: v.name,
+    neighborhood: v.neighborhood,
+    borough: NEIGHBORHOOD.get(v.neighborhood)?.borough ?? "Manhattan",
+    kind: kindMap[v.category] ?? "plaza",
+    lat: v.lat,
+    lng: v.lng,
+    tags: [...tags],
+    allAges,
+    adultPlans: true,
+  };
+}
+
+export function venuesForCity(city: City): Venue[] {
+  if (city === "nyc") return VENUES;
+  return seedVenuesForCity(city).map(seedVenueToGeoVenue);
+}
+
+export function cityNeighborhoods(city: City): Neighborhood[] {
+  if (city === "nyc") return NEIGHBORHOODS;
+  const spec = CITIES[city] ?? getCity(city);
+  if (!spec) return [];
+  return spec.neighborhoods.map(n => ({ name: n.name, borough: "Manhattan" as Borough, lat: n.lat, lng: n.lng }));
+}
+
+export function allNeighborhoods(): Neighborhood[] {
+  const seen = new Set(NEIGHBORHOODS.map(n => n.name));
+  const out = [...NEIGHBORHOODS];
+  for (const city of CITY_IDS) {
+    if (city === "nyc") continue;
+    for (const n of cityNeighborhoods(city)) {
+      if (!seen.has(n.name)) { seen.add(n.name); out.push(n); }
+    }
+  }
+  return out;
+}
+
+export function findCityNeighborhood(area: string | undefined, city?: City): { city: City; neighborhood: Neighborhood } | undefined {
+  if (!area) return undefined;
+  if ((!city || city === "nyc") && NEIGHBORHOOD.has(area)) {
+    return { city: "nyc", neighborhood: NEIGHBORHOOD.get(area)! };
+  }
+  const cities: readonly City[] = city ? [city] : CITY_IDS;
+  for (const c of cities) {
+    const found = findNeighborhood(c, area);
+    if (found) {
+      return { city: c, neighborhood: { name: found.name, borough: NEIGHBORHOOD.get(found.name)?.borough ?? "Manhattan", lat: found.lat, lng: found.lng } };
+    }
+  }
+  return undefined;
+}
+
+export function travelMinutesInCity(city: City, fromArea: string, toArea: string): number {
+  if (city === "nyc" && NEIGHBORHOOD.has(fromArea) && NEIGHBORHOOD.has(toArea)) {
+    return travelMinutes(NEIGHBORHOOD.get(fromArea)!, NEIGHBORHOOD.get(toArea)!);
+  }
+  return estimateTravelMinutes(city, fromArea, toArea);
 }

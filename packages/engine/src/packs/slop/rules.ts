@@ -2,6 +2,7 @@ import { DAY, type City, type MemberId } from "@thenetwork/core";
 import { slopPairConstraintsCurrent } from "../../../../core/src/generated/datingRadius.ts";
 import { mutuallyOpen } from "../../../../core/src/generated/mutualOpenness.ts";
 import type { MatchLane } from "../../../../core/src/generated/matchLane.ts";
+import { memberQualityBandOf, memberReliabilityTier, memberVampireTierOf } from "../../filters.ts";
 import type { CandidateRule, MemberRule, PairRule } from "../../pack.ts";
 import type { EngineInput } from "../../types.ts";
 import { pairKey, type World } from "../../world.ts";
@@ -85,6 +86,14 @@ export function slopMemberRules(o: SlopPackOptions): MemberRule[] {
     { id: "lane", check: (_w, _id, _mi, c) => (c.category !== SLOP_LANE ? "lane_not_offered" : null) },
     { id: "romance_opt_out", check: (w, id) => (prof(w).get(id)?.optedIn ? null : "romance_opt_out") },
     { id: "review_hold", check: (w, id) => reviewReason(prof(w).get(id)!, o) },
+    {
+      id: "reliability_holdout", check: (w, id) => {
+        const tier = memberReliabilityTier(w, id);
+        return tier === "RelCoolOff" || tier === "RelSuspended" ? "reliability_holdout" : null;
+      },
+    },
+    { id: "quality_quarantine", check: (w, id) => (memberQualityBandOf(w, id) === "Q0Quarantine" ? "quality_quarantine" : null) },
+    { id: "vampire_quarantine", check: (w, id) => (memberVampireTierOf(w, id) === "VampireQuarantined" ? "vampire_quarantine" : null) },
     { id: "needs_answer", check: (w, id) => { const f = missingFields(prof(w).get(id)!, o)[0]; return f ? `needs_${f}` : null; } },
     { id: "basics_pending", check: (w, id) => { const p = prof(w).get(id)!; return o.holdForBasics && o.compatAsks && needsBasics(p) && !p.silentAsks.includes("basics") ? "needs_basics" : null; } },
     { id: "your_turn", check: (_w, _id, mi) => (mi.inOpenOpportunity ? "your_turn" : null) },

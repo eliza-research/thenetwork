@@ -6,7 +6,7 @@ import type { MemberId } from "@thenetwork/core";
 import { Rng, hash32 } from "@thenetwork/core";
 import { FIRST_NAMES, LAST_NAMES, INTERESTS } from "../../taxonomy.ts";
 import type { RichnessTier } from "../../sources.ts";
-import { CITY_ANCHOR_ZIP, SLOP_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
+import { CITY_ANCHOR_ZIP, SLOP_DEFAULT_CITIES, zipInfo, zipsIn, type SlopCity } from "./geo.ts";
 import { plantLatent, type PlantedMark, type PlantedSpec } from "../../planted.ts";
 import type { DatingStatement } from "../../../../core/src/generated/mutualOpenness.ts";
 import { datingStatementOf } from "@thenetwork/engine/src/packs/slop/profile.ts";
@@ -58,6 +58,9 @@ export interface Availability {
   slotFree: number[]; shock: number;
 }
 
+export type SlopAttachmentStyle = "secure" | "anxious" | "avoidant";
+export type SlopHumorRegister = "dry_ironic" | "absurdist" | "warm_earnest" | "nerdy_wordplay" | "roast_banter";
+
 export interface HiddenTruth {
   trueAge: number;
   /** True age 13-17. Flagged here only: the snapshot carries the claimed age, never this flag. */
@@ -89,6 +92,11 @@ export interface HiddenTruth {
   canary: string;
   /** Planted circle and standing (only with SlopGenOptions.planted). */
   planted?: PlantedMark;
+  attachmentStyle?: SlopAttachmentStyle;
+  humorRegister?: SlopHumorRegister;
+  depthPreference?: number;
+  socioeconomicTier?: number;
+  extractionPropensity?: number;
 }
 
 /** What the member would tell the agent if asked. The snapshot shows a richness-filtered subset. */
@@ -274,7 +282,7 @@ function drawAvailability(r: Rng): Availability {
  */
 export function generateSlopPersonas(opts: SlopGenOptions): SlopPersona[] {
   const perCity = opts.perCity ?? SLOP_DEFAULTS.perCity;
-  const cities = opts.cities ?? SLOP_CITIES;
+  const cities = opts.cities ?? SLOP_DEFAULT_CITIES;
   const weeks = opts.weeks ?? SLOP_DEFAULTS.weeks;
   const minorShare = opts.minorShare ?? SLOP_DEFAULTS.minorShare;
   const liarShare = opts.minorLiarShare ?? SLOP_DEFAULTS.minorLiarShare;
@@ -378,6 +386,21 @@ function makePersona(id: string, city: SlopCity, r: Rng, role: AdversaryKind | "
     canary: `CANARY-${hash32("canary", id, String(opts.seed)).toString(36)}`,
     ...(planted ? { planted } : {}),
   };
+  if (!minor) {
+    const sr = r.fork("slop-strata-v2");
+    hidden.attachmentStyle = adversary === "harasser" || adversary === "not_single"
+      ? (sr.bool(0.55) ? "avoidant" : "anxious")
+      : sr.weighted<SlopAttachmentStyle>([["secure", 0.58], ["anxious", 0.21], ["avoidant", 0.21]]);
+    hidden.humorRegister = sr.weighted<SlopHumorRegister>([
+      ["dry_ironic", 0.24], ["warm_earnest", 0.28], ["nerdy_wordplay", 0.18], ["absurdist", 0.16], ["roast_banter", 0.14],
+    ]);
+    hidden.depthPreference = Math.max(0, Math.min(1, 0.5 + 0.18 * (traits[1] ?? 0) + sr.normal(0, 0.16)));
+    const highPayOcc = ["lawyer", "software engineer", "product manager", "founder", "architect"].includes(occupation);
+    hidden.socioeconomicTier = Math.max(0, Math.min(1, (highPayOcc ? 0.68 : 0.38) + 0.1 * (traits[3] ?? 0) + sr.normal(0, 0.15)));
+    hidden.extractionPropensity = adversary === "romance_scammer" ? 0.96
+      : adversary === "catfish" || adversary === "harasser" ? 0.78
+      : Math.max(0, Math.min(1, sr.range(0.01, 0.16) + (1 - hidden.honesty) * 0.25));
+  }
   const stated: StatedProfile = {
     claimedAge, matchGender: g, identity, orientation: o, seeks: [...seeks], ageRange: statedRange, ...openness,
     homeZip: home.zip, scope, maxMiles, goal: adversary === "romance_scammer" ? "long_term" : statedGoal, values: { ...values },

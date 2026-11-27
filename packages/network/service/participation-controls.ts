@@ -1,4 +1,4 @@
-import type { Category } from "@thenetwork/core";
+import { DAY, type Category } from "@thenetwork/core";
 import {
   changeParticipationCategory, controlRomanceOptIn,
   participationCategoryAllowed, participationControlAllowed, participationControlState,
@@ -9,14 +9,14 @@ import type { Accounts } from "../../platform/src/accounts.ts";
 import { canMatchInApp } from "../../platform/src/age.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 
-type ParticipationCommand = { kind: "mode"; pause: boolean }
+type ParticipationCommand = { kind: "mode"; pause: boolean; durationDays?: number }
   | { kind: "quiet"; hours?: [number, number] }
   | { kind: "category"; category: Category; enable: boolean };
 
 const CATEGORY_NAMES = new Map<string, Category>([
-  ["social", "social"], ["friends", "social"], ["friendship", "social"],
-  ["professional", "professional"], ["work", "professional"], ["jobs", "professional"],
-  ["romance", "romance"], ["dating", "romance"], ["hobby", "hobby"], ["hobbies", "hobby"],
+  ["social", "social"], ["friend", "social"], ["friends", "social"], ["friendship", "social"],
+  ["professional", "professional"], ["work", "professional"], ["jobs", "professional"], ["career", "professional"], ["networking", "professional"],
+  ["romance", "romance"], ["dating", "romance"], ["dates", "romance"], ["hobby", "hobby"], ["hobbies", "hobby"],
   ["help", "help"], ["events", "events"], ["growth", "growth"], ["invitations", "growth"],
 ]);
 const CATEGORY_LABELS: Record<Category, string> = {
@@ -24,16 +24,37 @@ const CATEGORY_LABELS: Record<Category, string> = {
 };
 
 function hourOf(text: string): number | undefined {
-  const military = /^(\d{1,2}):00$/.exec(text);
-  if (military) return Number(military[1]);
-  const meridiem = /^(1[0-2]|[1-9])(?::00)? *(am|pm)$/.exec(text);
-  if (meridiem) return Number(meridiem[1]) % 12 + (meridiem[2] === "pm" ? 12 : 0);
+  const military = /^(\d{1,2}):(00|30)$/.exec(text);
+  if (military) {
+    const h = Number(military[1]);
+    return h >= 0 && h < 24 ? h + (military[2] === "30" ? 0.5 : 0) : undefined;
+  }
+  const meridiem = /^(1[0-2]|[1-9])(?::(00|30))? *(am|pm)$/.exec(text);
+  if (meridiem) return (Number(meridiem[1]) % 12) + (meridiem[3] === "pm" ? 12 : 0) + (meridiem[2] === "30" ? 0.5 : 0);
+}
+
+function durationDaysOf(text: string | undefined): number | undefined {
+  if (!text) return undefined;
+  const m = /^(?:for )?(a|an|one|two|three|four|\d{1,2}) (day|days|week|weeks|month|months)$/.exec(text.trim());
+  if (!m) return undefined;
+  const words: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4 };
+  const n = words[m[1]!] ?? Number(m[1]);
+  if (!Number.isSafeInteger(n) || n < 1 || n > 90) return undefined;
+  const unit = m[2]!;
+  const days = unit.startsWith("week") ? n * 7 : unit.startsWith("month") ? n * 30 : n;
+  return days <= 180 ? days : undefined;
 }
 
 export function participationCommand(text: string): ParticipationCommand | undefined {
   const line = text.normalize("NFKC").trim().toLowerCase().replace(/[.!]$/, "").replace(/\s+/g, " ").replace(/^please /, "");
   const mode = /^(pause|resume) (?:my )?(?:matching|introductions|matches)$/.exec(line);
   if (mode) return { kind: "mode", pause: mode[1] === "pause" };
+  const naturalPause = /^(?:(?:pause(?: me| my matching| matching| my matches| matches| my introductions| introductions)?|put me on pause)(?: (for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?)))?|(?:i need to |let me )?take a break(?: (for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?)))?)$/.exec(line);
+  if (naturalPause && line !== "pause") {
+    const durationDays = durationDaysOf(naturalPause[1] ?? naturalPause[2]);
+    return { kind: "mode", pause: true, ...(durationDays !== undefined ? { durationDays } : {}) };
+  }
+  if (/^(?:unpause(?: me| my matching| matching)?|resume me)$/.test(line)) return { kind: "mode", pause: false };
   if (/^(?:quiet hours off|(?:turn off|clear) (?:my )?quiet hours)$/.test(line)) return { kind: "quiet", hours: [quietHoursOffHour, quietHoursOffHour] };
   const quiet = /^(?:set )?(?:my )?quiet hours(?: (.*))?$/.exec(line);
   if (quiet) {
@@ -42,12 +63,16 @@ export function participationCommand(text: string): ParticipationCommand | undef
     const end = range ? hourOf(range[2]!.trim()) : undefined;
     return { kind: "quiet", hours: quietHoursCommandComplete(start !== undefined, end !== undefined, start ?? 0, end ?? 0) ? [start!, end!] : undefined };
   }
-  const setting = /^(allow|enable|turn on|disable|turn off|no more) (.+?)(?: (?:suggestions|offers|matches|introductions))?$/.exec(line);
+  const setting = /^(allow|enable|turn on|disable|turn off|no more|stop sending(?: me)?|skip|mute) (.+?)(?: (?:suggestions|offers|matches|introductions|intros|stuff|ones|plans))?$/.exec(line);
   const category = setting ? CATEGORY_NAMES.get(setting[2]!) : undefined;
-  if (category && setting) return { kind: "category", category, enable: !["disable", "turn off", "no more"].includes(setting[1]!) };
+  if (category && setting) return { kind: "category", category, enable: ["allow", "enable", "turn on"].includes(setting[1]!) };
 }
 
-const displayHour = (hour: number) => `${String(hour).padStart(2, "0")}:00`;
+const displayHour = (hour: number) => {
+  const whole = Math.floor(hour);
+  const mins = Math.round((hour - whole) * 60);
+  return `${String(whole).padStart(2, "0")}:${String(mins).padStart(2, "0")}`;
+};
 
 export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts, "activeMembership" | "lowestAge">,
   owner: MemberCommandOwner, command: ParticipationCommand, appCategories: readonly string[], now: number): Promise<string | undefined> {
@@ -57,11 +82,17 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   const { app, memberId, e164 } = owner;
   if (command.kind === "mode") {
     const state = participationControlState(command.pause);
-    const saved = await tx`update network.members set participation_state=${state}, participation_window=null
-      where app_id=${app.id} and id=${memberId} and (participation_state is distinct from ${state} or participation_window is not null) returning id`;
+    const until = command.pause && command.durationDays ? new Date(now + command.durationDays * DAY).toISOString() : null;
+    const windowPayload = until ? { state: "paused", from: new Date(now).toISOString(), until } : null;
+    const saved = await tx`update network.members set participation_state=${state}, participation_window=${windowPayload}::jsonb
+      where app_id=${app.id} and id=${memberId} and (participation_state is distinct from ${state} or participation_window is distinct from ${windowPayload}::jsonb) returning id`;
     if (saved.length) await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
       values (${app.id}, ${new Date(now)}, 'member', ${memberId}, 'member_state_requested', 'member', ${memberId},
-        ${{ state: command.pause ? "paused" : "open", from: null, until: null, source: "text" }}::jsonb)`;
+        ${{ state: command.pause ? "paused" : "open", from: until ? new Date(now).toISOString() : null, until, source: "text" }}::jsonb)`;
+    if (command.pause && command.durationDays) {
+      const span = command.durationDays % 7 === 0 ? `${command.durationDays / 7} week${command.durationDays === 7 ? "" : "s"}` : `${command.durationDays} day${command.durationDays === 1 ? "" : "s"}`;
+      return `Matching is paused for this app for ${span}. Say ‘resume matching’ when you're ready.`;
+    }
     return command.pause ? "Matching is paused for this app. Say ‘resume matching’ when you're ready." : "Matching is no longer paused for this app. Your category choices and quiet hours still apply.";
   }
 

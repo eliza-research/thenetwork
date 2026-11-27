@@ -1,11 +1,11 @@
 # Technical Product Requirements Document (PRD): `@thenetwork/marketing`
 
 - **Application Path:** `apps/marketing` (`@thenetwork/marketing`)
-- **Database Schema:** Isolated PostgreSQL schema `marketing.*` (**17 tables**, **5 composite indexes**, `apps/marketing/db/schema.sql`, applied via `packages/db/migrate.ts` as repeatable `9004_marketing_schema`)
-- **Formal Verification:** Vibestack/Dafny specs `spec/marketingPolicy.md` (**15 proved obligations**) & `spec/marketingDevice.md` (**4 proved obligations**) -> generated TypeScript in `packages/core/src/generated/marketingPolicy.ts` & `packages/core/src/generated/marketingDevice.ts`, plus whole-flow Quint model `spec/models/marketing_campaign.md` (**9 safety invariants**, **11 reachability witnesses**, **9 deterministic `run` tests**)
+- **Database Schema:** Isolated PostgreSQL schema `marketing.*` (**21 tables**, composite & GIN indexes, 2 guarded read-only `SECURITY DEFINER` RPCs `marketing.contact_fence` and `marketing.supply_demand_k5`, `apps/marketing/db/schema.sql`, applied via `packages/db/migrate.ts` as repeatable `9004_marketing_schema`)
+- **Formal Verification:** Vibestack/Dafny specs `spec/marketingPolicy.md` (**23 proved obligations**) & `spec/marketingDevice.md` (**4 proved obligations**) -> generated TypeScript in `packages/core/src/generated/marketingPolicy.ts` & `packages/core/src/generated/marketingDevice.ts`, plus whole-flow Quint model `spec/models/marketing_campaign.md` and offline deterministic simulator gate `pnpm run sim --only marketing` (**12 blocking gates**, `<1.5s`)
 - **Runtime Stack:** Node 26 + `tsx` + `pnpm` + Vitest (`@thenetwork/core/runtime/postgres.ts` `SQL`, `@thenetwork/core/runtime/process.ts` `spawnProcess`, `@thenetwork/core/runtime/http.ts` `serveHttp`)
-- **Runtime Entrypoints:** `pnpm run marketing` (Observatory-sibling HTTP Command Center + JSON REST API + live SSE hub on `127.0.0.1:4949`) and `pnpm run marketing:cli` (CLI controller)
-- **Companion Docs:** [README.md](README.md) · [STRATEGY.md](STRATEGY.md) · [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md) · [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md)
+- **Runtime Entrypoints:** `pnpm run marketing` (Observatory-sibling Global Growth Command Center + JSON REST API + live SSE hub on `127.0.0.1:4949`) and `pnpm run marketing:cli` (CLI controller)
+- **Companion Docs:** [README.md](README.md) · [CITY-LAUNCH-PLAYBOOK.md](CITY-LAUNCH-PLAYBOOK.md) · [STRATEGY.md](STRATEGY.md) · [NYC-STREET-TEAMS-AND-AGENCIES.md](NYC-STREET-TEAMS-AND-AGENCIES.md) · [SLOP-CASH-INTEGRATION.md](SLOP-CASH-INTEGRATION.md)
 
 ---
 
@@ -144,16 +144,22 @@ Defined idempotently in `apps/marketing/db/schema.sql` (applied by `packages/db/
 | 10 | `marketing.budget_ledger` | Append-only spend circuit-breaker ledger (`dry_run`, `reserve`, `commit`, `release`, `refund`), `from_reserve` flag (prevents double-counting `dailySpentCents`), and unique `idempotency_key`. |
 | 11 | `marketing.slop_cash_hooks` | Disabled-by-default integration metadata enforcing `enabled = true or hook_state = 'disabled_stub'`. |
 
-### 3.2 Pass-2 Engine Tables (12–17)
+### 3.2 Autonomous Engine & Pass-3 Ecosystem Tables (12–21) + Guarded RPCs
 
-| # | Table | Purpose & Key Invariant Constraints |
+| # | Table / RPC | Purpose & Key Invariant Constraints |
 | :-: | :--- | :--- |
-| 12 | `marketing.bandit_arms` | Contextual Thompson-Sampling arm state (`arm_key`, `track`, `alpha`, `beta`, `weight`, `spend_cents`, `signups`, `stop_events`, `total_contacts`, `status = active | killed | paused`). |
-| 13 | `marketing.bd_deals` | Zero-human 8-stage BD venue/event deals (`stage`, `offered_cents`, `phone_callback_verified`, `contract_hash`, `qr_batch_id`). |
+| 12 | `marketing.bandit_arms` | Contextual Thompson-Sampling arm state (`arm_key`, `track`, `desire_lane`, `alpha`, `beta`, `weight`, `spend_cents`, `signups`, `verified_outcomes`, `stop_events`, `total_contacts`, `status = active | killed | paused`). |
+| 13 | `marketing.bd_deals` | Zero-human 8-stage BD venue/event deals (`stage`, `desire_lane`, `offered_cents`, `phone_callback_verified`, `contract_hash`, `qr_batch_id`). |
 | 14 | `marketing.qr_batches` | Serialized QR print/link batches (`batch_code`, `destination_url`, `dub_link_id`, `print_qty`, `assigned_to_type`, `scans`, `verified_signups`). |
-| 15 | `marketing.vip_prospects` | 18-archetype `ntwrk.party` VIP salon pipeline (`archetype`, `prestige_score`, `invite_draft`, `status`). |
-| 16 | `marketing.video_assets` | 5-agent Short-Form Video Factory assets (`title`, `hook`, `script`, `stage`, `video_url`, `platform`, `views`, `retention_3s_pct`, `signups`, `ftc_disclosed`). |
+| 15 | `marketing.vip_prospects` | 18-archetype `ntwrk.party` VIP salon pipeline (`archetype`, `desire_lane`, `prestige_score`, `invite_draft`, `status`). |
+| 16 | `marketing.video_assets` | 5-agent Short-Form Video Factory assets (`title`, `hook`, `script`, `desire_lane`, `stage`, `video_url`, `platform`, `views`, `retention_3s_pct`, `signups`, `ftc_disclosed`). |
 | 17 | `marketing.antifraud_claims` | 4-tier vesting & Sybil defense claims (`person_key`, `phone_line_type`, `media_hash`, `cluster_id`, `vesting_tier`, `amount_cents`, `status`). |
+| 18 | `marketing.llm_trajectories` | Append-only LLM prompt/token/cost trajectory ledger powering `getDailyLlmUsage()` and Dafny-proved `llmBudgetWithinCaps`. |
+| 19 | `marketing.contact_suppression` | Sticky global opt-out / do-not-contact / minor-flag suppression table keyed by HMAC contact hash. |
+| 20 | `marketing.contact_touchpoints` | Cross-surface touchpoint history (`email`, `vip`, `bd`, `creator`, `street`, `event`) enforcing 14-day cold cooldowns and daily operational caps. |
+| 21 | `marketing.city_packs` | Runtime JSON `CityPack` overrides & launch-stage tracking (`researching -> waitlist_kindling -> liquidity_seeding -> live_matching -> scaling`). |
+| RPC | `marketing.contact_fence(phone_hash, email_hash, as_of)` | Owner-only `SECURITY DEFINER` read-only fence checking core opted-out/banned/minor status + `marketing.contact_suppression` without leaking PII. |
+| RPC | `marketing.supply_demand_k5(city)` | Owner-only `SECURITY DEFINER` `k >= 5` anonymized city/app queue & supply/demand snapshot driving `queuePressurePaused`. |
 
 ### 3.3 Composite Query Indexes (5 Hot-Path Indexes)
 
@@ -255,13 +261,13 @@ Supports `--db <postgres-url>` and `--city <nyc|sf|la|chicago|miami|austin|londo
 
 ---
 
-## 5. Formal Verification Specification (19 Dafny Obligations + 9 Quint Invariants)
+## 5. Formal Verification Specification (27 Dafny Obligations + Quint Invariants + Offline Sim)
 
-Compliant with [AGENTS.md](../../AGENTS.md) and [SPEC.md](../../SPEC.md), safety-critical decisions are formally proved at two levels:
+Compliant with [AGENTS.md](../../AGENTS.md) and [SPEC.md](../../SPEC.md), safety-critical decisions are formally proved at two levels and stress-tested in a deterministic offline simulator:
 
-### 5.1 Vibestack / Dafny Proved Obligations (19 Total — `pnpm run spec:sync`)
+### 5.1 Vibestack / Dafny Proved Obligations (27 Total — `pnpm run spec:sync`)
 
-- **`spec/marketingPolicy.md` (15 Dafny-Proved Laws -> `packages/core/src/generated/marketingPolicy.ts`):**
+- **`spec/marketingPolicy.md` (23 Dafny-Proved Laws -> `packages/core/src/generated/marketingPolicy.ts`):**
   1. `lawSpendRespectsCaps` (`canAuthorizeSpend`)
   2. `lawSlopCashBlockedWhenDisabled` (`canAuthorizeSpend`)
   3. `lawLockdownBlocksTier3And4` (`canAuthorizeSpend`)
@@ -277,11 +283,14 @@ Compliant with [AGENTS.md](../../AGENTS.md) and [SPEC.md](../../SPEC.md), safety
   13. `lawBdDealRequiresBoundsCallbackAndContract` (`bdDealWithinBounds`)
   14. `lawBanditKillsHighCpaOrStopRate` (`banditMaxStopRateBps = 500`, `banditArmEligible`)
   15. `lawStopFenceBlocksAgentAndOutreach` (`canDispatchAgentTurn`, `canSendOutreach`)
+  16. **LLM Daily Budget & Cap Laws (2 laws, `llmBudgetWithinCaps`)** — daily token and cost micro-dollar caps fail closed before provider dispatch.
+  17. **Core Queue Backpressure Laws (2 laws, `queuePressurePaused`)** — restricted line, overdue reviews, or open review/outbound queue backlog pause cold acquisition automatically.
+  18. **Unified Contact Hygiene & Cooldown Laws (4 laws, `contactSafetyEligible`, `contactCooldownAllowed`)** — sticky STOP/ban/minor/lockdown block plus 14-day cold cooldown, max 2 cold touches/30d, max 2 unanswered cold touches, max 3 operational touches/day, and quiet-hours block.
 - **`spec/marketingDevice.md` (4 Dafny-Proved Laws -> `packages/core/src/generated/marketingDevice.ts`):**
-  16. `lawWarmupCapMonotone` (`warmupDailyCap`)
-  17. `lawHotOrLowBatteryBlocked` (`deviceBatterySafe`, `canExecuteDeviceAction`)
-  18. `lawLeasedOrStoppedDeviceBlocked` (`canExecuteDeviceAction`)
-  19. `lawTakeoverBlocksDeviceStep` (`canDispatchDeviceStep`)
+  - `lawWarmupCapMonotone` (`warmupDailyCap`)
+  - `lawHotOrLowBatteryBlocked` (`deviceBatterySafe`, `canExecuteDeviceAction`)
+  - `lawLeasedOrStoppedDeviceBlocked` (`canExecuteDeviceAction`)
+  - `lawTakeoverBlocksDeviceStep` (`canDispatchDeviceStep`)
 
 ### 5.2 Whole-Flow Quint Model (`spec/models/marketing_campaign.md`)
 

@@ -44,10 +44,11 @@ it does not mean introductions have started.
    Only if this client cannot add a remote connector at all, or the person cannot
    add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
    profile. Use the client's supported authorization flow.
-2. Read the public app facts at `https://slop.date/api/app` without credentials. <!-- agentSignup: readAppFacts -->
-   Confirm `id` is `slop`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
-   and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
-   these facts.
+2. Read the public app facts at `https://slop.date/api/app` without credentials <!-- agentSignup: readAppFacts -->
+   (or call `app_info` with `app: "slop"`, which returns the same `cities`, `ages`,
+   and exact current `consent.text` and `consent.version`). Confirm `id` is `slop`.
+   Use this app's `joinMode`, `minJoinAge`, `minMatchAge`, and exact current
+   `consent.text` and `consent.version`. Stop if you cannot confirm these facts.
 3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
    to explain what they get. Use the lowest age that any statement gives. Never send a
    birthday or an age through a tool; the person types their birthday on the app's
@@ -56,10 +57,13 @@ it does not mean introductions have started.
    with answers, public events and plans for themselves. Friendship introductions for
    people under 18 happen on friends.help and ntwrk.party. Never promise them an introduction.
    Draft their confirmed first name and home region.
-   Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
-   separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
-   or ZIP code or pick an incorrect region.
-   For adults, draft the profile with interests, availability, the relationship they
+   Confirm their home city — New York City (`nyc`), San Francisco / Bay Area (`sf`),
+   Los Angeles (`la`), Chicago (`chicago`), or Miami (`miami`) — and keep their
+   neighborhood separate. Ask if the region is ambiguous. Do not guess it from a
+   neighborhood or ZIP code or pick an incorrect region.
+   For adults, draft the profile with interests, availability, any venue red lines
+   (dietary, alcohol-free/sober, severe allergies, wheelchair accessibility, or
+   low-noise/daytime preferences), the relationship they
    want and preferences they explicitly choose to share. Adult age ranges and travel
    distance are optional. For ages 13–17, draft only a basic personal profile.
    Collect no dating preferences and no photos.

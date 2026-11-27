@@ -20,11 +20,29 @@ import type { GeneratorSpec } from "../../pack.ts";
 import type { Candidate, Role } from "../../types.ts";
 import type { World } from "../../world.ts";
 import { FRIENDS_CITY } from "./geo.ts";
+import { friendsInfo } from "./info.ts";
 import { friendsRosterVerified } from "./rules.ts";
 import { FRIENDS_ACTIVITY_TAGS } from "./vectors.ts";
 
+const cityOfRoster = (w: World, ids: readonly MemberId[]) => {
+  const info = friendsInfo(w);
+  for (const id of ids) {
+    const c = info.get(id)?.city ?? w.get(id)?.m.homeCity;
+    if (c) return c;
+  }
+  return FRIENDS_CITY;
+};
+
 const positiveAbout = (ctx: GenCtx, from: MemberId, about: MemberId, opp: string) =>
   ctx.w.feedback.some(f => f.from === from && f.about === about && f.opportunityId === opp && f.wouldMeetAgain === true);
+
+function positiveSeeIndex(w: World): ReadonlySet<string> {
+  const index = new Set<string>();
+  for (const f of w.feedback) {
+    if (f.wouldMeetAgain === true) index.add(`${f.from}|${f.about}|${f.opportunityId ?? ""}`);
+  }
+  return index;
+}
 
 const byStanding = (a: MatchProfile, b: MatchProfile): number => a.standing - b.standing || a.ordinal - b.ordinal;
 
@@ -70,10 +88,11 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
   const { w } = ctx;
   const out: Candidate[] = [];
   const seen = new Set<string>();
+  const seeAgain = positiveSeeIndex(w);
   const recent = w.interactions.filter(r => r.outcome === "completed" && w.now - r.at < 21 * DAY && r.participants.length >= 2)
     .sort((a, b) => (b.at - a.at) || (a.id < b.id ? -1 : 1));
   for (const r of recent) {
-    const mutual = (a: MemberId, b: MemberId) => positiveAbout(ctx, a, b, r.id) && positiveAbout(ctx, b, a, r.id);
+    const mutual = (a: MemberId, b: MemberId) => seeAgain.has(`${a}|${b}|${r.id}`) && seeAgain.has(`${b}|${a}|${r.id}`);
     // Attendees with a mutual "see again" with at least one other attendee.
     const ids = r.participants.filter(a => r.participants.some(b => b !== a && mutual(a, b)));
     const startsAsGroup = ids.length >= 3;
@@ -96,7 +115,7 @@ export function sameTableAgain(ctx: GenCtx): Candidate[] {
     out.push(circleCandidate(w, circle, "Friend", {
       kind: group ? "group" : "second_encounter", generator: "same_table_again", category: "social",
       roles: Object.fromEntries(ok.map(id => [id, "peer" as Role])), format: group ? "small_group" : "one_to_one",
-      objective: "Same table again", anchor: { type: "interaction", id: r.id }, preferredCity: FRIENDS_CITY, channels: new Set(["history"]),
+      objective: "Same table again", anchor: { type: "interaction", id: r.id }, preferredCity: cityOfRoster(w, ok), channels: new Set(["history"]),
       evidence: Object.fromEntries(ok.map(id => [id, []])), warm: 1, confidenceHint: 0.9, riskText: "same group again",
     }));
   }
@@ -112,7 +131,7 @@ export function friendCircle(ctx: GenCtx): Candidate[] {
       kind: "group", generator: "friend_circle", category: "social", roles: Object.fromEntries(ids.map(id => [id, "guest" as Role])), format: "small_group",
       objective: tag ? `A small group for ${tag.replace(/_/g, " ")}` : "A small group nearby",
       ...(tag ? { anchor: { type: "interest" as const, id: tag, label: tag } } : {}),
-      preferredCity: FRIENDS_CITY, channels: new Set(["match", "group"]),
+      preferredCity: cityOfRoster(w, ids), channels: new Set(["match", "group"]),
       evidence: Object.fromEntries(ids.map(id => [id, tag ? w.get(id)!.share.filter(f => f.tags.includes(tag)).map(f => f.id) : []])),
       riskText: tag ?? "small group",
     });
@@ -144,7 +163,7 @@ export function activityPartner(ctx: GenCtx): Candidate[] {
       kind: "intro", generator: "activity_partner", category: "hobby", roles: { [a]: "peer", [b]: "peer" }, format: "one_to_one",
       objective: tag ? `Activity partner: ${tag.replace(/_/g, " ")}` : "Activity partner",
       ...(tag ? { anchor: { type: "interest" as const, id: tag, label: tag } } : {}),
-      preferredCity: FRIENDS_CITY, channels: new Set(["match"]), evidence: { [a]: [], [b]: [] }, riskText: tag ?? "activity partner",
+      preferredCity: cityOfRoster(w, [a, b]), channels: new Set(["match"]), evidence: { [a]: [], [b]: [] }, riskText: tag ?? "activity partner",
     }));
   }
   return out;

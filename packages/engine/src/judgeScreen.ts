@@ -52,12 +52,14 @@ export function parseScreenVerdict(raw: unknown, attending: string[]): ScreenVer
   f.bool("dealbreaker");
   const acc: Record<string, number> = {};
   for (const r of attending) { const p = f.prob(`accept_probability.${r}`, o.accept_probability?.[r]); if (p !== undefined) acc[r] = p; }
+  const reasoningFirst = f.reasoningFirst();
+  if (reasoning && verdict && !reasoningFirst) f.errs.push("reasoning must appear before verdict");
   f.done("schema: ", ", ");
   return {
     pass: 1, reasoning, citedFacts: f.citedFacts(), dealbreaker: o.dealbreaker,
     dealbreakerReason: str(o.dealbreaker_reason, 300) || undefined, verdict: verdict!, matchProbability: mp!,
     acceptProbability: acc, memberWhy: str(o.member_why ?? o.why, 600),
-    reasoningFirst: f.reasoningFirst(),
+    reasoningFirst,
   };
 }
 
@@ -69,16 +71,22 @@ export const screenDecision = (v: ScreenVerdict) => v.verdict === "yes" && !v.de
  * World does) and only live intents (status active, inside their horizon), so the screen never
  * judges on expired wants or misses an aliased member's facts.
  */
+const screenSnapshotCache = new WeakMap<World, World["input"]>();
+
 export function screenSnapshot(w: World): World["input"] {
+  const cached = screenSnapshotCache.get(w);
+  if (cached) return cached;
   const C = w.canonical, now = w.now;
   const inp = w.input;
-  return {
+  const snap: World["input"] = {
     ...inp,
     facets: inp.facets.map(f => ({ ...f, memberId: C(f.memberId) })),
     intents: inp.intents.filter(i => standingIntentLive(i, now)).map(i => ({ ...i, memberId: C(i.memberId) })),
     presence: inp.presence.map(p => ({ ...p, memberId: C(p.memberId) })),
     edges: inp.edges.map(e => ({ ...e, from: C(e.from), to: C(e.to) })),
   };
+  screenSnapshotCache.set(w, snap);
+  return snap;
 }
 
 export function prepareScreen(w: World, c: Candidate, maxTokens: number, snapshot = screenSnapshot(w)): JudgeRequest<ScreenVerdict> {

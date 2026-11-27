@@ -995,6 +995,22 @@
         "14106ecc23db"
       ]
     },
+    "spec/cityTravel.md": {
+      "@document": [
+        "4f997636df1c"
+      ],
+      "## Story: Pick a fair meeting area within travel limits": [
+        "c5a53c67e81c"
+      ],
+      "Story: Pick a fair meeting area within travel limits / Travel time must stay within the positive limit plus bounded relaxation": [
+        "948bc00086b2",
+        "71a5a9163d74"
+      ],
+      "Story: Pick a fair meeting area within travel limits / Midpoint cost balances worst-case fairness and average travel time": [
+        "9d4cd8e21d76",
+        "7f301ef10b21"
+      ]
+    },
     "spec/cloudAuthority.md": {
       "@document": [
         "7035fd8f742a"
@@ -2238,6 +2254,25 @@
         "b19af0ea876a"
       ]
     },
+    "spec/encounterFollowup.md": {
+      "@document": [
+        "7ec7f136d70e"
+      ],
+      "## Story: Schedule follow-ups outside quiet hours": [
+        "6bebc0e5ef12"
+      ],
+      "Story: Schedule follow-ups outside quiet hours / Daytime encounters follow up two hours later and evening encounters wait until morning": [
+        "1dd99fc1c353",
+        "8c3f6b99c2ea"
+      ],
+      "## Story: Enforce opt-out, quiet hours, and message caps before sending": [
+        "258b0f783f99"
+      ],
+      "Story: Enforce opt-out, quiet hours, and message caps before sending / Follow-up dispatch enforces opt-out, quiet hours, daily cap of 3, and reminder cap of 2": [
+        "df895f3387b5",
+        "f3c980192daa"
+      ]
+    },
     "spec/opportunityLifecycle.md": {
       "@document": [
         "8ef0a1650c91"
@@ -2463,6 +2498,86 @@
         "89d2a0da6624",
         "d9bca68f978a",
         "eda60d8a5188"
+      ]
+    },
+    "spec/externalEventBridge.md": {
+      "@document": [
+        "15155243623e"
+      ],
+      "## Story: Ingest and publish only sanctioned, anchored, capacity-safe external events": [
+        "8030683d61b2"
+      ],
+      "Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Accept only sanctioned external event sources": [
+        "976713571bd8",
+        "4fe754ff5ccb"
+      ],
+      "Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Publish an external event only with a confirmed anchor, recorded review approval, hidden gated RSVPs, and safe capacity": [
+        "dfb2ea2f89aa",
+        "3eef761ec1e0",
+        "2b9dff7a4fcf"
+      ],
+      "Story: Ingest and publish only sanctioned, anchored, capacity-safe external events / Bound external RSVP overbooking to the venue walk-in capacity and 15-person ceiling": [
+        "1c0cc825c4ca",
+        "b27b7dd25df5",
+        "2b9dff7a4fcf"
+      ],
+      "## Story: Protect anchors from empty events, screen adult RSVPs, and quality-gate invites": [
+        "f7d983f3f27a"
+      ],
+      "Story: Protect anchors from empty events, screen adult RSVPs, and quality-gate invites / Cancel when the anchor drops or when quorum stays too low at 24 hours before start": [
+        "42e4abf44eba",
+        "56b85f85b038",
+        "2b9dff7a4fcf"
+      ],
+      "Story: Protect anchors from empty events, screen adult RSVPs, and quality-gate invites / Approve an external RSVP only for an eligible screened adult within the cap": [
+        "804514f85660",
+        "f0783689468d"
+      ],
+      "Story: Protect anchors from empty events, screen adult RSVPs, and quality-gate invites / Invite an external attendee to the Network only after a positive, safe completed event": [
+        "bad29602193a",
+        "fdccdc18b312"
+      ]
+    },
+    "spec/externalMatchmaker.md": {
+      "@document": [
+        "e4e629302212"
+      ],
+      "## Story: Route personas consistently and trigger external sourcing only when local supply is sparse": [
+        "0b24dff8d79f"
+      ],
+      "Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Route each prospect deterministically to one locked matchmaker persona": [
+        "91cae718899e",
+        "21b6cbc89a73"
+      ],
+      "Story: Route personas consistently and trigger external sourcing only when local supply is sparse / Trigger external sourcing only for eligible adults with sparse local supply": [
+        "e1012b9307c2",
+        "bc5c294c98c8"
+      ],
+      "## Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation": [
+        "8b53b57cf87d"
+      ],
+      "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL": [
+        "bf4b52a07e28",
+        "6e2adc54af7f",
+        "2655b434f30e"
+      ],
+      "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Reconsider a cached prospect only with explicit future opt-in, 30-day cooldown, and review approval": [
+        "1cb82d64316d",
+        "60373328ee7d",
+        "2655b434f30e"
+      ],
+      "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Purge prospect data immediately on opt-out, decline, underage, red flag, or TTL expiry": [
+        "b9ff3f9c1ddf",
+        "b49ee27fb1f9"
+      ],
+      "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Invite an external prospect to the Network only after a positive attended meetup": [
+        "fc48823c703f",
+        "cd725334458d"
+      ],
+      "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Isolate external dating prospects strictly inside `slop` and block `peon`": [
+        "83a375f8a85f",
+        "5780bce28a7a",
+        "2655b434f30e"
       ]
     },
     "spec/friendsPlanningSeats.md": {
@@ -3037,6 +3152,80 @@
         "d7cf9e9a5efa"
       ]
     },
+    "spec/marketingDevice.md": {
+      "@document": [
+        "819ff2a0c24b"
+      ],
+      "## Story: Protect attached phones from battery, thermal, and warm-up abuse": [
+        "0f6efcf25147"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Safe device operation requires battery between 35 and 80 percent and temperature between 0 and 41 C": [
+        "12a7f771b0ba",
+        "c9b6a443f606"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Daily warm-up action caps increase monotonically with warm-up day": [
+        "b4eeb8f01494",
+        "ce73d57e94e0"
+      ],
+      "Story: Protect attached phones from battery, thermal, and warm-up abuse / Device execution requires online status, exclusive lease, safe envelope, remaining warm-up quota, and no lockdown, STOP, or human takeover challenge": [
+        "233b59a2ffff",
+        "1b137d0c7a9c",
+        "70addb0f85d5"
+      ]
+    },
+    "spec/marketingPolicy.md": {
+      "@document": [
+        "2a0464638a63"
+      ],
+      "## Story: Hire and pay only verified adult participants within campaign limits": [
+        "d3426880c9c2"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Only verified adults aged 18 through 120 may participate in paid marketing tasks": [
+        "23750d62516d",
+        "27fffefbce74"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Campaign spend obeys per-task, daily, monthly, billing, lockdown, and slop.cash gates": [
+        "c2ba01cbbcac",
+        "4da1c4783892"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Only open-source developer bounties may use the slop.cash payout rail": [
+        "5f5de8f04608",
+        "36db6ad6f01e",
+        "533ed5ca94b3"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Human street-team and creator payouts require complete proof and verified adult status": [
+        "50a5f2aec7bb",
+        "4a401ebb8d32",
+        "c5964e5ceca2"
+      ],
+      "Story: Hire and pay only verified adult participants within campaign limits / Creator video proofs also require signed commercial likeness releases": [
+        "273980ebf999",
+        "fa80d0199403",
+        "34a522d66d1c"
+      ],
+      "## Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility": [
+        "dfa14b84adb2"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Anti-fraud payout checks block VoIP, cap prepaid/MVNO and lifetime consumer bonuses, enforce W-9 over $500, and block duplicates or quarantined clusters": [
+        "0f40a1c47a3c",
+        "a855aa5d9cd2"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Automated BD venue deals stay inside venue budget bounds and require phone callback and signed contract": [
+        "dbd7687c50f5",
+        "70247c5b7f09"
+      ],
+      "Story: Enforce anti-fraud payout caps, BD deal bounds, and bandit eligibility / Bandit arms stay eligible only within CPA and STOP-rate ceilings": [
+        "73875cf24a88",
+        "5f820b44b85f"
+      ],
+      "## Story: Enforce agent subscription caps and the global STOP fence": [
+        "266ae1f5cb4c"
+      ],
+      "Story: Enforce agent subscription caps and the global STOP fence / Agent turns and direct outreach stop immediately on STOP, ban, lockdown, or cap exhaustion": [
+        "72872d969dea",
+        "6cc00aadaefe"
+      ]
+    },
     "spec/matchingBudgets.md": {
       "@document": [
         "de306100fea4"
@@ -3266,6 +3455,71 @@
       "Story: Choose a report or a block after a meeting that went wrong / The answer to the check-in question acts once, then the question closes": [
         "f1272a7020ad",
         "6eb2d3f85bda"
+      ]
+    },
+    "spec/meetupArrival.md": {
+      "@document": [
+        "6f81833f8709"
+      ],
+      "## Story: Track arrival phases and gate arrival relays safely": [
+        "832e93df245f"
+      ],
+      "Story: Track arrival phases and gate arrival relays safely / Meetup arrival phases open 30 minutes before start and close 45 minutes after start": [
+        "ff88498458a7",
+        "aa1e63fa185e"
+      ],
+      "Story: Track arrival phases and gate arrival relays safely / Arrival relays require confirmed adults, active arrival phase, and clean safety checks": [
+        "f038d666081a",
+        "666af87dfd47",
+        "0444b90bccd3"
+      ],
+      "## Story: Escalate no-shows and pivot to a verified backup venue": [
+        "64af8536e207"
+      ],
+      "Story: Escalate no-shows and pivot to a verified backup venue / No-show escalation pings at 12 minutes and notifies the waiting attendee at 18 minutes": [
+        "6757b20b13e5",
+        "c70f76509625"
+      ],
+      "Story: Escalate no-shows and pivot to a verified backup venue / Backup venue pivot occurs at most once when closure is reported and a backup is verified": [
+        "c68533e61cb6",
+        "373f3b5bea92"
+      ]
+    },
+    "spec/meetupCoordination.md": {
+      "@document": [
+        "3a7c762bf565"
+      ],
+      "## Story: Coordinate safe on-site arrivals and backup pivots": [
+        "41084d637acb"
+      ],
+      "Story: Coordinate safe on-site arrivals and backup pivots / Map relative meetup minutes to lifecycle phases": [
+        "9a373087dcaf",
+        "53279ae07266"
+      ],
+      "Story: Coordinate safe on-site arrivals and backup pivots / Halt arrival relay immediately on panic, block, or any minor in the event": [
+        "dc898da1150e",
+        "48118ab3098f",
+        "3db2ccba7111"
+      ],
+      "Story: Coordinate safe on-site arrivals and backup pivots / Escalate late arrivals at 12 minutes and free waiting attendees by 18 minutes": [
+        "bba3a8f93eb3",
+        "01b779f4603d"
+      ],
+      "Story: Coordinate safe on-site arrivals and backup pivots / Pivot to backup on closed or full venue, but quarantine only on closure": [
+        "8b7f9e3c363f",
+        "e1e815ed1195",
+        "3db2ccba7111"
+      ],
+      "## Story: Protect anchor failover, quorum cutoffs, and follow-up limits": [
+        "265445bd33ce"
+      ],
+      "Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Promote a co-anchor or cancel cleanly on anchor drop or low T-24h quorum": [
+        "ca2eaee79843",
+        "f076c2431346"
+      ],
+      "Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps": [
+        "be5c1e45be33",
+        "e2d1da3a12b1"
       ]
     },
     "spec/memberRequest.md": {
@@ -6395,6 +6649,37 @@
         "6d9b0748363e"
       ]
     },
+    "spec/suggestionFlow.md": {
+      "@document": [
+        "a6bbff87a902"
+      ],
+      "## Story: Bound suggestion pivots and prevent repeats": [
+        "15df32acab85"
+      ],
+      "Story: Bound suggestion pivots and prevent repeats / Allow a suggestion pivot only below three pivots and for unvisited, unrejected venues": [
+        "f98695d6bcda",
+        "66fc4abee363"
+      ],
+      "## Story: Route local supply by density and enforce date activity red lines": [
+        "da352e9f865f"
+      ],
+      "Story: Route local supply by density and enforce date activity red lines / Classify local supply into dense, medium, or sparse tiers": [
+        "47de6ef70765",
+        "c406e2f1b7b4"
+      ],
+      "Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply": [
+        "044c1438f2af",
+        "dfa30e1f4517"
+      ],
+      "## Story: Score venues with mode-specific weights": [
+        "1fab2a3d9588"
+      ],
+      "Story: Score venues with mode-specific weights / Compute a bounded 0..100 score with capped niche-hobby bonus on dates": [
+        "3bdf156a0b45",
+        "5c95c84cae44",
+        "ffce9ea17d29"
+      ]
+    },
     "spec/teenIntroSwitch.md": {
       "@document": [
         "1f8d6012a057"
@@ -6679,6 +6964,58 @@
         "d819560a2bf7"
       ]
     },
+    "spec/venueSelection.md": {
+      "@document": [
+        "7506c7826c1e"
+      ],
+      "## Story: Bound travel time and score fair midpoints": [
+        "0212ba798566"
+      ],
+      "Story: Bound travel time and score fair midpoints / Keep every participant travel time non-negative and within the travel limit": [
+        "0f004e82c308",
+        "708f1b89548b"
+      ],
+      "Story: Bound travel time and score fair midpoints / Balance worst-case fairness and mean travel in integer-scaled midpoint cost": [
+        "c5ab92fb9c08",
+        "3647c2c1571b"
+      ],
+      "Story: Bound travel time and score fair midpoints / Accept a midpoint only when every attendee fits within bounded relaxation": [
+        "f953ccd04407",
+        "28fb471262e1",
+        "36b82adbc17a"
+      ],
+      "## Story: Enforce hard venue eligibility and attendee red lines": [
+        "9761e3c74ae0"
+      ],
+      "Story: Enforce hard venue eligibility and attendee red lines / Require public active open venues that honor age, all-ages teen rules, diet, mobility, budget, and group walk-in rules": [
+        "d373a110b63a",
+        "a0c97b0650a7",
+        "36b82adbc17a"
+      ],
+      "Story: Enforce hard venue eligibility and attendee red lines / Enforce strict sobriety, allergens, religious diets, sensory limits, after-dark floors, and concurrent capacity": [
+        "6f16f6f02ea6",
+        "ea2816556652"
+      ],
+      "## Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores": [
+        "c5d7d2e9255e"
+      ],
+      "Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Fetch external venues only when fewer than ten qualified local venues exist": [
+        "36d87dacf5e1",
+        "366e0d3aa43f"
+      ],
+      "Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Verify live opening status after 24 hours on weekdays or 6 hours on weekends and holidays": [
+        "aad2da31012a",
+        "86a2259c632e"
+      ],
+      "Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Quarantine a venue immediately on any closure report": [
+        "5f2f259588b6",
+        "47c8f8d9030a"
+      ],
+      "Story: Maintain catalog freshness, closure quarantine, and deterministic venue scores / Clamp integers and compute bounded group rubric and budget scores": [
+        "c5464e97af94",
+        "fee2aedddcf5"
+      ]
+    },
     "spec/webhookInbox.md": {
       "@document": [
         "beb81805eb08"
@@ -6734,6 +7071,19 @@
       "Story: Stop using photo standing when it predicts nothing / The Date lane uses photo standing only while the standing gap predicts mutual interest": [
         "f35ca5723399",
         "8b89fa2e6407"
+      ]
+    },
+    "spec/workIntroChannel.md": {
+      "@document": [
+        "1f5ee81c7a9a"
+      ],
+      "## Story: Hand off a work introduction over the right digital channel": [
+        "05b7669e152c"
+      ],
+      "Story: Hand off a work introduction over the right digital channel / Work introductions select only WarmEmail, ScheduledVideo, RelayShare, or NoChannel": [
+        "5b706f0ab423",
+        "1c4b4c8019ee",
+        "7c89a67a7dd8"
       ]
     }
   },

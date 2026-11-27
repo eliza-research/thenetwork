@@ -1,0 +1,32 @@
+{"kind":"natural_reschedule","text":"Can we move it to Thursday at 7pm?","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","wantKind":"request","wantLocalHour":19,"note":"LA Thursday 7pm"}
+{"kind":"natural_reschedule","text":"Push it to Friday 6:30pm instead?","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","wantKind":"request","wantLocalHour":18,"note":"SF Friday 6:30pm"}
+{"kind":"natural_reschedule","text":"Reschedule to Saturday morning at 11am","tz":"America/Chicago","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T00:00:00Z","wantKind":"request","wantLocalHour":11,"note":"Chicago Saturday 11am"}
+{"kind":"natural_reschedule","text":"Move it to tomorrow at 8pm","tz":"America/New_York","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-08T23:00:00Z","wantKind":"request","wantLocalHour":20,"note":"NYC tomorrow 8pm"}
+{"kind":"natural_reschedule","text":"Can we do Sunday at 2pm instead?","tz":"America/New_York","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-08T23:00:00Z","wantKind":"request","wantLocalHour":14,"note":"Miami Sunday 2pm"}
+{"kind":"natural_reschedule","text":"Push it 1 hour later please","tz":"America/Chicago","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T00:00:00Z","wantKind":"request","wantLocalHour":20,"note":"Chicago relative +1h"}
+{"kind":"natural_reschedule","text":"Can we move it 30 minutes earlier?","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","wantKind":"request","wantLocalHour":18,"note":"LA relative -30m"}
+{"kind":"natural_reschedule","text":"Move it to 2026-10-10 15:00","tz":"America/Chicago","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T00:00:00Z","wantKind":"request","wantLocalHour":15,"note":"ISO date in natural cue"}
+{"kind":"natural_reschedule","text":"yes","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","openRef":"abcdefghijklmnop","wantKind":"vote","wantAccepted":true,"note":"simple yes vote on open offer"}
+{"kind":"natural_reschedule","text":"sounds good","tz":"America/Chicago","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T00:00:00Z","openRef":"abcdefghijklmnop","wantKind":"vote","wantAccepted":true,"note":"conversational yes vote"}
+{"kind":"natural_reschedule","text":"doesn't work","tz":"America/New_York","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-08T23:00:00Z","openRef":"abcdefghijklmnop","wantKind":"vote","wantAccepted":false,"note":"conversational no vote"}
+{"kind":"natural_reschedule","text":"Thursday at 7pm sounds great, see you there!","tz":"America/New_York","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-08T23:00:00Z","wantKind":null,"note":"booking confirmation is not reschedule"}
+{"kind":"natural_reschedule","text":"Can't make it, please cancel","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","wantKind":null,"note":"explicit cancel is not reschedule"}
+{"kind":"natural_reschedule","text":"Running 10 minutes late, almost there","tz":"America/Chicago","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T00:00:00Z","wantKind":null,"note":"late arrival is not reschedule"}
+{"kind":"natural_reschedule","text":"Let's pick a quieter spot instead","tz":"America/Los_Angeles","nowIso":"2026-10-05T16:00:00Z","origIso":"2026-10-07T02:00:00Z","wantKind":null,"note":"venue swap is not reschedule"}
+{"kind":"venue_rejection","text":"I'm sober and don't go to bars, can we do coffee instead?","wantReason":"red_line","note":"alcohol red line"}
+{"kind":"venue_rejection","text":"I have a severe peanut allergy, somewhere else please","wantReason":"red_line","note":"allergy red line"}
+{"kind":"venue_rejection","text":"I keep kosher so that spot doesn't work for me","wantReason":"red_line","note":"dietary red line"}
+{"kind":"venue_rejection","text":"Stairs are hard with my wheelchair, need accessible place","wantReason":"red_line","note":"accessibility red line"}
+{"kind":"venue_rejection","text":"I've already been there twice this week","wantReason":"already_been","note":"already visited"}
+{"kind":"venue_rejection","text":"Been there already, somewhere new?","wantReason":"already_been","note":"been there"}
+{"kind":"venue_rejection","text":"Way too far from me, closer to Mission?","wantReason":"too_far","note":"distance rejection"}
+{"kind":"venue_rejection","text":"That's across town, long subway commute for me","wantReason":"too_far","note":"commute rejection"}
+{"kind":"venue_rejection","text":"A bit too expensive for a first coffee","wantReason":"price","note":"price rejection"}
+{"kind":"venue_rejection","text":"Way too pricey, somewhere more budget friendly?","wantReason":"price","note":"budget rejection"}
+{"kind":"venue_rejection","text":"Too loud there, somewhere quieter?","wantReason":"wrong_vibe","note":"noise/vibe rejection"}
+{"kind":"venue_rejection","text":"Super crowded and noisy on Fridays, more cozy vibe?","wantReason":"wrong_vibe","note":"crowded vibe rejection"}
+{"kind":"venue_rejection","text":"Can't make that time, can we do another day?","wantReason":"bad_time","note":"time rejection"}
+{"kind":"venue_rejection","text":"Need something earlier, wrong day for me","wantReason":"bad_time","note":"earlier/wrong day"}
+{"kind":"venue_rejection","text":"Not really feeling that spot","wantReason":"bare_no","note":"bare decline"}
+{"kind":"venue_rejection","text":"Nope, pick another one","wantReason":"bare_no","note":"generic decline"}
+{"kind":"venue_rejection","text":"Hard pass on that place","wantReason":"bare_no","note":"short decline"}

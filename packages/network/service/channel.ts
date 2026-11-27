@@ -1,5 +1,5 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { MemberId, TimeOption } from "@thenetwork/core";
+import { DAY, type MemberId, type TimeOption, type WorkIntroState } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
 import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
@@ -107,8 +107,10 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
   if (!ids.length) return false;
   const rows = await tx<{
     scheduled: boolean; confirmed: boolean | null; revision: number | null; meeting_at: Date | null;
+    work_intro: WorkIntroState | null;
     group_booking: boolean | null; roster_recorded: boolean; roster_includes_recipient: boolean | null; roster_accepted: boolean;
   }[]>`select opp.meeting_at,
+    booking."workIntro" as work_intro,
     (booking.id is not null and opp.state='SCHEDULED') as scheduled,
     (seat.role='participant' and seat.status='confirmed') as confirmed,booking."scheduleRevision" as revision,
     opp.kind='group' as group_booking,msg.booking_roster_member_ids is not null as roster_recorded,
@@ -125,12 +127,17 @@ export async function originalBookingNoticeStale(tx: SQL, app: string, runtimeId
     left join network.opportunities opp on opp.app_id=msg.app_id and opp.id=msg.opportunity_id
     left join network.participations seat on seat.app_id=msg.app_id and seat.opportunity_id=msg.opportunity_id and seat.member_id=msg.member_id
     left join network.network_state saved on saved.app_id=msg.app_id and saved.id=${runtimeId}
-    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int,status jsonb) on booking.id=msg.opportunity_id
+    left join lateral jsonb_to_recordset(saved.state->'opps') as booking(id text,"scheduleRevision" int,status jsonb,"workIntro" jsonb) on booking.id=msg.opportunity_id
     where msg.app_id=${app} and msg.id in ${tx(ids)} and msg.direction='outbound' and msg.type='proposal' and msg.opportunity_id is not null`;
   const now = clock.now();
-  return rows.some(row => !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
-    (row.revision ?? 0) === 0, (row.meeting_at?.getTime() ?? now) - now)
-    || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_accepted))
+  return rows.some(row => {
+    const deadlineAt = row.work_intro
+      ? (row.work_intro.videoSlotAt ?? row.work_intro.followupDueAt ?? (row.meeting_at?.getTime() ?? now) + 7 * DAY)
+      : (row.meeting_at?.getTime() ?? now);
+    return !originalBookingNoticeCurrent(row.scheduled === true, row.confirmed === true,
+      (row.revision ?? 0) === 0, deadlineAt - now)
+      || !bookingNoticeRosterCurrent(row.group_booking === true, row.roster_recorded, row.roster_includes_recipient === true, row.roster_accepted);
+  })
     || !await venueBookingNoticesCurrent(tx, app, runtimeId, ids, now, queued);
 }
 
@@ -585,9 +592,11 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
       const inviteLink = row.id.startsWith(EXPECTED_INVITATION_PREFIX) && row.text.split("\n")[1];
       if (inviteLink && isMemberInvitationLink(rt.app, inviteLink)) return { ...base, contactAllow: [inviteLink] };
       const from = rt.net.relayContactShareFrom(row.id), number = from && rt.addressOf(from);
+      const venueAddress = rt.net.publicMeetupVenueAddress(row.oppId, row.text);
       const bookingLink = row.kind === "reply" || row.kind === "transactional"
         ? rt.net.approvedBookingLink(row.oppId, recipient, row.text, row.id) : undefined;
-      return number ? { ...base, allow: [number] }
+      const allow = [...(number ? [number] : []), ...(venueAddress ? [venueAddress] : [])];
+      return allow.length ? { ...base, allow }
         : bookingLink ? { ...base, contactAllow: [bookingLink] } : base;
     },
     lockAdmission: async (row, tx) => {

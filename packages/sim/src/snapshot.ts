@@ -2,7 +2,7 @@
 // capture). This is what an Engine receives; it never includes hidden truth, except that
 // private disclosures are present as agent_private facets (that is realistic: members tell
 // the agent things in confidence) so engines can be tested for privacy leaks.
-import { DAY, HOUR, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
+import { CITY_IDS, CITY_TZ, DAY, HOUR, canBeMatched, parseReply, type Category, type City, type Edge, type Facet, type Intent, type Member, type MemberId, type OpportunityKind, type Presence, type Proposal, type WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { matchingHistoryOutcome } from "../../core/src/generated/matchingHistory.ts";
 import { intentHorizonDays, intentRecordTiming, type Persona } from "./persona.ts";
@@ -34,9 +34,10 @@ export interface SnapshotFeatures {
    * Needs SnapshotState.records.
    */
   planAgainEdges?: boolean;
+  strataProjections?: boolean;
 }
 /** Default since engine v1.2 (docs/results/2026-10-07-engine-v1.2.md). */
-export const SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true };
+export const SNAPSHOT_FEATURES: SnapshotFeatures = { eventsPerWeek: 6, shareInterests: true, hostTags: true, romancePrefs: true, strataProjections: true };
 /** Share of stated interests a member agrees to have mentioned (synthetic dataset: 0.6). */
 export const SHARE_CONSENT = 0.6;
 
@@ -127,6 +128,12 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
   }
   if (c.neighborhood) facets.push(said("fact", `lives near ${p.routine.homeArea}`, ["neighborhood"], "shareable", 0));
   k.observations.forEach((o, i) => facets.push({ ...o.facet, tags: [...o.facet.tags], id: `${p.id}:s${facets.length}:${i}`, memberId: p.id, scope: minor ? "agent_private" : o.facet.scope }));
+  if (feat.strataProjections && !minor && !p.hidden.poser && k.richness !== "minimal" && p.public.projectedFacets?.length) {
+    const keepCount = k.richness === "light" ? 2 : k.richness === "medium" ? 4 : p.public.projectedFacets.length;
+    p.public.projectedFacets.slice(0, keepCount).forEach((pf, i) => {
+      facets.push(said(pf.kind, pf.value, [...pf.tags], pf.scope, i));
+    });
+  }
   for (const i of c.intents) {
     const it = p.public.statedIntents[i];
     const rec = it && intentRecordTiming(p, i, now, jt, { unresponsive: at => unresponsive(p.id, at) });
@@ -136,6 +143,14 @@ function pushKnownFacets(p: Persona, k: Knowledge, jt: number, now: number, unre
       id: `${p.id}:i${i}`, memberId: p.id, objective: c.intentMode === "vague" ? VAGUE_INTENT[it.category] ?? "meet some new people" : it.text, category: it.category,
       details: c.intentMode === "detailed" && def ? `format: ${def.format}; tags: ${[...def.needsInterests, ...def.needsSkills, def.pool ?? ""].filter(Boolean).join(",")}` : undefined,
       horizonDays: intentHorizonDays(it.category), status: rec.status, createdAt: rec.createdAt,
+    });
+  }
+  if (feat.strataProjections && !minor && !p.hidden.poser && c.intentMode === "detailed" && p.public.projectedIntents?.length) {
+    p.public.projectedIntents.forEach((pi, idx) => {
+      intents.push({
+        id: `${p.id}:pi${idx}`, memberId: p.id, objective: pi.text, category: pi.category,
+        details: pi.details, horizonDays: intentHorizonDays(pi.category), status: "active", createdAt: jt,
+      });
     });
   }
 }
@@ -197,6 +212,11 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
         facets.push(f("fact", `${d.fact} (ref ${d.canary})`, ["sensitive"], "agent_private", 0));
       }
       facets.push(f("fact", `lives near ${p.routine.homeArea}`, ["neighborhood"], "shareable", 0));
+      if (feat.strataProjections && canBeMatched(p.public.claimedAge) && !p.hidden.poser && p.public.projectedFacets?.length) {
+        p.public.projectedFacets.forEach((pf, i) => {
+          facets.push(f(pf.kind, pf.value, [...pf.tags], pf.scope, i));
+        });
+      }
       p.public.statedIntents.forEach((it, i) => {
         // Anchored to the snapshot's `now`: stated at join (or statedAt), re-confirmed at the
         // check-ins the member answered, withdrawn once the want lapsed (persona.ts).
@@ -209,6 +229,14 @@ export function buildSnapshot(personas: Persona[], s: SnapshotState): SimSnapsho
           horizonDays: intentHorizonDays(it.category), status: rec.status, createdAt: rec.createdAt,
         });
       });
+      if (feat.strataProjections && canBeMatched(p.public.claimedAge) && !p.hidden.poser && p.public.projectedIntents?.length) {
+        p.public.projectedIntents.forEach((pi, idx) => {
+          intents.push({
+            id: `${p.id}:pi${idx}`, memberId: p.id, objective: pi.text, category: pi.category,
+            details: pi.details, horizonDays: intentHorizonDays(pi.category), status: "active", createdAt: jt,
+          });
+        });
+      }
     }
     if (feat.romancePrefs) {
       const m = memberById.get(p.id)!;
@@ -272,18 +300,26 @@ function romancePrefFacet(p: Persona, jt: number, n: number): Facet {
  * interests most common among the city's adult members (a city has listings for what its people
  * like; the engine sees only title, time, place and tags). Deterministic.
  */
+const EVE_UTC_HOUR_BY_TZ: Record<string, number> = {
+  "America/Los_Angeles": 26,
+  "America/Chicago": 24,
+  "America/New_York": 23,
+};
+
 export function publicEvents(snap: Pick<WorldSnapshot, "now" | "members" | "facets">, perWeek: number): SimEvent[] {
   const events: SimEvent[] = [];
-  for (const city of ["sf", "nyc"] as const) {
+  for (const city of CITY_IDS) {
     const ids = new Set(snap.members.filter(m => m.homeCity === city && m.age >= 18).map(m => m.id));
+    if (ids.size === 0) continue;
     const counts = new Map<string, number>();
     for (const f of snap.facets) if (ids.has(f.memberId) && f.kind === "interest" && f.tags[0]) counts.set(f.tags[0], (counts.get(f.tags[0]) ?? 0) + 1);
     const tags = [...counts.entries()].sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1)).map(([t]) => t);
     const week = Math.floor(snap.now / (7 * DAY));
+    const eveHour = EVE_UTC_HOUR_BY_TZ[CITY_TZ[city]] ?? 23;
     for (let w = 0; w < 2; w++) for (let k = 0; k < perWeek; k++) {
       const tag = tags[(k + (week + w) * perWeek) % Math.max(1, tags.length)];
       if (!tag) continue;
-      const start = (week + w) * 7 * DAY + ((k % 6) + 1) * DAY + (city === "sf" ? 26 : 23) * HOUR; // ~7pm local
+      const start = (week + w) * 7 * DAY + ((k % 6) + 1) * DAY + eveHour * HOUR; // ~7pm local
       if (start < snap.now) continue;
       events.push({ id: `ev:${city}:${week + w}:${k}`, title: `${tag.replace(/_/g, " ")} night`, city, start, end: start + 3 * HOUR, tags: [tag], category: "social" });
     }

@@ -2,7 +2,7 @@
 // decisions (reply? accept? flake? worthwhile?), and a template voice that renders those
 // decisions as text in the persona's writing style. Used for fast tests and big worlds;
 // the LLM agent reuses the same policy for decisions and timing.
-import { DAY, HOUR, MINUTE, parseReply, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, parseReply, type City, type MemberId, type Proposal } from "@thenetwork/core";
 import { REACTION_TEXT, type MenuOption, type SimItem, type SimMessage, type TimeOption } from "../channel.ts";
 import type { OracleProposal, ParticipantOutcome } from "../oracle.ts";
 import { freeFor, pickTimes, timeConflict } from "./availability.ts";
@@ -107,7 +107,7 @@ export interface PolicyOptions {
    */
   tripClock?: boolean;
 }
-const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant"];
+const UNSAFE_FOR_ME = ["ex_partners", "romance_mismatch", "adversarial_participant", "grift_risk"];
 const loseTrust = (mem: PersonaContext["memory"], x: number) => { mem.trust = Math.max(0, Math.min(1, (mem.trust ?? 1) - x)); };
 
 export function decide(ctx: PersonaContext, msg: SimMessage, worldStart: number, opts: PolicyOptions = {}): PolicyDecision {
@@ -527,7 +527,7 @@ export function firstPerson(fact: string): string {
     .replace(/\bdoesn't\b/g, "don't").replace(/\bavoids\b/g, "avoid").replace(/\blimits\b/g, "limits");
 }
 
-function styled(p: Persona, text: string, rng: Rng, positive = true): string {
+export function styled(p: Persona, text: string, rng: Rng, positive = true): string {
   const s = p.hidden.style;
   let t = text;
   if (p.hidden.verbosity < 0.25) t = t.split(/(?<=[.!?])\s/)[0]!;
@@ -540,6 +540,49 @@ function styled(p: Persona, text: string, rng: Rng, positive = true): string {
     case "non-native English": t = t.replace(/I'm/g, "I am").replace(/don't/g, "do not").replace(/\bthe\b /, ""); break;
     case "chatty": if (positive) t = `${t} ${rng.pick(["Honestly this is great timing.", "Been meaning to do more of this!", "Thanks for thinking of me!"])}`; break;
     case "warm": if (positive) t = `${t} ${rng.pick(["Thank you!", "Appreciate it :)", "This is lovely."])}`; break;
+    case "genz-slang": {
+      const base = t.toLowerCase().replace(/[.!]+$/g, "").replace(/\byes\b/g, "bet").replace(/\bdefinitely\b/g, "fr");
+      t = positive
+        ? `${base} ${rng.pick(["fr", "ngl", "lowkey down", "bet"])}`
+        : `${base} ${rng.pick(["tbh", "rn sorry", "gonna pass ngl"])}`;
+      break;
+    }
+    case "voice-to-text-runon": {
+      const flat = t.replace(/[.!?]+/g, " and").replace(/\s+/g, " ").trim().replace(/\band$/i, "").trim();
+      t = `${rng.pick(["um yeah so", "hey so basically", "yeah"])} ${flat} ${rng.pick(["anyway let me know", "hope that makes sense", "sorry voice to text"])}`;
+      break;
+    }
+    case "boomer-email-sms": {
+      const first = p.name.split(" ")[0] ?? "Best";
+      t = `Hello, ${t} ${positive ? "Thank you very much." : "Thank you anyway."} Best, ${first}`;
+      break;
+    }
+    case "neurodivergent-literal": {
+      t = positive
+        ? `${t} Please confirm exact time and address.`
+        : `${t} That does not fit my schedule or criteria.`;
+      break;
+    }
+    case "defensive-skeptical": {
+      t = positive
+        ? `${t} Wait, you don't share my number without asking first, right?`
+        : `${t} Please don't share any of my info.`;
+      break;
+    }
+    case "typo-heavy-casual": {
+      t = t
+        .toLowerCase()
+        .replace(/\bthe\b/g, "teh")
+        .replace(/\bdefinitely\b/g, "defintely")
+        .replace(/\bsorry\b/g, "sry")
+        .replace(/\bthanks\b/g, "thx")
+        .replace(/\bwould\b/g, "woudl")
+        .replace(/\bthursday\b/g, "thursdy")
+        .replace(/\btomorrow\b/g, "tmrw")
+        .replace(/i'm/g, "im")
+        .replace(/don't/g, "dont");
+      break;
+    }
   }
   return t;
 }
@@ -699,13 +742,21 @@ export interface PolicyOptions {
   plans?: boolean | PlanAgentOptions;
 }
 
+const CITY_SHORT_NAME: Record<City, string> = {
+  sf: "SF",
+  nyc: "NYC",
+  la: "LA",
+  chicago: "Chicago",
+  miami: "Miami",
+};
+
 /** Routine-derived proactive behaviour; returns undefined when the persona stays quiet. */
 export function policyInitiative(ctx: PersonaContext, worldStart: number, opts: PolicyOptions = {}): Initiative | undefined {
   const { persona: p, memory: mem, rng, now } = ctx;
   if (!mem.joined || mem.optedOut || (mem.silentFrom !== undefined && now >= mem.silentFrom)) return undefined;
   const adv = p.hidden.adversarial;
   const city = currentCity(p, now, worldStart);
-  const cityName = city === "sf" ? "SF" : "NYC";
+  const cityName = CITY_SHORT_NAME[city] ?? "NYC";
   const lastMatch = mem.recentMatches[0] ? ctx.personaById(mem.recentMatches[0]) : undefined;
   const lastName = lastMatch?.name ?? "the person you introduced me to";
   if (adv) {
@@ -744,7 +795,7 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number, opts: 
   const trip = p.hidden.trips.find(t => t.fromDay - day >= 1 && t.fromDay - day <= 2);
   if (trip) {
     const s = worldStart + trip.fromDay * DAY, e = worldStart + trip.toDay * DAY;
-    return { kind: "travel", text: styled(p, `Heads up, I'll be in ${trip.city === "sf" ? "SF" : "NYC"} from ${fmtLocal(s, trip.city).split(" ")[1]} to ${fmtLocal(e, trip.city).split(" ")[1]}. Anything fun going on?`, rng) };
+    return { kind: "travel", text: styled(p, `Heads up, I'll be in ${CITY_SHORT_NAME[trip.city] ?? "NYC"} from ${fmtLocal(s, trip.city).split(" ")[1]} to ${fmtLocal(e, trip.city).split(" ")[1]}. Anything fun going on?`, rng) };
   }
   if (p.archetype === "never_replies") return undefined;
   if (!rng.bool(0.25 + 0.5 * p.hidden.socialEnergy * p.hidden.capacity)) return undefined;
@@ -752,7 +803,8 @@ export function policyInitiative(ctx: PersonaContext, worldStart: number, opts: 
     ? p.public.statedIntents.filter(i => { const d = p.hidden.desires.find(x => x.id === i.desireId); return !d || desireLive(d, now); })
     : p.public.statedIntents;
   const desire = asks.length ? rng.pick(asks) : undefined;
-  const area = rng.bool(0.7) ? p.routine.homeArea : rng.pick(NEIGHBORHOODS[city]);
+  const cityNeighborhoods = (NEIGHBORHOODS as Partial<Record<City, string[]>>)[city];
+  const area = rng.bool(0.7) || !cityNeighborhoods?.length ? p.routine.homeArea : rng.pick(cityNeighborhoods);
   const text = desire
     ? rng.pick([`Anyone around who'd want to ${desire.text}? I'm near ${area}.`, `Still hoping to ${desire.text}. Anything come up?`])
     : `Anything fun near ${area} this weekend?`;

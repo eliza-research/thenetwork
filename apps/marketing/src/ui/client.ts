@@ -2,13 +2,13 @@ export function renderCommandCenterJs(): string {
   return String.raw`(function () {
   "use strict";
 
-  const CITIES = ["nyc", "sf", "la", "chicago", "miami", "austin", "london"];
+  const FALLBACK_CITIES = ["nyc", "sf", "la", "chicago", "miami", "austin", "london"];
   const APPS = ["all", "ntwrk", "slop", "peon", "friends"];
   const RISK_DIALS = ["conservative", "balanced", "blitz", "lockdown"];
   const PROVIDERS = ["chatgpt", "claude", "gemini", "surplus"];
   const BD_STAGES = ["prospect", "enriched", "pitched", "negotiating", "contracted", "kit_shipped", "live", "audited"];
   const VIDEO_STAGES = ["trend", "script", "voice_render", "qa", "published", "measured", "killed"];
-  const DISCOVERY_SOURCES = ["nyc_open_data", "nys_sla", "hn", "github", "arxiv", "reddit", "youtube_rss", "luma", "eventbrite"];
+  const DISCOVERY_SOURCES = ["city_open_data", "nyc_open_data", "nys_sla", "hn", "github", "arxiv", "reddit", "youtube_rss", "luma", "eventbrite"];
 
   const VIEWS = [
     { id: "overview", label: "Overview", icon: "overview", key: "1" },
@@ -55,6 +55,11 @@ export function renderCommandCenterJs(): string {
     return "$" + n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   }
 
+  function usdMicros(micros) {
+    const n = (Number(micros) || 0) / 1000000;
+    return "$" + n.toLocaleString("en-US", { minimumFractionDigits: n < 0.1 ? 4 : 2, maximumFractionDigits: n < 0.1 ? 4 : 2 });
+  }
+
   function num(v) {
     return Math.max(0, Math.round(Number(v) || 0)).toLocaleString("en-US");
   }
@@ -97,9 +102,10 @@ export function renderCommandCenterJs(): string {
     return mapped || truncLabel(label || key, 19);
   }
 
-  function svgBar(pct, cls) {
+  function svgBar(pct, cls, fillTone) {
     const w = clamp(pct, 0, 100).toFixed(1);
-    return '<svg class="' + (cls || "bar-svg") + '" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="bar-track" width="100" height="6" rx="3"/><rect class="bar-fill" width="' + w + '" height="6" rx="3"/></svg>';
+    const fill = fillTone || "var(--primary)";
+    return '<svg class="' + (cls || "bar-svg") + '" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><rect class="bar-track" width="100" height="6" rx="3"/><rect width="' + w + '" height="6" rx="3" fill="' + fill + '"/></svg>';
   }
 
   function brandSvg(appId, size) {
@@ -180,10 +186,10 @@ export function renderCommandCenterJs(): string {
 
   function toneOf(s) {
     const k = String(s || "").toLowerCase();
-    if (["ok", "active", "online", "verified", "paid", "ready", "live", "approved", "published", "audited", "onboarded", "delivered", "sent", "idle", "running", "steady_state", "true"].includes(k)) return "ok";
-    if (["warn", "warning", "cooldown", "rate_limited", "charging_wait", "thermal_cooldown", "needs_takeover", "dry_run", "pending", "vesting", "quarantined", "disputed", "balanced", "blitz", "reconnecting", "leased"].includes(k)) return "warn";
-    if (["destructive", "lockdown", "paused_stop", "offline", "rejected", "killed", "blocked_stop", "blocked_policy", "failed", "cancelled", "banned", "stopped", "declined", "closed_lost", "false"].includes(k)) return "destructive";
-    if (["primary", "hired", "contracted", "measured"].includes(k)) return "primary";
+    if (["ok", "active", "online", "verified", "paid", "ready", "live", "approved", "published", "audited", "onboarded", "delivered", "sent", "idle", "running", "steady_state", "true", "live_matching", "scaling", "pass"].includes(k)) return "ok";
+    if (["warn", "warning", "cooldown", "rate_limited", "charging_wait", "thermal_cooldown", "needs_takeover", "dry_run", "pending", "vesting", "quarantined", "disputed", "balanced", "blitz", "reconnecting", "leased", "liquidity_seeding", "waitlist_kindling", "marketing_only"].includes(k)) return "warn";
+    if (["destructive", "lockdown", "paused_stop", "offline", "rejected", "killed", "blocked_stop", "blocked_policy", "failed", "fail", "cancelled", "banned", "stopped", "declined", "closed_lost", "false", "paused"].includes(k)) return "destructive";
+    if (["primary", "hired", "contracted", "measured", "researching"].includes(k)) return "primary";
     return "neutral";
   }
 
@@ -195,7 +201,7 @@ export function renderCommandCenterJs(): string {
     return '<span class="smark smark-' + t + '" title="' + esc(txt) + '"><svg width="11" height="11" viewBox="0 0 16 16" ' + a11y + '><path d="' + SHAPE[t] + '" fill="' + (ring ? "none" : "currentColor") + '" stroke="currentColor" stroke-width="' + (ring ? "2" : "0") + '"/></svg>' + (showLabel ? '<span class="smark-label">' + esc(txt) + '</span>' : '') + '</span>';
   }
 
-  function renderBudgetChart(budget, tracks) {
+  function renderBudgetChart(budget, tracks, cityLabel) {
     const mCap = Math.max(1, Number(budget && budget.monthlyBudgetCents) || 1000000);
     const spent = Math.max(0, Number(budget && budget.spentCents) || 0);
     const res = Math.max(0, Number(budget && budget.reservedCents) || 0);
@@ -208,13 +214,18 @@ export function renderCommandCenterJs(): string {
     const rLen = clamp(res / mCap, 0, Math.max(0, 1 - spent / mCap)) * c;
     const dRatio = clamp(dSpent / dCap, 0, 1);
     const dColor = dRatio >= 0.9 ? "var(--destructive)" : dRatio >= 0.7 ? "var(--warn)" : "var(--primary)";
-    const list = (tracks && tracks.length) ? tracks : [
+    const rawList = (tracks && tracks.length) ? tracks : [
       { track: "creator_video", label: "Creator Video", capCents: 330000, spentCents: 0 },
       { track: "street_fliering", label: "Street Fliering", capCents: 320000, spentCents: 0 },
       { track: "event_activation", label: "Event Activators", capCents: 170000, spentCents: 0 },
       { track: "agency_reserve", label: "W-2 Agency Reserve", capCents: 100000, spentCents: 0 },
       { track: "print_qr", label: "Print & QR", capCents: 80000, spentCents: 0 },
     ];
+    const rawTotal = rawList.reduce(function (a, b) { return a + (Number(b.capCents || b.amountCents) || 0); }, 0);
+    const scale = rawTotal > 0 && mCap > 0 && Math.abs(rawTotal - mCap) > 100 ? (mCap / rawTotal) : 1;
+    const list = scale === 1 ? rawList : rawList.map(function (t) {
+      return Object.assign({}, t, { capCents: Math.round((Number(t.capCents || t.amountCents) || 0) * scale) });
+    });
     const colors = ["var(--primary)", "var(--ok)", "var(--info)", "var(--warn)", "var(--muted-foreground)"];
     const total = Math.max(1, list.reduce(function (a, b) { return a + (Number(b.capCents || b.amountCents) || 0); }, 0));
     let off = 0;
@@ -238,7 +249,7 @@ export function renderCommandCenterJs(): string {
       (rLen > 0.1 ? '<circle cx="64" cy="64" r="' + r + '" fill="none" stroke="var(--warn)" stroke-width="11" stroke-dasharray="' + rLen.toFixed(2) + ' ' + (c - rLen).toFixed(2) + '" stroke-dashoffset="' + (-sLen).toFixed(2) + '" transform="rotate(-90 64 64)"/>' : '') +
       '<text x="64" y="61" text-anchor="middle" class="svg-kpi">' + esc(usd(rem)) + '</text><text x="64" y="77" text-anchor="middle" class="svg-sub">of ' + esc(usd(mCap)) + '</text></svg>' +
       '<div class="breaker-bar"><div class="breaker-head"><span>Daily cap</span><span class="tnum">' + usd(dSpent) + ' / ' + usd(dCap) + '</span></div><svg width="100%" height="12" viewBox="0 0 160 12" preserveAspectRatio="none" aria-hidden="true"><rect x="0" y="3" width="154" height="6" rx="3" fill="var(--muted)"/><rect x="0" y="3" width="' + (dRatio * 154).toFixed(1) + '" height="6" rx="3" fill="' + dColor + '"/><line x1="154" y1="1" x2="154" y2="11" stroke="var(--destructive)" stroke-width="2"/></svg></div></div>' +
-      '<div class="budget-tracks-wrap"><svg width="100%" height="10" class="stacked-bar" role="img" aria-label="NYC budget track split">' + segs + '</svg><div class="track-list">' + rows + '</div></div></div>';
+      '<div class="budget-tracks-wrap"><svg width="100%" height="10" class="stacked-bar" role="img" aria-label="' + esc(cityLabel || "City") + ' budget track split">' + segs + '</svg><div class="track-list">' + rows + '</div></div></div>';
   }
 
   function renderFunnelChart(attr) {
@@ -288,7 +299,7 @@ export function renderCommandCenterJs(): string {
       { armKey: "vip_salons", label: "VIP Salons", weight: 0.08, status: "active", cpaCents: null },
     ]).sort(function (a, b) { return (Number(b.weight) || 0) - (Number(a.weight) || 0); });
     const h = list.length * 30 + 10;
-    const hasObs = list.some(function (a) { return Number(a.signups) > 0 || a.cpaCents; });
+    const hasObs = list.some(function (a) { return Number(a.signups) > 0 || Number(a.verifiedOutcomes) > 0 || a.cpaCents; });
     const barStartX = 160;
     const barMaxW = 250;
     const rows = list.map(function (a, i) {
@@ -301,7 +312,7 @@ export function renderCommandCenterJs(): string {
       const lbl = shortTrack(a.track || a.armKey, a.label || a.armKey);
       return '<g transform="translate(0 ' + y + ')"><text x="0" y="15" class="svg-label"><title>' + esc(a.label || a.armKey) + '</title>' + esc(lbl) + '</text><rect x="' + barStartX + '" y="5" width="' + barMaxW + '" height="12" rx="3" fill="var(--muted)"/><rect x="' + barStartX + '" y="5" width="' + w.toFixed(1) + '" height="12" rx="3" fill="' + col + '" opacity="' + (a.status === "killed" ? "0.45" : "1") + '"><title>' + esc(a.label || a.armKey) + ": " + pct.toFixed(1) + "% (" + esc(a.status) + ')</title></rect><text x="458" y="15" text-anchor="end" class="svg-num">' + pct.toFixed(0) + '%</text><text x="484" y="15" text-anchor="middle" class="svg-sub">' + glyph + '</text><text x="554" y="15" text-anchor="end" class="svg-sub">' + esc(cpa) + '</text></g>';
     }).join("");
-    return '<div class="bandit-chart"><svg class="chart-svg-full" viewBox="0 0 560 ' + h + '" role="img" aria-label="Bandit arm allocation weights">' + rows + '</svg>' + (!hasObs ? '<div class="chart-foot">Uniform prior · updates on verified 18+ signups</div>' : '') + '</div>';
+    return '<div class="bandit-chart"><svg class="chart-svg-full" viewBox="0 0 560 ' + h + '" role="img" aria-label="Bandit arm allocation weights">' + rows + '</svg>' + (!hasObs ? '<div class="chart-foot">Uniform prior · updates on verified 18+ outcomes</div>' : '') + '</div>';
   }
 
   function renderDeviceGauges(d) {
@@ -324,12 +335,170 @@ export function renderCommandCenterJs(): string {
       '<div class="gauge-row"><span class="gauge-k">Warm-up</span><svg width="150" height="12" viewBox="0 0 152 12" aria-hidden="true">' + segs + '</svg><span class="gauge-v tnum">D' + day + ' · ' + esc(q) + '</span></div></div>';
   }
 
+  function renderCoreBackpressureBanner(bp) {
+    if (!bp) {
+      return '<div id="slot-core-backpressure" class="backpressure-banner bp-healthy">' +
+        '<span class="cell-flex">' + smark("neutral", "Core bridge", true) + '<span class="muted">Checking core queue pressure...</span></span>' +
+        '</div>';
+    }
+    const paused = Boolean(bp.paused);
+    const signals = Array.isArray(bp.signals) ? bp.signals : [];
+    const totalReviewOpen = signals.reduce(function (acc, s) { return acc + (Number(s.reviewOpen) || 0); }, 0);
+    const totalReviewOverdue = signals.reduce(function (acc, s) { return acc + (Number(s.reviewOverdue) || 0); }, 0);
+    const totalOutbound = signals.reduce(function (acc, s) { return acc + (Number(s.outboundWaiting) || 0); }, 0);
+    const pausedQueues = Array.isArray(bp.pausedQueues) ? bp.pausedQueues : [];
+    const fenceLabel = bp.bridgeHealthy ? "contact_fence active" : ("bridge " + (bp.mode || "offline"));
+    return '<div id="slot-core-backpressure" class="backpressure-banner ' + (paused ? "bp-paused" : "bp-healthy") + '">' +
+      '<span class="cell-flex">' +
+        smark(paused ? "destructive" : "ok", paused ? "Queue Backpressure PAUSED" : "Core Queue Healthy", true) +
+        (paused && pausedQueues.length ? '<span class="mono muted">' + esc(pausedQueues.join(", ")) + '</span>' : '') +
+      '</span>' +
+      '<div class="bp-metrics">' +
+        '<span class="bp-metric">' + smark(bp.bridgeHealthy ? "ok" : "neutral", fenceLabel, true) + '</span>' +
+        '<span class="bp-metric"><span class="muted">Review open</span><strong class="tnum">' + num(totalReviewOpen) + '</strong></span>' +
+        '<span class="bp-metric"><span class="muted">Overdue</span><strong class="tnum ' + (totalReviewOverdue > 0 ? "val-destructive" : "") + '">' + num(totalReviewOverdue) + '</strong></span>' +
+        '<span class="bp-metric"><span class="muted">Outbound</span><strong class="tnum">' + num(totalOutbound) + '</strong></span>' +
+      '</div></div>';
+  }
+
+  function renderCityExpansionStrip() {
+    const list = state.cities.length ? state.cities : FALLBACK_CITIES.map(function (code) {
+      return { code: code, label: code.toUpperCase(), stage: code === "nyc" ? "liquidity_seeding" : "waitlist_kindling", platformActive: ["nyc", "sf", "la", "chicago", "miami"].includes(code) };
+    });
+    const activeCity = state.selectedCity || "nyc";
+    return '<section id="slot-city-expansion" class="panel">' +
+      '<div class="panel-head"><h2 class="panel-title">Global City Expansion</h2>' +
+        '<div class="view-actions">' +
+          '<button class="btn btn-sm btn-primary" data-action="seed-city" data-city="' + esc(activeCity) + '">' + ico("zap", 12) + ' Seed ' + esc(activeCity.toUpperCase()) + '</button>' +
+          '<button class="btn btn-sm" data-action="run-discovery" data-city="' + esc(activeCity) + '">' + ico("search", 12) + ' Discover ' + esc(activeCity.toUpperCase()) + '</button>' +
+        '</div></div>' +
+      '<div class="city-strip">' + list.map(function (c) {
+        const code = String(c.code || "").toLowerCase();
+        const stage = c.overrideStage || c.stage || "researching";
+        const isActive = activeCity === code;
+        const platLabel = c.platformActive ? "Core active" : "Marketing only";
+        return '<article class="city-card' + (isActive ? " city-card-active" : "") + '" data-select-city="' + esc(code) + '">' +
+          '<div class="city-card-head"><span class="city-card-code">' + esc(code) + '</span>' + smark(c.platformActive ? "ok" : "warn", platLabel, true) + '</div>' +
+          '<div class="city-card-name">' + esc(c.label || code.toUpperCase()) + '</div>' +
+          '<div class="city-card-foot"><span class="city-card-stage">' + esc(human(stage)) + '</span>' +
+            '<button class="btn btn-sm" data-action="seed-city" data-city="' + esc(code) + '">Seed</button>' +
+          '</div></article>';
+      }).join("") + '</div></section>';
+  }
+
+  function renderDesireOutcomeMatrix() {
+    const dl = state.desireLanes;
+    const lanes = (dl && Array.isArray(dl.lanes)) ? dl.lanes : [];
+    const metrics = (dl && dl.metrics && typeof dl.metrics === "object") ? dl.metrics : {};
+    if (!lanes.length) {
+      return '<section id="slot-desire-outcomes" class="panel"><div class="panel-head"><h2 class="panel-title">Universal Desire Lanes</h2></div><div class="empty-inline">Loading desire lane matrix...</div></section>';
+    }
+    const maxVal = Math.max(1, lanes.reduce(function (mx, lane) {
+      const m = metrics[lane.id] || {};
+      const score = (Number(m.verifiedOutcomes) || 0) * 5 + (Number(m.tasks) || 0) + (Number(m.bdDeals) || 0) + (Number(m.vipProspects) || 0) + (Number(m.videos) || 0);
+      return Math.max(mx, score);
+    }, 1));
+
+    const rows = lanes.map(function (lane) {
+      const m = metrics[lane.id] || {};
+      const outcomes = Number(m.verifiedOutcomes) || 0;
+      const assets = (Number(m.tasks) || 0) + (Number(m.bdDeals) || 0) + (Number(m.vipProspects) || 0) + (Number(m.videos) || 0);
+      const barPct = clamp(((outcomes * 5 + assets) / maxVal) * 100, outcomes + assets > 0 ? 6 : 2, 100);
+      const isExt = lane.launchStatus === "extensible" || lane.core === false;
+      const airGapLabel = lane.airGapGroup === "romance" ? "slop != peon (romance)" : lane.airGapGroup === "economic_work" ? "slop != peon (work)" : human(lane.airGapGroup || "general");
+      const barCol = lane.airGapGroup === "romance" ? "var(--brand-slop)" : lane.airGapGroup === "economic_work" ? "var(--brand-peon)" : lane.airGapGroup === "social_platonic" ? "var(--brand-friends)" : "var(--primary)";
+      return '<div class="desire-row' + (isExt ? " desire-row-ext" : "") + '">' +
+        '<div class="desire-lane-name"><span class="desire-lane-title">' + esc(lane.label || titleCase(lane.id)) + '</span><span class="desire-airgap">' + esc(airGapLabel) + '</span></div>' +
+        '<svg class="desire-bar-svg" viewBox="0 0 100 8" preserveAspectRatio="none" role="img" aria-label="' + esc(lane.label || lane.id) + ' outcomes ' + num(outcomes) + '"><rect class="bar-track" width="100" height="8" rx="4"/><rect width="' + barPct.toFixed(1) + '" height="8" rx="4" fill="' + barCol + '"/></svg>' +
+        '<span class="tnum num">' + num(outcomes) + ' <span class="muted">18+</span></span>' +
+        '<span class="tnum muted">' + num(assets) + ' ops</span></div>';
+    }).join("");
+
+    return '<section id="slot-desire-outcomes" class="panel">' +
+      '<div class="panel-head"><h2 class="panel-title">Universal Desire Lanes</h2><span class="tnum muted">' + lanes.length + ' lanes</span></div>' +
+      '<div class="desire-grid">' + rows + '</div></section>';
+  }
+
+  function renderLlmBurnGauge() {
+    const lu = state.llmUsage;
+    const usage = (lu && lu.usage) ? lu.usage : (lu || {});
+    const caps = (lu && lu.caps) ? lu.caps : { dailyTokenCap: 250000, dailyCostCapMicros: 5000000 };
+    const decision = lu && lu.budgetDecision;
+    const tokUsed = Number(usage.totalTokens) || 0;
+    const tokCap = Math.max(1, Number(caps.dailyTokenCap) || 250000);
+    const costUsed = Number(usage.totalCostMicros) || 0;
+    const costCap = Math.max(1, Number(caps.dailyCostCapMicros) || 5000000);
+    const calls = Number(usage.callCount) || 0;
+    const cacheHits = Number(usage.cacheHits) || 0;
+    const detSkips = Number(usage.deterministicSkips) || 0;
+    const totalHandled = Math.max(1, calls + cacheHits + detSkips);
+    const cachePct = Math.round((cacheHits / totalHandled) * 100);
+    const detPct = Math.round((detSkips / totalHandled) * 100);
+    const tokPct = clamp((tokUsed / tokCap) * 100, 0, 100);
+    const costPct = clamp((costUsed / costCap) * 100, 0, 100);
+    const tokFill = tokPct >= 90 ? "var(--destructive)" : tokPct >= 70 ? "var(--warn)" : "var(--primary)";
+    const costFill = costPct >= 90 ? "var(--destructive)" : costPct >= 70 ? "var(--warn)" : "var(--ok)";
+    const allowed = decision ? Boolean(decision.allowed) : (tokUsed < tokCap && costUsed < costCap);
+
+    return '<section id="slot-llm-burn" class="panel">' +
+      '<div class="panel-head"><h2 class="panel-title">LLM Token & Cost Burn</h2>' +
+        smark(allowed ? "ok" : "destructive", allowed ? "Within Dafny caps" : "Cap halted", true) +
+      '</div>' +
+      '<div class="llm-burn-grid">' +
+        '<div class="llm-meter-row"><div class="llm-meter-head"><span>Daily tokens</span><span class="tnum">' + num(tokUsed) + ' / ' + num(tokCap) + '</span></div>' +
+          svgBar(tokPct, "llm-meter-svg", tokFill) + '</div>' +
+        '<div class="llm-meter-row"><div class="llm-meter-head"><span>Daily LLM cost</span><span class="tnum">' + esc(usdMicros(costUsed)) + ' / ' + esc(usdMicros(costCap)) + '</span></div>' +
+          svgBar(costPct, "llm-meter-svg", costFill) + '</div>' +
+        '<div class="llm-stat-pair">' +
+          '<div class="llm-stat-box"><span class="muted">PromptCache hit rate</span><strong class="llm-stat-val tnum">' + cachePct + '%</strong><span class="muted tnum">' + num(cacheHits) + ' hits</span></div>' +
+          '<div class="llm-stat-box"><span class="muted">Zero-token skips</span><strong class="llm-stat-val tnum">' + detPct + '%</strong><span class="muted tnum">' + num(detSkips) + ' routed</span></div>' +
+        '</div>' +
+      '</div></section>';
+  }
+
+  function renderSimulatorPanel() {
+    const sim = state.simSummary;
+    const running = state.simRunning;
+    let body = '<div class="empty-inline">Run a deterministic multi-city dry-run (NYC + SF, 7 adversarial storms, blocking safety & CPA lift gates).</div>';
+    if (sim) {
+      const gates = Array.isArray(sim.gates) ? sim.gates : [];
+      const blocking = gates.filter(function (g) { return g.blocking !== false; });
+      const passed = blocking.filter(function (g) { return g.pass; }).length;
+      const metrics = sim.metrics || {};
+      const liftPct = Number(metrics.banditCpaImprovementPct) || 0;
+      const banditCpa = metrics.blendedCpaCents !== undefined ? metrics.blendedCpaCents : metrics.banditBlendedCpaCents;
+      const uniformCpa = metrics.uniformBlendedCpaCents;
+      body = '<div class="sim-summary-grid">' +
+          '<div class="sim-kpi"><span class="muted">Blocking gates</span><strong class="sim-kpi-val tnum ' + (passed === blocking.length ? "val-ok" : "val-destructive") + '">' + passed + ' / ' + blocking.length + '</strong></div>' +
+          '<div class="sim-kpi"><span class="muted">Bandit CPA</span><strong class="sim-kpi-val tnum val-ok">' + (banditCpa !== null && banditCpa !== undefined ? usd2(banditCpa) : "—") + '</strong></div>' +
+          '<div class="sim-kpi"><span class="muted">Uniform CPA</span><strong class="sim-kpi-val tnum">' + (uniformCpa !== null && uniformCpa !== undefined ? usd2(uniformCpa) : "—") + '</strong></div>' +
+          '<div class="sim-kpi"><span class="muted">Bandit lift</span><strong class="sim-kpi-val tnum ' + (liftPct > 0 ? "val-ok" : "val-warn") + '">' + (liftPct >= 0 ? "+" : "") + liftPct.toFixed(1) + '%</strong></div>' +
+        '</div>' +
+        '<div class="sim-gate-grid">' + blocking.map(function (g) {
+          return '<div class="sim-gate-item ' + (g.pass ? "sim-gate-pass" : "sim-gate-fail") + '">' +
+            '<span>' + esc(human(g.id || g.name || "gate")) + '</span>' +
+            smark(g.pass ? "pass" : "fail", g.pass ? "PASS" : "FAIL", true) +
+          '</div>';
+        }).join("") + '</div>' +
+        '<div class="sim-lift-row"><span class="muted">Seeds: ' + esc((sim.seeds || []).join(", ") || "1") + ' · Days: ' + num(sim.days || 30) + '</span><span class="mono muted">Digest: ' + esc(String(sim.replayDigest || "deterministic").slice(0, 16)) + '</span></div>';
+    }
+    return '<section id="slot-dry-run-sim" class="panel sim-panel">' +
+      '<div class="panel-head"><h2 class="panel-title">Live Dry-Run Simulator (30-Day Multi-City)</h2>' +
+        '<div class="view-actions">' +
+          '<button class="btn btn-sm" data-action="run-sim-quick"' + (running ? " disabled" : "") + '>' + ico("play", 12) + (running ? " Running…" : " Quick Sim") + '</button>' +
+          '<button class="btn btn-sm btn-primary" data-action="run-sim-full"' + (running ? " disabled" : "") + '>' + ico("zap", 12) + (running ? " Running…" : " Run 30-Day Sim") + '</button>' +
+        '</div></div>' +
+      body + '</section>';
+  }
+
   const hashParams = new URLSearchParams(location.hash.replace(/^#/, ""));
   const hashToken = hashParams.get("token");
   if (hashToken) {
     sessionStorage.setItem("marketing_token", hashToken);
     history.replaceState(null, "", location.pathname + location.search);
   }
+  const initialHashView = hashParams.get("view") || "";
+  const VALID_VIEW_IDS = new Set(VIEWS.map(function (v) { return v.id; }));
 
   const savedTheme = localStorage.getItem("marketing_theme");
   if (savedTheme === "dark" || savedTheme === "light") {
@@ -339,15 +508,24 @@ export function renderCommandCenterJs(): string {
   const state = {
     token: sessionStorage.getItem("marketing_token") || "",
     authError: "",
-    view: "overview",
+    view: VALID_VIEW_IDS.has(initialHashView) ? initialHashView : "overview",
     subtab: { field: "tasks", bd: "pipeline", vip: "salons", rails: "adapters" },
     selectedCampaignId: "",
+    selectedCity: "nyc",
     cityFilter: "all",
     search: "",
     mobileNavOpen: false,
     sseStatus: "connecting",
     daemon: { enabled: false, intervalMs: 60000, lastTickAt: null },
     overview: null,
+    cities: [],
+    desireLanes: null,
+    llmUsage: null,
+    llmTrajectories: [],
+    corePressure: null,
+    suppressions: [],
+    simSummary: null,
+    simRunning: false,
     campaigns: [],
     agents: [],
     devices: [],
@@ -373,10 +551,28 @@ export function renderCommandCenterJs(): string {
     toasts: [],
   };
 
+  let shellMounted = false;
   let sseAbort = null;
+  let sseReconnectTimer = null;
+  let sseRefreshTimer = null;
   let pollTimer = null;
   let sseRetryMs = 1500;
+  let refreshInFlight = false;
+  let refreshPending = false;
   let toastSeq = 0;
+
+  function knownCityCodes() {
+    if (state.cities.length) {
+      return state.cities.map(function (c) { return String(c.code || "").toLowerCase(); }).filter(Boolean);
+    }
+    return FALLBACK_CITIES.slice();
+  }
+
+  function cityLabelFor(code) {
+    const k = String(code || "nyc").toLowerCase();
+    const found = state.cities.find(function (c) { return String(c.code || "").toLowerCase() === k; });
+    return (found && found.label) ? found.label : k.toUpperCase();
+  }
 
   function toast(text, tone) {
     const id = String(++toastSeq);
@@ -404,6 +600,7 @@ export function renderCommandCenterJs(): string {
       state.token = "";
       sessionStorage.removeItem("marketing_token");
       stopStreams();
+      shellMounted = false;
       render();
       return { ok: false, status: 401, data: null };
     }
@@ -423,68 +620,156 @@ export function renderCommandCenterJs(): string {
     }
   }
 
-  async function refreshAll() {
+  function applyOpsSummary(data) {
+    if (!data) return;
+    if (data.overview) {
+      state.overview = data.overview;
+      if (data.overview.banditArms) state.banditArms = data.overview.banditArms;
+      if (data.overview.daemon) state.daemon = data.overview.daemon;
+      if (data.overview.slopCash) state.slopCash = data.overview.slopCash;
+    }
+    if (Array.isArray(data.cities)) state.cities = data.cities;
+    else if (data.cities && Array.isArray(data.cities.cities)) state.cities = data.cities.cities;
+    if (data.desireLanes) state.desireLanes = data.desireLanes;
+    if (data.llmUsage) state.llmUsage = data.llmUsage;
+    if (data.corePressure) state.corePressure = data.corePressure;
+  }
+
+  async function refreshActiveView() {
     if (!state.token) { render(); return; }
-    const qCamp = state.selectedCampaignId ? ("?campaignId=" + encodeURIComponent(state.selectedCampaignId)) : "";
-    const [ov, camp, ag, dev, hum, tsk, prf, out, ad, sc, dir, ban, bdd, qrb, vip, vid, af, dmn] = await Promise.all([
-      api("GET", "/api/overview" + qCamp, undefined, true),
-      optGet("/api/campaigns"),
-      optGet("/api/agents"),
-      optGet("/api/devices"),
-      optGet("/api/humans"),
-      optGet("/api/tasks" + qCamp),
-      optGet("/api/proofs"),
-      optGet("/api/outreach" + qCamp),
-      optGet("/api/adapters"),
-      optGet("/api/slop-cash/status"),
-      optGet("/api/directory"),
-      optGet("/api/bandit" + qCamp),
-      optGet("/api/bd" + qCamp),
-      optGet("/api/qr-batches" + qCamp),
-      optGet("/api/vips" + qCamp),
-      optGet("/api/videos" + qCamp),
-      optGet("/api/antifraud" + qCamp),
-      optGet("/api/daemon/status"),
-    ]);
-    if (!ov.ok) return;
-    state.overview = ov.data;
-    if (camp && camp.campaigns) state.campaigns = camp.campaigns;
-    if (!state.selectedCampaignId && state.campaigns.length > 0) {
-      state.selectedCampaignId = state.campaigns[0].id;
+    if (refreshInFlight) {
+      refreshPending = true;
+      return;
     }
-    if (ag && ag.agents) state.agents = ag.agents;
-    if (dev && dev.devices) state.devices = dev.devices;
-    if (hum && hum.humans) state.humans = hum.humans;
-    if (tsk && tsk.tasks) state.tasks = tsk.tasks;
-    if (prf && prf.proofs) state.proofs = prf.proofs;
-    if (out && out.messages) state.outreach = out.messages;
-    if (ad) {
-      state.adapters = ad.adapters || [];
-      state.liveBillingEnabled = Boolean(ad.liveBillingEnabled);
+    refreshInFlight = true;
+    try {
+      const view = VALID_VIEW_IDS.has(state.view) ? state.view : "overview";
+      const qCamp = state.selectedCampaignId ? ("?campaignId=" + encodeURIComponent(state.selectedCampaignId)) : "";
+      const qCity = "?city=" + encodeURIComponent(state.selectedCity || "nyc");
+
+      if (view === "overview") {
+        const [ops, camp] = await Promise.all([
+          optGet("/api/ops-summary" + qCamp),
+          optGet("/api/campaigns"),
+        ]);
+        if (ops) {
+          applyOpsSummary(ops);
+        } else {
+          const [ov, cit, dl, lu, cp] = await Promise.all([
+            optGet("/api/overview" + qCamp),
+            optGet("/api/cities"),
+            optGet("/api/desire-lanes"),
+            optGet("/api/llm/usage"),
+            optGet("/api/core-pressure"),
+          ]);
+          if (ov) state.overview = ov;
+          if (ov && ov.banditArms) state.banditArms = ov.banditArms;
+          if (cit && cit.cities) state.cities = cit.cities;
+          if (dl) state.desireLanes = dl;
+          if (lu) state.llmUsage = lu;
+          if (cp) state.corePressure = cp;
+        }
+        if (camp && camp.campaigns) state.campaigns = camp.campaigns;
+        if (!state.selectedCampaignId && state.campaigns.length > 0) {
+          state.selectedCampaignId = state.campaigns[0].id;
+        }
+      } else if (view === "campaigns") {
+        const [camp, ban, dmn, cit] = await Promise.all([
+          optGet("/api/campaigns"),
+          optGet("/api/bandit" + qCamp),
+          optGet("/api/daemon/status"),
+          optGet("/api/cities"),
+        ]);
+        if (camp && camp.campaigns) state.campaigns = camp.campaigns;
+        if (ban && ban.arms) state.banditArms = ban.arms;
+        if (dmn) state.daemon = dmn;
+        if (cit && cit.cities) state.cities = cit.cities;
+      } else if (view === "agents") {
+        const [ag, lu, tr] = await Promise.all([
+          optGet("/api/agents"),
+          optGet("/api/llm/usage"),
+          optGet("/api/llm/trajectories?limit=25"),
+        ]);
+        if (ag && ag.agents) state.agents = ag.agents;
+        if (lu) state.llmUsage = lu;
+        if (tr && tr.trajectories) state.llmTrajectories = tr.trajectories;
+      } else if (view === "devices") {
+        const dev = await optGet("/api/devices");
+        if (dev && dev.devices) state.devices = dev.devices;
+      } else if (view === "field") {
+        const [tsk, prf, hum, dir, af, sup] = await Promise.all([
+          optGet("/api/tasks" + qCamp),
+          optGet("/api/proofs"),
+          optGet("/api/humans"),
+          optGet("/api/directory" + qCity),
+          optGet("/api/antifraud" + qCamp),
+          optGet("/api/suppressions?limit=100"),
+        ]);
+        if (tsk && tsk.tasks) state.tasks = tsk.tasks;
+        if (prf && prf.proofs) state.proofs = prf.proofs;
+        if (hum && hum.humans) state.humans = hum.humans;
+        if (dir) state.directory = dir;
+        if (af && af.claims) state.antifraudClaims = af.claims;
+        if (sup && sup.suppressions) state.suppressions = sup.suppressions;
+      } else if (view === "bd") {
+        const [bdd, qrb] = await Promise.all([
+          optGet("/api/bd" + qCamp),
+          optGet("/api/qr-batches" + qCamp),
+        ]);
+        if (bdd && bdd.deals) state.bdDeals = bdd.deals;
+        if (qrb && qrb.batches) state.qrBatches = qrb.batches;
+      } else if (view === "vip") {
+        const [vip, vid] = await Promise.all([
+          optGet("/api/vips" + qCamp),
+          optGet("/api/videos" + qCamp),
+        ]);
+        if (vip && vip.prospects) state.vipProspects = vip.prospects;
+        if (vid && vid.assets) state.videoAssets = vid.assets;
+      } else if (view === "rails") {
+        const [ad, out, sc] = await Promise.all([
+          optGet("/api/adapters"),
+          optGet("/api/outreach" + qCamp),
+          optGet("/api/slop-cash/status"),
+        ]);
+        if (ad) {
+          state.adapters = ad.adapters || [];
+          state.liveBillingEnabled = Boolean(ad.liveBillingEnabled);
+        }
+        if (out && out.messages) state.outreach = out.messages;
+        if (sc) state.slopCash = sc;
+      }
+      render();
+    } finally {
+      refreshInFlight = false;
+      if (refreshPending) {
+        refreshPending = false;
+        scheduleRefresh(100);
+      }
     }
-    if (sc) state.slopCash = sc;
-    if (dir) state.directory = dir;
-    if (ban && ban.arms) state.banditArms = ban.arms;
-    else if (ov.data && ov.data.banditArms) state.banditArms = ov.data.banditArms;
-    if (bdd && bdd.deals) state.bdDeals = bdd.deals;
-    if (qrb && qrb.batches) state.qrBatches = qrb.batches;
-    if (vip && vip.prospects) state.vipProspects = vip.prospects;
-    if (vid && vid.assets) state.videoAssets = vid.assets;
-    if (af && af.claims) state.antifraudClaims = af.claims;
-    if (dmn) state.daemon = dmn;
-    render();
+  }
+
+  function scheduleRefresh(delayMs) {
+    if (sseRefreshTimer) clearTimeout(sseRefreshTimer);
+    sseRefreshTimer = setTimeout(function () {
+      sseRefreshTimer = null;
+      void refreshActiveView();
+    }, typeof delayMs === "number" ? delayMs : 250);
   }
 
   function stopStreams() {
     if (sseAbort) { sseAbort.abort(); sseAbort = null; }
+    if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+    if (sseRefreshTimer) { clearTimeout(sseRefreshTimer); sseRefreshTimer = null; }
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
+
+  window.addEventListener("beforeunload", stopStreams);
 
   function startPollingFallback() {
     state.sseStatus = "polling";
     renderTopStatus();
     if (pollTimer) return;
-    pollTimer = setInterval(function () { void refreshAll(); }, 15000);
+    pollTimer = setInterval(function () { scheduleRefresh(0); }, 15000);
   }
 
   async function startSse() {
@@ -516,7 +801,7 @@ export function renderCommandCenterJs(): string {
           const frames = buf.split("\n\n");
           buf = frames.pop() || "";
           if (frames.some(function (f) { return f.includes("data:"); })) {
-            void refreshAll();
+            scheduleRefresh(250);
           }
         }
       }
@@ -527,7 +812,11 @@ export function renderCommandCenterJs(): string {
       renderTopStatus();
       const wait = sseRetryMs;
       sseRetryMs = Math.min(20000, sseRetryMs * 1.8);
-      setTimeout(function () { if (state.token) void startSse(); }, wait);
+      if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+      sseReconnectTimer = setTimeout(function () {
+        sseReconnectTimer = null;
+        if (state.token) void startSse();
+      }, wait);
     }
   }
 
@@ -592,29 +881,41 @@ export function renderCommandCenterJs(): string {
 
   function renderOverview() {
     const ov = state.overview;
-    if (!ov) return '<div class="empty-inline">Loading telemetry...</div>';
+    const cityCode = state.selectedCity || "nyc";
+    const cityName = cityLabelFor(cityCode);
+    const header = '<div class="view-head"><h1 class="view-title">Global Growth Overview</h1><div class="view-actions">' +
+      '<button class="btn btn-primary" data-action="seed-city" data-city="' + esc(cityCode) + '">' + ico("zap", 14) + ' Seed ' + esc(cityCode.toUpperCase()) + '</button>' +
+      '<button class="btn" data-action="autopilot-tick">' + ico("play", 14) + ' Autopilot Tick</button>' +
+      '<button class="btn" data-action="scan-devices">' + ico("devices", 14) + ' Scan Phones</button>' +
+      '<button class="btn" data-action="refresh">' + ico("refresh", 14) + ' Refresh</button>' +
+      '</div></div>';
+
+    if (!ov) {
+      return header + renderCoreBackpressureBanner(state.corePressure) + renderCityExpansionStrip() + '<div class="empty-inline">Loading telemetry...</div>';
+    }
     const b = ov.budget || {};
     const attr = ov.attribution || {};
     const prf = ov.proofs || {};
     const camp = ov.campaigns || {};
     const remTone = (b.remainingMonthlyCents || 0) < (b.monthlyBudgetCents || 1) * 0.15 ? "tone-warn" : "";
     const proofTone = (prf.pending || 0) > 0 ? "tone-warn" : "";
-    return '<div class="view-head"><h1 class="view-title">Overview</h1><div class="view-actions">' +
-      '<button class="btn btn-primary" data-action="seed-nyc">' + ico("zap", 14) + ' Seed NYC $10k</button>' +
-      '<button class="btn" data-action="autopilot-tick">' + ico("play", 14) + ' Autopilot Tick</button>' +
-      '<button class="btn" data-action="scan-devices">' + ico("devices", 14) + ' Scan Phones</button>' +
-      '<button class="btn" data-action="refresh">' + ico("refresh", 14) + ' Refresh</button>' +
-      '</div></div>' +
+    return header +
+      renderCoreBackpressureBanner(state.corePressure) +
       renderAlerts() +
       '<div class="kpi-grid">' +
         '<button class="kpi-tile" data-nav="campaigns" title="Remaining monthly budget across active campaigns"><span class="kpi-val tnum ' + remTone + '">' + esc(usd(b.remainingMonthlyCents)) + '</span><span class="kpi-lbl">Budget remaining</span></button>' +
-        '<button class="kpi-tile" data-nav="campaigns" title="Active campaigns">' + '<span class="kpi-val tnum">' + num(camp.active) + '</span><span class="kpi-lbl">Active campaigns</span></button>' +
+        '<button class="kpi-tile" data-nav="campaigns" title="Active campaigns"><span class="kpi-val tnum">' + num(camp.active) + '</span><span class="kpi-lbl">Active campaigns</span></button>' +
         '<button class="kpi-tile" data-nav="field" title="Verified 18+ adult signups attributed"><span class="kpi-val tnum tone-ok">' + num(attr.verifiedAdultSignups) + '</span><span class="kpi-lbl">Verified 18+ signups</span></button>' +
         '<button class="kpi-tile" data-nav="field" title="Proof submissions waiting verification"><span class="kpi-val tnum ' + proofTone + '">' + num(prf.pending) + '</span><span class="kpi-lbl">Pending proofs</span></button>' +
       '</div>' +
+      renderCityExpansionStrip() +
       '<div class="panel-grid">' +
-        '<section class="panel"><div class="panel-head"><h2 class="panel-title">Budget & NYC Tracks</h2><span class="tnum muted">' + usd2(b.spentCents) + ' spent</span></div>' + renderBudgetChart(b, state.directory.tracks) + '</section>' +
+        '<section class="panel"><div class="panel-head"><h2 class="panel-title">Budget & ' + esc(cityName) + ' Tracks</h2><span class="tnum muted">' + usd2(b.spentCents) + ' spent</span></div>' + renderBudgetChart(b, state.directory.tracks, cityName) + '</section>' +
         '<section class="panel"><div class="panel-head"><h2 class="panel-title">Acquisition Funnel</h2><span class="tnum muted">' + num(attr.qrScans) + ' scans</span></div>' + renderFunnelChart(attr) + '</section>' +
+      '</div>' +
+      '<div class="panel-grid panel-grid-start">' +
+        renderDesireOutcomeMatrix() +
+        renderLlmBurnGauge() +
       '</div>' +
       '<div class="panel-grid">' +
         '<section class="panel"><div class="panel-head"><h2 class="panel-title">Bandit Allocation</h2><button class="btn btn-sm" data-action="bandit-rebalance">Rebalance</button></div>' + renderBanditChart(state.banditArms) + '</section>' +
@@ -625,16 +926,17 @@ export function renderCommandCenterJs(): string {
           '<div class="meta-row"><span>Humans stopped</span><span class="tnum">' + num(ov.humans && ov.humans.stopped) + '</span></div>' +
           '<div class="meta-row"><span>slop.cash rail</span>' + smark(state.slopCash && state.slopCash.enabled ? "ok" : "destructive", state.slopCash && state.slopCash.enabled ? "Enabled" : "Locked off", true) + '</div>' +
         '</section>' +
-      '</div>';
+      '</div>' +
+      renderSimulatorPanel();
   }
 
   function renderCampaigns() {
     const rows = state.campaigns.filter(function (c) {
       if (state.cityFilter !== "all" && c.city !== state.cityFilter) return false;
-      return matchSearch([c.name, c.slug, c.city, c.appId, c.riskDial]);
+      return matchSearch([c.name, c.slug, c.city, c.appId, c.riskDial, c.desireLane]);
     });
-    const cityOpts = ["all"].concat(CITIES).map(function (c) {
-      return '<option value="' + c + '"' + (state.cityFilter === c ? " selected" : "") + '>' + (c === "all" ? "All cities" : c.toUpperCase()) + '</option>';
+    const cityOpts = ["all"].concat(knownCityCodes()).map(function (c) {
+      return '<option value="' + esc(c) + '"' + (state.cityFilter === c ? " selected" : "") + '>' + (c === "all" ? "All cities" : c.toUpperCase()) + '</option>';
     }).join("");
     return '<div class="view-head"><h1 class="view-title">Campaigns & Bandit</h1><div class="view-actions">' +
       '<select class="ctrl-select" data-filter="city" aria-label="Filter city">' + cityOpts + '</select>' +
@@ -660,9 +962,20 @@ export function renderCommandCenterJs(): string {
 
   function renderAgents() {
     const list = state.agents.filter(function (a) { return matchSearch([a.displayName, a.personaId, a.appId, a.provider, a.status]); });
-    return '<div class="view-head"><h1 class="view-title">Agents</h1><div class="view-actions">' +
+    const trajs = state.llmTrajectories.slice(0, 12);
+    const trajPanel = '<section class="panel"><div class="panel-head"><h2 class="panel-title">Recent LLM Trajectories</h2><span class="tnum muted">' + trajs.length + ' shown</span></div>' +
+      '<div class="table-wrap"><table class="dt"><thead><tr><th>Agent</th><th>Provider / Model</th><th class="num">Tokens</th><th class="num">Cost</th><th>Status</th></tr></thead><tbody>' +
+      (trajs.length ? trajs.map(function (t) {
+        return '<tr><td class="mono">' + esc(t.agentId || "—") + '</td><td>' + esc(t.provider || "—") + ' <span class="muted">' + esc(t.model || "") + '</span></td>' +
+          '<td class="num">' + num((Number(t.inputTokens) || 0) + (Number(t.outputTokens) || 0)) + '</td>' +
+          '<td class="num">' + esc(usdMicros(t.costMicros)) + '</td>' +
+          '<td>' + smark(t.status, human(t.status), true) + '</td></tr>';
+      }).join("") : '<tr><td colspan="5" class="empty-inline">No LLM trajectories recorded yet.</td></tr>') + '</tbody></table></div></section>';
+
+    return '<div class="view-head"><h1 class="view-title">Agents & LLM Telemetry</h1><div class="view-actions">' +
       '<button class="btn btn-primary" data-open-drawer="new-agent">' + ico("plus", 14) + ' Register Agent</button>' +
       '</div></div>' +
+      renderLlmBurnGauge() +
       (list.length ? '<div class="agent-card-grid">' + list.map(function (a) {
         const cap = Math.max(1, Number(a.dailyTurnCap) || 60);
         const pct = clamp(((Number(a.turnsUsedToday) || 0) / cap) * 100, 0, 100);
@@ -681,7 +994,8 @@ export function renderCommandCenterJs(): string {
               '<button class="btn btn-sm" data-open-drawer="agent-tick" data-id="' + esc(a.id) + '">' + ico("play", 12) + ' Tick</button>' +
               '<button class="btn btn-sm" data-action="' + (paused ? "agent-resume" : "agent-pause") + '" data-id="' + esc(a.id) + '">' + (paused ? "Resume" : "Pause") + '</button>' +
             '</div></div></article>';
-      }).join("") + '</div>' : '<section class="panel"><div class="empty-inline">No agents seeded yet. Click Seed NYC $10k on Overview.</div></section>');
+      }).join("") + '</div>' : '<section class="panel"><div class="empty-inline">No agents seeded yet. Seed any city on Overview.</div></section>') +
+      trajPanel;
   }
 
   function renderDevices() {
@@ -709,11 +1023,13 @@ export function renderCommandCenterJs(): string {
 
   function renderField() {
     const tab = state.subtab.field || "tasks";
+    const cityLabel = cityLabelFor(state.selectedCity || "nyc");
     const subtabs = [
       ["tasks", "Tasks (" + state.tasks.length + ")"],
       ["proofs", "Proofs (" + state.proofs.length + ")"],
       ["humans", "Humans (" + state.humans.length + ")"],
-      ["directory", "NYC Directory"],
+      ["suppressions", "STOP Registry (" + state.suppressions.length + ")"],
+      ["directory", cityLabel + " Directory"],
       ["antifraud", "Anti-Fraud (" + state.antifraudClaims.length + ")"],
     ].map(function (pair) {
       return '<button class="subtab-btn" role="tab" aria-selected="' + (tab === pair[0]) + '" data-subtab="field:' + pair[0] + '">' + esc(pair[1]) + '</button>';
@@ -721,17 +1037,18 @@ export function renderCommandCenterJs(): string {
 
     let body = "";
     if (tab === "tasks") {
-      const rows = state.tasks.filter(function (t) { return matchSearch([t.title, t.taskKind, t.vendorChannel, t.qrBatchCode, t.status]); });
-      body = '<div class="table-wrap"><table class="dt"><thead><tr><th>Task</th><th>Channel</th><th>QR Batch</th><th class="num">Amount</th><th>Proof</th><th>Status</th></tr></thead><tbody>' +
+      const rows = state.tasks.filter(function (t) { return matchSearch([t.title, t.taskKind, t.vendorChannel, t.qrBatchCode, t.city, t.status]); });
+      body = '<div class="table-wrap"><table class="dt"><thead><tr><th>Task</th><th>City</th><th>Channel</th><th>QR Batch</th><th class="num">Amount</th><th>Proof</th><th>Status</th></tr></thead><tbody>' +
         (rows.length ? rows.map(function (t) {
           return '<tr class="row-click" data-open-drawer="task-detail" data-id="' + esc(t.id) + '">' +
             '<td><strong>' + esc(t.title) + '</strong><div class="muted">' + esc(human(t.taskKind)) + ' · T' + esc(t.tier) + '</div></td>' +
+            '<td class="mono">' + esc(String(t.city || "").toUpperCase()) + '</td>' +
             '<td>' + esc(human(t.vendorChannel)) + '</td>' +
             '<td class="mono">' + esc(t.qrBatchCode || "—") + '</td>' +
             '<td class="num">' + usd2(t.amountCents) + '</td>' +
             '<td>' + smark(t.proofVerified ? "ok" : "neutral", t.proofVerified ? "Verified" : "Pending", true) + '</td>' +
             '<td>' + smark(t.status, human(t.status), true) + '</td></tr>';
-        }).join("") : '<tr><td colspan="6" class="empty-inline">No tasks yet.</td></tr>') + '</tbody></table></div>';
+        }).join("") : '<tr><td colspan="7" class="empty-inline">No tasks yet.</td></tr>') + '</tbody></table></div>';
     } else if (tab === "proofs") {
       const rows = state.proofs.filter(function (p) { return matchSearch([p.taskId, p.proofKind, p.evidenceUrl, p.verdict]); });
       body = '<div class="table-wrap"><table class="dt"><thead><tr><th>Proof</th><th>Evidence Link</th><th>Checks (FTC / Geo / Release)</th><th class="num">Scans / 18+</th><th>Verdict</th><th>Action</th></tr></thead><tbody>' +
@@ -746,27 +1063,34 @@ export function renderCommandCenterJs(): string {
             '<td><div class="view-actions"><button class="btn btn-sm" data-action="proof-approve" data-id="' + esc(p.id) + '">Approve</button><button class="btn btn-sm" data-action="proof-reject" data-id="' + esc(p.id) + '">Reject</button></div></td></tr>';
         }).join("") : '<tr><td colspan="6" class="empty-inline">No proof submissions yet.</td></tr>') + '</tbody></table></div>';
     } else if (tab === "humans") {
-      const rows = state.humans.filter(function (h) { return matchSearch([h.displayLabel, h.role, h.channel, h.city]); });
+      const rows = state.humans.filter(function (h) { return matchSearch([h.displayLabel, h.contactEmail, h.role, h.channel, h.city]); });
       body = '<div class="table-wrap"><table class="dt"><thead><tr><th>Human / Agency</th><th>Role</th><th>Channel</th><th class="num">Age Floor</th><th>STOP Fence</th><th>Action</th></tr></thead><tbody>' +
         (rows.length ? rows.map(function (h) {
-          return '<tr><td><strong>' + esc(h.displayLabel) + '</strong></td>' +
+          return '<tr><td><strong>' + esc(h.displayLabel) + '</strong>' + (h.contactEmail ? '<div class="mono muted">' + esc(h.contactEmail) + '</div>' : '') + '</td>' +
             '<td>' + esc(human(h.role)) + '</td>' +
             '<td>' + esc(h.channel) + '</td>' +
             '<td class="num">' + (h.lowestAge !== null && h.lowestAge !== undefined ? esc(h.lowestAge) + "+" : "—") + '</td>' +
             '<td>' + smark(h.stopped || h.banned ? "destructive" : "ok", h.stopped ? "STOPPED" : h.banned ? "BANNED" : "Active", true) + '</td>' +
             '<td>' + (!h.stopped ? '<button class="btn btn-sm btn-danger" data-action="human-stop" data-id="' + esc(h.id) + '">STOP</button>' : '<span class="muted">Blocked</span>') + '</td></tr>';
         }).join("") : '<tr><td colspan="6" class="empty-inline">No humans registered yet.</td></tr>') + '</tbody></table></div>';
+    } else if (tab === "suppressions") {
+      const rows = state.suppressions.filter(function (s) { return matchSearch([s.contactHash, s.reason, s.sourceChannel]); });
+      body = '<div class="view-actions"><button class="btn btn-sm btn-danger" data-open-drawer="new-suppression">' + ico("lock", 12) + ' Add Global Suppression</button></div>' +
+        '<div class="table-wrap"><table class="dt"><thead><tr><th>Contact Hash</th><th>Reason</th><th>Source</th><th>Minor Flag</th></tr></thead><tbody>' +
+        (rows.length ? rows.map(function (s) {
+          return '<tr><td class="mono">' + esc(String(s.contactHash || "").slice(0, 24)) + '…</td><td>' + esc(s.reason || "opt_out") + '</td><td>' + esc(s.sourceChannel || "—") + '</td><td>' + smark(s.isMinor ? "destructive" : "neutral", s.isMinor ? "Minor (<18)" : "Adult/Unknown", true) + '</td></tr>';
+        }).join("") : '<tr><td colspan="4" class="empty-inline">No global contact suppressions recorded.</td></tr>') + '</tbody></table></div>';
     } else if (tab === "directory") {
       const agencies = state.directory.agencies || [];
       const platforms = state.directory.platforms || [];
       const printers = state.directory.printers || [];
-      body = '<div class="panel-grid"><div><h3 class="panel-title">Vetted NYC Agencies (' + agencies.length + ')</h3><div class="table-wrap"><table class="dt"><thead><tr><th>Agency</th><th>Rate</th><th>Readiness</th></tr></thead><tbody>' +
+      body = '<div class="panel-grid"><div><h3 class="panel-title">Vetted ' + esc(cityLabel) + ' Agencies (' + agencies.length + ')</h3><div class="table-wrap"><table class="dt"><thead><tr><th>Agency</th><th>Rate</th><th>Readiness</th></tr></thead><tbody>' +
         (agencies.length ? agencies.map(function (a) {
           const href = safeUrl(a.website);
           return '<tr><td>' + (href ? '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + esc(a.name) + '</a>' : esc(a.name)) + '<div class="muted">' + esc(a.contactEmailOrIntake) + '</div></td><td>' + esc(a.typicalClientRateSummary) + '</td><td>' + esc(human(a.zeroTouchBookingReadiness)) + '</td></tr>';
         }).join("") : '<tr><td colspan="3" class="empty-inline">Directory endpoint not connected.</td></tr>') + '</tbody></table></div></div>' +
         '<div><h3 class="panel-title">Platforms & Local Printers (' + (platforms.length + printers.length) + ')</h3><div class="table-wrap"><table class="dt"><thead><tr><th>Vendor</th><th>Pricing / 5k Cost</th><th>Priority</th></tr></thead><tbody>' +
-        platforms.map(function (p) { return '<tr><td><strong>' + esc(p.name) + '</strong></td><td>' + esc(p.typicalNycRate) + '</td><td>' + esc(human(p.month1Priority)) + '</td></tr>'; }).join("") +
+        platforms.map(function (p) { return '<tr><td><strong>' + esc(p.name) + '</strong></td><td>' + esc(p.typicalLocalRate || p.typicalNycRate || "") + '</td><td>' + esc(human(p.month1Priority)) + '</td></tr>'; }).join("") +
         printers.map(function (p) { return '<tr><td><strong>' + esc(p.name) + '</strong><div class="muted">' + esc(p.pickupLocation) + '</div></td><td>' + esc(p.cost5k4x6PostcardsUsd) + '</td><td>' + (p.sameDayAvailable ? "Same-day" : "Standard") + '</td></tr>'; }).join("") +
         '</tbody></table></div></div></div>';
     } else {
@@ -797,7 +1121,7 @@ export function renderCommandCenterJs(): string {
     let body = "";
     if (tab === "pipeline") {
       body = '<div class="stage-cols">' + BD_STAGES.map(function (st) {
-        const items = state.bdDeals.filter(function (d) { return d.stage === st && matchSearch([d.venueName, d.vertical, d.city]); });
+        const items = state.bdDeals.filter(function (d) { return d.stage === st && matchSearch([d.venueName, d.vertical, d.city, d.desireLane]); });
         return '<div class="stage-col"><div class="stage-col-head"><span>' + esc(titleCase(st)) + '</span><span class="tnum muted">' + items.length + '</span></div>' +
           (items.length ? items.map(function (d) {
             return '<div class="stage-item" data-open-drawer="bd-detail" data-id="' + esc(d.id) + '"><strong>' + esc(d.venueName) + '</strong><span class="muted">' + esc(d.vertical) + ' · ' + usd(d.offeredCents) + '</span><span>' + smark(d.phoneCallbackVerified ? "ok" : "neutral", d.phoneCallbackVerified ? "Phone verified" : "Unverified", true) + '</span></div>';
@@ -828,7 +1152,7 @@ export function renderCommandCenterJs(): string {
 
     let body = "";
     if (tab === "salons") {
-      const rows = state.vipProspects.filter(function (v) { return matchSearch([v.name, v.archetype, v.organization, v.status]); });
+      const rows = state.vipProspects.filter(function (v) { return matchSearch([v.name, v.archetype, v.organization, v.city, v.status]); });
       body = '<div class="table-wrap"><table class="dt"><thead><tr><th>Prospect</th><th>Archetype</th><th>Source</th><th class="num">Prestige</th><th>Status</th><th>Invite</th></tr></thead><tbody>' +
         (rows.length ? rows.map(function (v) {
           const href = safeUrl(v.sourceUrl);
@@ -879,21 +1203,28 @@ export function renderCommandCenterJs(): string {
           return '<article class="panel"><div class="panel-head"><strong>' + esc(a.label) + '</strong>' + smark(a.readiness, human(a.readiness), true) + '</div><div class="meta-row"><span class="muted">Tier ' + esc(a.tier) + '</span><span class="mono">' + esc(a.activeProvider || "none") + '</span></div>' + provs + '</article>';
         }).join("") + '</div>';
     } else if (tab === "discovery") {
+      const targetCity = state.selectedCity || "nyc";
+      const cityOpts = knownCityCodes().map(function (c) {
+        return '<option value="' + esc(c) + '"' + (targetCity === c ? " selected" : "") + '>' + esc(cityLabelFor(c)) + '</option>';
+      }).join("");
       const checks = DISCOVERY_SOURCES.map(function (src) {
         const checked = state.selectedDiscoverySources.includes(src);
         return '<label class="check-field"><input type="checkbox" data-disc-src="' + esc(src) + '"' + (checked ? " checked" : "") + '/><span>' + esc(human(src)) + '</span></label>';
       }).join("");
       body = '<div class="view-actions">' + checks + '</div>' +
-        '<div class="view-actions"><button class="btn btn-primary" data-action="run-discovery">' + ico("zap", 14) + ' Run $0 Discovery</button></div>' +
-        '<div class="table-wrap"><table class="dt"><thead><tr><th>Lead</th><th>Vertical</th><th>Source</th><th class="num">Score</th><th>Action</th></tr></thead><tbody>' +
+        '<div class="view-actions">' +
+          '<select class="ctrl-select ctrl-select-sm" data-change-city="1" aria-label="Discovery city">' + cityOpts + '</select>' +
+          '<button class="btn btn-primary" data-action="run-discovery" data-city="' + esc(targetCity) + '">' + ico("zap", 14) + ' Discover ' + esc(targetCity.toUpperCase()) + '</button>' +
+        '</div>' +
+        '<div class="table-wrap"><table class="dt"><thead><tr><th>Lead</th><th>Vertical / Desire</th><th>Source</th><th class="num">Score</th><th>Action</th></tr></thead><tbody>' +
         (state.discoveredLeads.length ? state.discoveredLeads.map(function (l, idx) {
           const href = safeUrl(l.sourceUrl);
           return '<tr><td>' + (href ? '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + esc(l.title) + '</a>' : esc(l.title)) + '<div class="muted">' + esc(l.neighborhood || l.city || "") + '</div></td>' +
-            '<td><span class="cell-flex">' + brandSvg(l.vertical, 16) + esc(l.vertical) + '</span></td>' +
+            '<td><span class="cell-flex">' + brandSvg(l.vertical, 16) + esc(l.vertical) + '</span>' + (l.desireLane ? '<div class="muted">' + esc(human(l.desireLane)) + '</div>' : '') + '</td>' +
             '<td>' + esc(human(l.source)) + '</td>' +
             '<td class="num">' + num(l.score) + '</td>' +
             '<td><button class="btn btn-sm" data-action="promote-lead" data-idx="' + idx + '">Add Human</button></td></tr>';
-        }).join("") : '<tr><td colspan="5" class="empty-inline">Run discovery to pull live open-web leads.</td></tr>') + '</tbody></table></div>';
+        }).join("") : '<tr><td colspan="5" class="empty-inline">Run discovery to pull live open-web leads for any city.</td></tr>') + '</tbody></table></div>';
     } else if (tab === "outreach") {
       body = '<div class="view-actions"><button class="btn btn-primary" data-action="dispatch-outreach">' + ico("play", 14) + ' Dispatch Pending</button></div>' +
         '<div class="table-wrap"><table class="dt"><thead><tr><th>Channel</th><th>Subject / Summary</th><th>Leak Guard</th><th>Status</th></tr></thead><tbody>' +
@@ -920,15 +1251,19 @@ export function renderCommandCenterJs(): string {
     const d = state.drawer;
     const camp = activeCampaign();
     const campId = camp ? camp.id : "";
+    const curCity = state.selectedCity || "nyc";
+    const cityOpts = knownCityCodes().map(function (c) {
+      return '<option value="' + esc(c) + '"' + (c === curCity ? " selected" : "") + '>' + c.toUpperCase() + '</option>';
+    }).join("");
     let title = "Details";
     let inner = "";
 
     if (d.kind === "new-campaign") {
       title = "New Campaign";
       inner = '<form class="form-grid" data-form="new-campaign">' +
-        '<div class="field"><label>Name</label><input class="ctrl-input" name="name" required placeholder="SF Month-1 Launch"/></div>' +
+        '<div class="field"><label>Name</label><input class="ctrl-input" name="name" required placeholder="San Francisco Month-1 Launch"/></div>' +
         '<div class="field-row"><div class="field"><label>Slug</label><input class="ctrl-input" name="slug" required placeholder="sf-month-1"/></div>' +
-        '<div class="field"><label>City</label><select class="ctrl-select" name="city">' + CITIES.map(function (c) { return '<option value="' + c + '">' + c.toUpperCase() + '</option>'; }).join("") + '</select></div></div>' +
+        '<div class="field"><label>City</label><select class="ctrl-select" name="city">' + cityOpts + '</select></div></div>' +
         '<div class="field-row"><div class="field"><label>App</label><select class="ctrl-select" name="appId">' + APPS.map(function (a) { return '<option value="' + a + '">' + a + '</option>'; }).join("") + '</select></div>' +
         '<div class="field"><label>Monthly Cap (USD)</label><input class="ctrl-input" type="number" name="monthlyUsd" value="10000" min="100" required/></div></div>' +
         '<div class="field-row"><div class="field"><label>Daily Cap (USD)</label><input class="ctrl-input" type="number" name="dailyUsd" value="1000" min="50" required/></div>' +
@@ -939,7 +1274,7 @@ export function renderCommandCenterJs(): string {
       inner = '<form class="form-grid" data-form="new-agent">' +
         '<div class="field-row"><div class="field"><label>Persona ID</label><select class="ctrl-select" name="personaId"><option>chadwick</option><option>sloane</option><option>peon</option><option>venn</option><option>operator</option></select></div>' +
         '<div class="field"><label>Display Name</label><input class="ctrl-input" name="displayName" required placeholder="Sloane"/></div></div>' +
-        '<div class="field-row"><div class="field"><label>App</label><select class="ctrl-select" name="appId"><option>ntwrk</option><option>slop</option><option>peon</option><option>friends</option></select></div>' +
+        '<div class="field-row"><div class="field"><label>App</label><select class="ctrl-select" name="appId"><option>slop</option><option>ntwrk</option><option>peon</option><option>friends</option></select></div>' +
         '<div class="field"><label>Provider</label><select class="ctrl-select" name="provider">' + PROVIDERS.map(function (p) { return '<option>' + p + '</option>'; }).join("") + '</select></div></div>' +
         '<div class="field"><label>Daily Turn Cap</label><input class="ctrl-input" type="number" name="dailyTurnCap" value="60" min="1" max="500"/></div>' +
         '<button type="submit" class="btn btn-primary">Save Agent</button></form>';
@@ -947,14 +1282,14 @@ export function renderCommandCenterJs(): string {
       const a = state.agents.find(function (x) { return x.id === d.id; });
       title = "Dispatch Turn · " + (a ? a.displayName : d.id);
       inner = '<form class="form-grid" data-form="agent-tick"><input type="hidden" name="id" value="' + esc(d.id) + '"/>' +
-        '<div class="field"><label>Prompt</label><textarea class="ctrl-textarea" name="prompt">Execute scheduled NYC growth coordination turn.</textarea></div>' +
+        '<div class="field"><label>Prompt</label><textarea class="ctrl-textarea" name="prompt">Execute scheduled ' + esc(cityLabelFor(curCity)) + ' growth coordination turn.</textarea></div>' +
         '<label class="check-field"><input type="checkbox" name="dryRun" checked/><span>Dry run</span></label>' +
         '<label class="check-field"><input type="checkbox" name="allowFailover" checked/><span>Allow provider failover</span></label>' +
         '<button type="submit" class="btn btn-primary">Dispatch Turn</button></form>';
     } else if (d.kind === "new-device") {
       title = "Register Device";
       inner = '<form class="form-grid" data-form="new-device">' +
-        '<div class="field"><label>Label</label><input class="ctrl-input" name="label" required placeholder="pixel-nyc-02"/></div>' +
+        '<div class="field"><label>Label</label><input class="ctrl-input" name="label" required placeholder="pixel-' + esc(curCity) + '-02"/></div>' +
         '<div class="field-row"><div class="field"><label>Platform</label><select class="ctrl-select" name="platform"><option value="android">Android</option><option value="ios">iPhone (iOS)</option><option value="macbook">MacBook</option></select></div>' +
         '<div class="field"><label>Serial / UDID</label><input class="ctrl-input" name="serialOrUdid" required placeholder="PIXEL-USB-02"/></div></div>' +
         '<button type="submit" class="btn btn-primary">Register Device</button></form>';
@@ -968,21 +1303,32 @@ export function renderCommandCenterJs(): string {
     } else if (d.kind === "new-human") {
       title = "Add External Human";
       inner = '<form class="form-grid" data-form="new-human">' +
-        '<div class="field"><label>Display Label</label><input class="ctrl-input" name="displayLabel" required placeholder="Alex Rivera (SoHo)"/></div>' +
-        '<div class="field"><label>Contact HMAC / Key</label><input class="ctrl-input" name="handleOrEmailHmac" required placeholder="human:nyc-01"/></div>' +
+        '<div class="field"><label>Display Label</label><input class="ctrl-input" name="displayLabel" required placeholder="Alex Rivera"/></div>' +
+        '<div class="field-row"><div class="field"><label>Contact Email</label><input class="ctrl-input" type="email" name="contactEmail" placeholder="alex@example.com"/></div>' +
+        '<div class="field"><label>Contact HMAC / Key</label><input class="ctrl-input" name="handleOrEmailHmac" required placeholder="human:' + esc(curCity) + '-01"/></div></div>' +
         '<div class="field-row"><div class="field"><label>Role</label><select class="ctrl-select" name="role"><option value="street_worker">Street Worker</option><option value="creator">Creator</option><option value="agency">Agency</option><option value="venue">Venue</option><option value="vip">VIP</option><option value="applicant">Applicant</option></select></div>' +
         '<div class="field"><label>Verified Age (18+ paid)</label><input class="ctrl-input" type="number" name="lowestAge" value="22" min="18" max="120"/></div></div>' +
-        '<div class="field"><label>Channel</label><select class="ctrl-select" name="channel"><option>email</option><option>craigslist</option><option>rentahuman</option><option>youtube</option><option>tiktok</option><option>instagram</option></select></div>' +
+        '<div class="field-row"><div class="field"><label>City</label><select class="ctrl-select" name="city">' + cityOpts + '</select></div>' +
+        '<div class="field"><label>Channel</label><select class="ctrl-select" name="channel"><option>email</option><option>craigslist</option><option>rentahuman</option><option>youtube</option><option>tiktok</option><option>instagram</option></select></div></div>' +
         '<button type="submit" class="btn btn-primary">Save Human</button></form>';
+    } else if (d.kind === "new-suppression") {
+      title = "Add Global Suppression";
+      inner = '<form class="form-grid" data-form="new-suppression">' +
+        '<div class="field-row"><div class="field"><label>Contact Kind</label><select class="ctrl-select" name="kind"><option value="email">Email</option><option value="phone">Phone (E.164)</option><option value="handle">Handle</option></select></div>' +
+        '<div class="field"><label>Source Channel</label><input class="ctrl-input" name="sourceChannel" value="operator_ui" required/></div></div>' +
+        '<div class="field"><label>Email / Phone / Handle</label><input class="ctrl-input" name="contactValue" required placeholder="person@example.com or +14155550199"/></div>' +
+        '<div class="field"><label>Reason</label><input class="ctrl-input" name="reason" value="opt_out" required/></div>' +
+        '<label class="check-field"><input type="checkbox" name="isMinor"/><span>Known minor (&lt;18)</span></label>' +
+        '<button type="submit" class="btn btn-danger">Record Global Suppression</button></form>';
     } else if (d.kind === "new-task") {
       title = "New Marketing Task";
       inner = '<form class="form-grid" data-form="new-task"><input type="hidden" name="campaignId" value="' + esc(campId) + '"/>' +
-        '<div class="field"><label>Title</label><input class="ctrl-input" name="title" required placeholder="Wash Sq 4-hr Street Shift"/></div>' +
+        '<div class="field"><label>Title</label><input class="ctrl-input" name="title" required placeholder="4-hr Local Activation Shift"/></div>' +
         '<div class="field-row"><div class="field"><label>Kind</label><select class="ctrl-select" name="taskKind"><option value="street_fliering">Street Fliering</option><option value="creator_video">Creator Video</option><option value="event_activation">Event Activation</option><option value="agency_booking">Agency Booking</option><option value="print_order">Print Order</option></select></div>' +
         '<div class="field"><label>Channel</label><select class="ctrl-select" name="vendorChannel"><option value="craigslist">Craigslist</option><option value="rentahuman">RentAHuman</option><option value="creator_direct">Creator Direct</option><option value="agency_email">Agency Email</option><option value="print_api">Print API</option></select></div></div>' +
         '<div class="field-row"><div class="field"><label>Amount (USD)</label><input class="ctrl-input" type="number" name="amountUsd" value="88" min="1" required/></div>' +
-        '<div class="field"><label>QR Batch</label><input class="ctrl-input" name="qrBatchCode" placeholder="NYC-W1-SLOP-01"/></div></div>' +
-        '<div class="field"><label>Brief</label><textarea class="ctrl-textarea" name="briefText" required>Hand-to-hand sidewalk distribution only; 8ft clear width; zero posting on poles or MTA.</textarea></div>' +
+        '<div class="field"><label>QR Batch</label><input class="ctrl-input" name="qrBatchCode" placeholder="' + esc(curCity.toUpperCase()) + '-W1-SLOP-01"/></div></div>' +
+        '<div class="field"><label>Brief</label><textarea class="ctrl-textarea" name="briefText" required>Hand-to-hand sidewalk distribution only; full local compliance and zero posting on street fixtures.</textarea></div>' +
         '<button type="submit" class="btn btn-primary">Create Task</button></form>';
     } else if (d.kind === "submit-proof") {
       title = "Submit Proof of Work";
@@ -995,39 +1341,41 @@ export function renderCommandCenterJs(): string {
         '<div class="field"><label>Verified 18+ Signups</label><input class="ctrl-input" type="number" name="verifiedSignupsCount" value="6" min="0"/></div></div>' +
         '<label class="check-field"><input type="checkbox" name="ftcDisclosed" checked/><span>FTC #Ad / Paid Partnership verified</span></label>' +
         '<label class="check-field"><input type="checkbox" name="geoTimeValid" checked/><span>Geo & timestamp check-in valid</span></label>' +
-        '<label class="check-field"><input type="checkbox" name="likenessReleaseOk" checked/><span>NY §§ 50-51 written likeness releases verified</span></label>' +
+        '<label class="check-field"><input type="checkbox" name="likenessReleaseOk" checked/><span>Written commercial likeness releases verified</span></label>' +
         '<button type="submit" class="btn btn-primary">Submit & Evaluate</button></form>';
     } else if (d.kind === "new-bd") {
       title = "New BD Venue / Event Deal";
       inner = '<form class="form-grid" data-form="new-bd"><input type="hidden" name="campaignId" value="' + esc(campId) + '"/>' +
-        '<div class="field"><label>Venue / Host Name</label><input class="ctrl-input" name="venueName" required placeholder="Balthazar Annex"/></div>' +
-        '<div class="field-row"><div class="field"><label>Vertical</label><select class="ctrl-select" name="vertical"><option value="friends">friends.help</option><option value="slop">slop.date</option><option value="peon">peon.biz</option><option value="ntwrk">ntwrk.party</option><option value="all">all</option></select></div>' +
-        '<div class="field"><label>Offer (USD)</label><input class="ctrl-input" type="number" name="offeredUsd" value="0" min="0"/></div></div>' +
-        '<div class="field-row"><div class="field"><label>Contact Email</label><input class="ctrl-input" type="email" name="contactEmail" placeholder="events@venue.nyc"/></div>' +
-        '<div class="field"><label>Business Phone</label><input class="ctrl-input" name="businessPhone" placeholder="+12125550199"/></div></div>' +
+        '<div class="field"><label>Venue / Host Name</label><input class="ctrl-input" name="venueName" required placeholder="Local Cocktail Bar Partner"/></div>' +
+        '<div class="field-row"><div class="field"><label>City</label><select class="ctrl-select" name="city">' + cityOpts + '</select></div>' +
+        '<div class="field"><label>Vertical</label><select class="ctrl-select" name="vertical"><option value="friends">friends.help</option><option value="slop">slop.date</option><option value="peon">peon.biz</option><option value="ntwrk">ntwrk.party</option><option value="all">all</option></select></div></div>' +
+        '<div class="field"><label>Offer (USD)</label><input class="ctrl-input" type="number" name="offeredUsd" value="0" min="0"/></div>' +
+        '<div class="field-row"><div class="field"><label>Contact Email</label><input class="ctrl-input" type="email" name="contactEmail" placeholder="events@venue.example"/></div>' +
+        '<div class="field"><label>Business Phone</label><input class="ctrl-input" name="businessPhone" placeholder="+14155550199"/></div></div>' +
         '<button type="submit" class="btn btn-primary">Create Deal</button></form>';
     } else if (d.kind === "new-qr") {
       title = "Mint Serialized QR Batch";
       inner = '<form class="form-grid" data-form="new-qr"><input type="hidden" name="campaignId" value="' + esc(campId) + '"/>' +
-        '<div class="field-row"><div class="field"><label>Batch Code</label><input class="ctrl-input" name="batchCode" required placeholder="NYC-SOHO-01"/></div>' +
+        '<div class="field-row"><div class="field"><label>Batch Code</label><input class="ctrl-input" name="batchCode" required placeholder="' + esc(curCity.toUpperCase()) + '-CORRIDOR-01"/></div>' +
         '<div class="field"><label>Print Qty</label><input class="ctrl-input" type="number" name="printQty" value="5000" min="1"/></div></div>' +
-        '<div class="field"><label>Destination URL</label><input class="ctrl-input" type="url" name="destinationUrl" required value="https://go.slop.date/nyc-soho-01"/></div>' +
+        '<div class="field"><label>Destination URL</label><input class="ctrl-input" type="url" name="destinationUrl" required value="https://go.slop.date/' + esc(curCity) + '-01"/></div>' +
         '<button type="submit" class="btn btn-primary">Mint Batch</button></form>';
     } else if (d.kind === "new-vip") {
       title = "Add VIP Salon Prospect";
       inner = '<form class="form-grid" data-form="new-vip"><input type="hidden" name="campaignId" value="' + esc(campId) + '"/>' +
         '<div class="field"><label>Name</label><input class="ctrl-input" name="name" required placeholder="Dr. Maya Lin"/></div>' +
-        '<div class="field-row"><div class="field"><label>Archetype</label><input class="ctrl-input" name="archetype" required value="ai_researcher"/></div>' +
-        '<div class="field"><label>Organization</label><input class="ctrl-input" name="organization" placeholder="NYU Courant"/></div></div>' +
+        '<div class="field-row"><div class="field"><label>City</label><select class="ctrl-select" name="city">' + cityOpts + '</select></div>' +
+        '<div class="field"><label>Archetype</label><input class="ctrl-input" name="archetype" required value="ai_biotech_researcher"/></div></div>' +
+        '<div class="field"><label>Organization</label><input class="ctrl-input" name="organization" placeholder="Research Lab"/></div>' +
         '<div class="field"><label>Public Source URL</label><input class="ctrl-input" type="url" name="sourceUrl" placeholder="https://arxiv.org/..."/></div>' +
         '<button type="submit" class="btn btn-primary">Add Prospect</button></form>';
     } else if (d.kind === "new-video") {
       title = "New Video Factory Asset";
       inner = '<form class="form-grid" data-form="new-video"><input type="hidden" name="campaignId" value="' + esc(campId) + '"/>' +
-        '<div class="field"><label>Title</label><input class="ctrl-input" name="title" required placeholder="Sloane roasts NYC hinge prompts"/></div>' +
+        '<div class="field"><label>Title</label><input class="ctrl-input" name="title" required placeholder="The 400-Swipe Receipt"/></div>' +
         '<div class="field-row"><div class="field"><label>Agent</label><select class="ctrl-select" name="agentId"><option value="agent-sloane">Sloane</option><option value="agent-chadwick">Chadwick</option><option value="agent-peon">Peon</option><option value="agent-venn">Venn</option><option value="agent-operator">The Operator</option></select></div>' +
         '<div class="field"><label>Platform</label><select class="ctrl-select" name="platform"><option>tiktok</option><option>youtube_shorts</option><option>instagram_reels</option></select></div></div>' +
-        '<div class="field"><label>3-Second Hook</label><input class="ctrl-input" name="hook" required placeholder="Stop paying $60/mo to get ghosted in West Village."/></div>' +
+        '<div class="field"><label>3-Second Hook</label><input class="ctrl-input" name="hook" required placeholder="Eleven hours swiping. Zero real coffees."/></div>' +
         '<div class="field"><label>Script</label><textarea class="ctrl-textarea" name="script" required></textarea></div>' +
         '<label class="check-field"><input type="checkbox" name="ftcDisclosed" checked/><span>Includes #Ad disclosure</span></label>' +
         '<button type="submit" class="btn btn-primary">Create Asset</button></form>';
@@ -1055,7 +1403,9 @@ export function renderCommandCenterJs(): string {
       const v = state.vipProspects.find(function (x) { return x.id === d.id; });
       title = v ? v.name : "VIP Prospect";
       inner = v ? '<div class="meta-row"><span class="muted">Archetype</span><span>' + esc(human(v.archetype)) + '</span></div>' +
-        '<div class="view-actions"><button class="btn btn-sm btn-primary" data-action="vip-draft-invite" data-id="' + esc(v.id) + '">Draft <75w Invite</button></div>' +
+        '<form class="form-grid" data-form="vip-draft-invite"><input type="hidden" name="id" value="' + esc(v.id) + '"/>' +
+          '<div class="field"><label>Specific proof-of-work reference (&gt;=14 chars)</label><input class="ctrl-input" name="proofOfWork1Line" required placeholder="your recent paper on sparse attention scaling"/></div>' +
+          '<button type="submit" class="btn btn-sm btn-primary">Draft &lt;75w Invite</button></form>' +
         '<pre class="code-block">' + esc(v.inviteDraft || "No <75-word invite draft generated yet.") + '</pre>' : '';
     } else if (d.kind === "video-detail") {
       const v = state.videoAssets.find(function (x) { return x.id === d.id; });
@@ -1086,26 +1436,20 @@ export function renderCommandCenterJs(): string {
 
   function renderSignIn() {
     return '<main class="signin-wrap"><form class="signin-card" data-form="signin">' +
-      '<div class="cell-flex">' + brandSvg("ntwrk", 24) + '<strong>Marketing</strong></div>' +
+      '<div class="cell-flex">' + brandSvg("ntwrk", 24) + '<strong>Global Growth</strong></div>' +
       (state.authError ? '<div class="alert-strip">' + smark("destructive", "Error", false) + '<span>' + esc(state.authError) + '</span></div>' : '') +
       '<div class="field"><label for="tok-input">Bearer token</label><input id="tok-input" class="ctrl-input mono" type="password" name="token" required autocomplete="off" placeholder="Paste token from terminal"/></div>' +
       '<button type="submit" class="btn btn-primary">Sign in</button></form></main>';
   }
 
-  function render() {
-    const root = document.getElementById("app");
-    if (!root) return;
-    if (!state.token) {
-      root.innerHTML = renderSignIn();
-      return;
-    }
+  function renderTopbarMid() {
     const camp = activeCampaign();
     const dial = camp ? camp.riskDial : "conservative";
     const armed = camp ? Boolean(camp.billingArmed) : false;
 
     const campSelect = state.campaigns.length
       ? '<select class="ctrl-select ctrl-select-sm" data-change-campaign="1" aria-label="Active campaign">' + state.campaigns.map(function (c) {
-          return '<option value="' + esc(c.id) + '"' + (camp && c.id === camp.id ? " selected" : "") + '>' + esc(c.city.toUpperCase() + " · " + c.name) + '</option>';
+          return '<option value="' + esc(c.id) + '"' + (camp && c.id === camp.id ? " selected" : "") + '>' + esc(String(c.city || "").toUpperCase() + " · " + c.name) + '</option>';
         }).join("") + '</select>'
       : '';
 
@@ -1113,54 +1457,105 @@ export function renderCommandCenterJs(): string {
       return '<button class="seg-btn' + (d === "lockdown" ? " seg-danger" : "") + '" aria-pressed="' + (dial === d) + '" data-set-dial="' + d + '">' + d.toUpperCase() + '</button>';
     }).join("") + '</div>';
 
-    const viewBody = {
-      overview: renderOverview,
-      campaigns: renderCampaigns,
-      agents: renderAgents,
-      devices: renderDevices,
-      field: renderField,
-      bd: renderBd,
-      vip: renderVip,
-      rails: renderRails,
-    }[state.view]();
+    return campSelect + dialSegs +
+      '<button class="switch-btn" aria-pressed="' + armed + '" data-action="toggle-billing">' + smark(armed ? "warn" : "neutral", armed ? "Billing Armed" : "Disarmed", true) + '</button>';
+  }
 
+  function renderRailHtml() {
+    return VIEWS.map(function (v) {
+      return '<button class="rail-btn" data-nav="' + v.id + '"' + (state.view === v.id ? ' aria-current="page"' : '') + '>' + ico(v.icon, 15) + '<span>' + esc(v.label) + '</span><span class="rail-key">' + v.key + '</span></button>';
+    }).join("") +
+    '<div class="rail-foot">' +
+      '<div class="meta-row">' + brandSvg("slop", 16) + brandSvg("peon", 16) + brandSvg("friends", 16) + brandSvg("ntwrk", 16) + brandSvg("eliza", 16) + '</div>' +
+    '</div>';
+  }
+
+  function mountShell(root) {
     root.innerHTML = '<div class="shell">' +
       '<header class="topbar">' +
         '<button class="btn btn-ghost btn-icon mobile-menu-btn" data-action="toggle-nav" aria-label="Toggle navigation">' + ico("menu", 16) + '</button>' +
-        '<button class="brand-btn" data-nav="overview">' + brandSvg("ntwrk", 22) + '<span>Marketing</span></button>' +
-        '<div class="topbar-mid">' + campSelect + dialSegs +
-          '<button class="switch-btn" aria-pressed="' + armed + '" data-action="toggle-billing">' + smark(armed ? "warn" : "neutral", armed ? "Billing Armed" : "Disarmed", true) + '</button>' +
-        '</div>' +
+        '<button class="brand-btn" data-nav="overview">' + brandSvg("ntwrk", 22) + '<span>Global Growth</span></button>' +
+        '<div id="topbar-mid" class="topbar-mid"></div>' +
         '<div class="topbar-end">' +
           '<span id="sse-slot"></span>' +
           '<div class="search-wrap">' + ico("search", 14) + '<input id="global-search" class="ctrl-input ctrl-select-sm" type="search" value="' + esc(state.search) + '" placeholder="Filter (/)" aria-label="Filter current view"/></div>' +
-          '<button class="btn btn-ghost btn-icon" data-action="toggle-theme" aria-label="Toggle light or dark theme">' + ico(isDark() ? "sun" : "moon", 15) + '</button>' +
+          '<button id="theme-toggle-btn" class="btn btn-ghost btn-icon" data-action="toggle-theme" aria-label="Toggle light or dark theme">' + ico(isDark() ? "sun" : "moon", 15) + '</button>' +
           '<button class="btn btn-ghost btn-icon" data-action="open-help" aria-label="Keyboard shortcuts">' + ico("help", 15) + '</button>' +
           '<button class="btn btn-ghost btn-icon" data-action="sign-out" aria-label="Sign out">' + ico("lock", 15) + '</button>' +
         '</div>' +
       '</header>' +
       '<div class="workspace">' +
-        '<nav class="rail' + (state.mobileNavOpen ? " open" : "") + '" aria-label="Sections">' +
-          VIEWS.map(function (v) {
-            return '<button class="rail-btn" data-nav="' + v.id + '"' + (state.view === v.id ? ' aria-current="page"' : '') + '>' + ico(v.icon, 15) + '<span>' + esc(v.label) + '</span><span class="rail-key">' + v.key + '</span></button>';
-          }).join("") +
-          '<div class="rail-foot">' +
-            '<div class="meta-row">' + brandSvg("slop", 16) + brandSvg("peon", 16) + brandSvg("friends", 16) + brandSvg("ntwrk", 16) + brandSvg("eliza", 16) + '</div>' +
-          '</div>' +
-        '</nav>' +
-        '<main class="stage"><div class="stage-inner">' + viewBody + '</div></main>' +
+        '<nav id="nav-rail" class="rail" aria-label="Sections"></nav>' +
+        '<main class="stage"><div id="stage-inner" class="stage-inner"></div></main>' +
       '</div>' +
-      renderDrawer() +
-      renderModal() +
+      '<div id="drawer-host"></div>' +
+      '<div id="modal-host"></div>' +
       '<div id="toast-host" class="toasts" aria-live="polite"></div>' +
     '</div>';
+    shellMounted = true;
+  }
+
+  const VIEW_RENDERERS = {
+    overview: renderOverview,
+    campaigns: renderCampaigns,
+    agents: renderAgents,
+    devices: renderDevices,
+    field: renderField,
+    bd: renderBd,
+    vip: renderVip,
+    rails: renderRails,
+  };
+
+  function renderStageOnly() {
+    const viewKey = VIEW_RENDERERS[state.view] ? state.view : "overview";
+    state.view = viewKey;
+    const stageEl = document.getElementById("stage-inner");
+    if (stageEl) stageEl.innerHTML = VIEW_RENDERERS[viewKey]();
+  }
+
+  function render() {
+    const root = document.getElementById("app");
+    if (!root) return;
+    if (!state.token) {
+      shellMounted = false;
+      root.innerHTML = renderSignIn();
+      return;
+    }
+    if (!shellMounted || !document.getElementById("stage-inner")) {
+      mountShell(root);
+    }
+
+    const midEl = document.getElementById("topbar-mid");
+    if (midEl) midEl.innerHTML = renderTopbarMid();
+
+    const railEl = document.getElementById("nav-rail");
+    if (railEl) {
+      railEl.className = "rail" + (state.mobileNavOpen ? " open" : "");
+      railEl.innerHTML = renderRailHtml();
+    }
+
+    const themeBtn = document.getElementById("theme-toggle-btn");
+    if (themeBtn) themeBtn.innerHTML = ico(isDark() ? "sun" : "moon", 15);
+
+    const searchInp = document.getElementById("global-search");
+    if (searchInp && document.activeElement !== searchInp && searchInp.value !== state.search) {
+      searchInp.value = state.search;
+    }
+
+    renderStageOnly();
+
+    const drawerEl = document.getElementById("drawer-host");
+    if (drawerEl) drawerEl.innerHTML = renderDrawer();
+
+    const modalEl = document.getElementById("modal-host");
+    if (modalEl) modalEl.innerHTML = renderModal();
 
     renderTopStatus();
     renderToasts();
   }
 
   document.addEventListener("click", async function (e) {
-    const el = e.target && e.target.closest ? e.target.closest("[data-nav],[data-action],[data-subtab],[data-set-dial],[data-open-drawer],[data-close],[data-close-backdrop],[data-confirm-modal],[data-select-campaign]") : null;
+    const el = e.target && e.target.closest ? e.target.closest("[data-nav],[data-action],[data-subtab],[data-set-dial],[data-open-drawer],[data-close],[data-close-backdrop],[data-confirm-modal],[data-select-campaign],[data-select-city]") : null;
     if (!el) return;
 
     if (el.dataset.closeBackdrop && e.target === el) {
@@ -1179,9 +1574,10 @@ export function renderCommandCenterJs(): string {
       return;
     }
     if (el.dataset.nav) {
-      state.view = el.dataset.nav;
+      state.view = VALID_VIEW_IDS.has(el.dataset.nav) ? el.dataset.nav : "overview";
       state.mobileNavOpen = false;
       render();
+      void refreshActiveView();
       return;
     }
     if (el.dataset.subtab) {
@@ -1192,7 +1588,16 @@ export function renderCommandCenterJs(): string {
     }
     if (el.dataset.selectCampaign) {
       state.selectedCampaignId = el.dataset.selectCampaign;
-      await refreshAll();
+      const picked = activeCampaign();
+      if (picked && picked.city) state.selectedCity = String(picked.city).toLowerCase();
+      await refreshActiveView();
+      return;
+    }
+    if (el.dataset.selectCity && !el.dataset.action) {
+      state.selectedCity = String(el.dataset.selectCity).toLowerCase();
+      state.cityFilter = state.selectedCity;
+      render();
+      void refreshActiveView();
       return;
     }
     if (el.dataset.openDrawer) {
@@ -1206,7 +1611,7 @@ export function renderCommandCenterJs(): string {
       const nextDial = el.dataset.setDial;
       const applyDial = async function () {
         const r = await api("POST", "/api/campaigns/" + encodeURIComponent(camp.id) + "/risk-dial", { riskDial: nextDial, billingArmed: nextDial === "lockdown" ? false : camp.billingArmed });
-        if (r.ok) { toast("RiskDial set to " + nextDial.toUpperCase(), nextDial === "lockdown" ? "destructive" : "ok"); await refreshAll(); }
+        if (r.ok) { toast("RiskDial set to " + nextDial.toUpperCase(), nextDial === "lockdown" ? "destructive" : "ok"); await refreshActiveView(); }
       };
       if (nextDial === "lockdown" || camp.riskDial === "lockdown") {
         state.modal = {
@@ -1240,19 +1645,41 @@ export function renderCommandCenterJs(): string {
       state.authError = "";
       sessionStorage.removeItem("marketing_token");
       stopStreams();
+      shellMounted = false;
       render();
       return;
     }
-    if (act === "refresh") { await refreshAll(); toast("Refreshed.", "ok"); return; }
-    if (act === "seed-nyc") {
-      const r = await api("POST", "/api/seed/nyc");
-      if (r.ok) { toast("Seeded NYC $10k launch.", "ok"); await refreshAll(); }
+    if (act === "refresh") { await refreshActiveView(); toast("Refreshed.", "ok"); return; }
+    if (act === "seed-city" || act === "seed-nyc") {
+      const targetCity = String(el.dataset.city || state.selectedCity || "nyc").toLowerCase();
+      const r = await api("POST", "/api/seed/" + encodeURIComponent(targetCity));
+      if (r.ok) {
+        state.selectedCity = targetCity;
+        if (r.data && r.data.campaign && r.data.campaign.id) {
+          state.selectedCampaignId = r.data.campaign.id;
+        }
+        toast("Seeded " + cityLabelFor(targetCity) + " launch.", "ok");
+        await refreshActiveView();
+      }
+      return;
+    }
+    if (act === "run-sim-quick" || act === "run-sim-full") {
+      state.simRunning = true;
+      renderStageOnly();
+      const body = act === "run-sim-quick" ? { days: 14, seeds: [1, 2], quick: true } : { days: 30, seeds: [1, 2, 3, 4] };
+      const r = await api("POST", "/api/simulate/launch", body);
+      state.simRunning = false;
+      if (r.ok && r.data && r.data.summary) {
+        state.simSummary = r.data.summary;
+        toast("Dry-run simulation complete.", "ok");
+      }
+      renderStageOnly();
       return;
     }
     if (act === "autopilot-tick") {
       const camp = activeCampaign();
       const r = await api("POST", "/api/autopilot/tick", camp ? { campaignId: camp.id } : {});
-      if (r.ok) { toast("Autopilot tick complete.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("Autopilot tick complete.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "toggle-daemon") {
@@ -1267,7 +1694,7 @@ export function renderCommandCenterJs(): string {
       const nextArmed = !camp.billingArmed;
       const runToggle = async function () {
         const r = await api("POST", "/api/campaigns/" + encodeURIComponent(camp.id) + "/risk-dial", { riskDial: camp.riskDial, billingArmed: nextArmed });
-        if (r.ok) { toast("Billing " + (nextArmed ? "armed" : "disarmed") + ".", nextArmed ? "warn" : "ok"); await refreshAll(); }
+        if (r.ok) { toast("Billing " + (nextArmed ? "armed" : "disarmed") + ".", nextArmed ? "warn" : "ok"); await refreshActiveView(); }
       };
       if (nextArmed) {
         state.modal = {
@@ -1285,19 +1712,19 @@ export function renderCommandCenterJs(): string {
     }
     if (act === "scan-devices") {
       const r = await api("POST", "/api/devices/scan");
-      if (r.ok) { state.diagnostics = r.data && r.data.diagnostics ? r.data.diagnostics : null; toast("USB/WDA device scan complete.", "ok"); await refreshAll(); }
+      if (r.ok) { state.diagnostics = r.data && r.data.diagnostics ? r.data.diagnostics : null; toast("USB/WDA device scan complete.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "bandit-rebalance") {
       const camp = activeCampaign();
       const r = await api("POST", "/api/bandit/rebalance", camp ? { campaignId: camp.id } : {});
-      if (r.ok) { toast("Bandit weights updated.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("Bandit weights updated.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "agent-pause" || act === "agent-resume") {
       const ep = act === "agent-pause" ? "pause" : "resume";
       const r = await api("POST", "/api/agents/" + encodeURIComponent(el.dataset.id) + "/" + ep);
-      if (r.ok) { toast("Agent " + ep + "d.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("Agent " + ep + "d.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "human-stop") {
@@ -1309,7 +1736,7 @@ export function renderCommandCenterJs(): string {
         confirmLabel: "Apply STOP",
         onConfirm: async function () {
           const r = await api("POST", "/api/humans/" + encodeURIComponent(hid) + "/stop", { reason: "operator_ui" });
-          if (r.ok) { toast("STOP fence applied.", "destructive"); await refreshAll(); }
+          if (r.ok) { toast("STOP fence applied.", "destructive"); await refreshActiveView(); }
         },
       };
       render();
@@ -1318,14 +1745,15 @@ export function renderCommandCenterJs(): string {
     if (act === "proof-approve" || act === "proof-reject") {
       const verdict = act === "proof-approve" ? "verified" : "rejected";
       const r = await api("POST", "/api/proofs/" + encodeURIComponent(el.dataset.id) + "/review", { verdict: verdict });
-      if (r.ok) { toast("Proof marked " + verdict + ".", verdict === "verified" ? "ok" : "warn"); await refreshAll(); }
+      if (r.ok) { toast("Proof marked " + verdict + ".", verdict === "verified" ? "ok" : "warn"); await refreshActiveView(); }
       return;
     }
     if (act === "run-discovery") {
-      const r = await api("POST", "/api/discovery/nyc", { city: state.cityFilter === "all" ? "nyc" : state.cityFilter, includeSources: state.selectedDiscoverySources });
+      const targetCity = String(el.dataset.city || state.selectedCity || "nyc").toLowerCase();
+      const r = await api("POST", "/api/discovery", { city: targetCity, includeSources: state.selectedDiscoverySources });
       if (r.ok) {
         state.discoveredLeads = (r.data && r.data.leads) || [];
-        toast("Discovered " + state.discoveredLeads.length + " open-web leads.", "ok");
+        toast("Discovered " + state.discoveredLeads.length + " open-web leads in " + cityLabelFor(targetCity) + ".", "ok");
         render();
       }
       return;
@@ -1338,25 +1766,20 @@ export function renderCommandCenterJs(): string {
         displayLabel: lead.title,
         channel: "email",
         role: lead.category === "vip" ? "vip" : lead.category === "creator" ? "creator" : "venue",
-        city: lead.city || "nyc",
+        city: lead.city || state.selectedCity || "nyc",
       });
-      if (r.ok) { toast("Added lead to Humans.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("Added lead to Humans.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "dispatch-outreach") {
       const camp = activeCampaign();
       const r = await api("POST", "/api/outreach/dispatch", { campaignId: camp ? camp.id : undefined, dryRun: true });
-      if (r.ok) { toast("Outreach dispatch complete.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("Outreach dispatch complete.", "ok"); await refreshActiveView(); }
       return;
     }
     if (act === "bd-contract") {
       const r = await api("POST", "/api/bd/" + encodeURIComponent(el.dataset.id) + "/contract", { kind: "venue_placement" });
-      if (r.ok) { toast("SHA-256 clickwrap generated.", "ok"); state.drawer = null; await refreshAll(); }
-      return;
-    }
-    if (act === "vip-draft-invite") {
-      const r = await api("POST", "/api/vips/" + encodeURIComponent(el.dataset.id) + "/invite", {});
-      if (r.ok) { toast("VIP <75w invite drafted.", "ok"); await refreshAll(); }
+      if (r.ok) { toast("SHA-256 clickwrap generated.", "ok"); state.drawer = null; await refreshActiveView(); }
       return;
     }
     if (act === "bd-verify-phone" || act === "bd-advance") {
@@ -1364,12 +1787,12 @@ export function renderCommandCenterJs(): string {
       if (!deal) return;
       if (act === "bd-verify-phone") {
         const r = await api("PATCH", "/api/bd/" + encodeURIComponent(deal.id), { phoneCallbackVerified: true });
-        if (r.ok) { toast("Phone callback verified.", "ok"); state.drawer = null; await refreshAll(); }
+        if (r.ok) { toast("Phone callback verified.", "ok"); state.drawer = null; await refreshActiveView(); }
       } else {
         const idx = BD_STAGES.indexOf(deal.stage);
         const nextStage = BD_STAGES[Math.min(BD_STAGES.length - 1, idx + 1)];
         const r = await api("POST", "/api/bd/" + encodeURIComponent(deal.id) + "/stage", { stage: nextStage });
-        if (r.ok) { toast("BD stage -> " + nextStage + ".", "ok"); state.drawer = null; await refreshAll(); }
+        if (r.ok) { toast("BD stage -> " + nextStage + ".", "ok"); state.drawer = null; await refreshActiveView(); }
       }
     }
   });
@@ -1379,9 +1802,15 @@ export function renderCommandCenterJs(): string {
     if (!t || !t.dataset) return;
     if (t.dataset.changeCampaign) {
       state.selectedCampaignId = t.value;
-      await refreshAll();
+      const picked = activeCampaign();
+      if (picked && picked.city) state.selectedCity = String(picked.city).toLowerCase();
+      await refreshActiveView();
+    } else if (t.dataset.changeCity) {
+      state.selectedCity = String(t.value || "nyc").toLowerCase();
+      render();
     } else if (t.dataset.filter === "city") {
       state.cityFilter = t.value;
+      if (t.value !== "all") state.selectedCity = String(t.value).toLowerCase();
       render();
     } else if (t.dataset.agentProvider) {
       const id = t.dataset.agentProvider;
@@ -1390,7 +1819,7 @@ export function renderCommandCenterJs(): string {
       const r = await api("POST", "/api/agents/" + encodeURIComponent(id) + "/provider", { provider: t.value });
       if (r.ok) {
         toast("Switched " + agent.displayName + " to " + t.value + ".", "ok");
-        await refreshAll();
+        await refreshActiveView();
       }
     } else if (t.dataset.discSrc) {
       const src = t.dataset.discSrc;
@@ -1402,9 +1831,7 @@ export function renderCommandCenterJs(): string {
   document.addEventListener("input", function (e) {
     if (e.target && e.target.id === "global-search") {
       state.search = e.target.value;
-      render();
-      const inp = document.getElementById("global-search");
-      if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+      renderStageOnly();
     }
   });
 
@@ -1420,7 +1847,8 @@ export function renderCommandCenterJs(): string {
       state.token = get("token");
       state.authError = "";
       sessionStorage.setItem("marketing_token", state.token);
-      await refreshAll();
+      shellMounted = false;
+      await refreshActiveView();
       void startSse();
       return;
     }
@@ -1450,13 +1878,19 @@ export function renderCommandCenterJs(): string {
       r = await api("POST", "/api/devices/" + encodeURIComponent(get("id")) + "/action", { action: action, dryRun: fd.get("dryRun") === "on" });
     } else if (kind === "new-human") {
       r = await api("POST", "/api/humans", {
-        displayLabel: get("displayLabel"), handleOrEmailHmac: get("handleOrEmailHmac"),
+        displayLabel: get("displayLabel"), contactEmail: get("contactEmail") || null,
+        handleOrEmailHmac: get("handleOrEmailHmac"), city: get("city") || state.selectedCity || "nyc",
         role: get("role"), channel: get("channel"), lowestAge: Number(get("lowestAge")) || null,
+      });
+    } else if (kind === "new-suppression") {
+      r = await api("POST", "/api/suppressions", {
+        kind: get("kind"), value: get("contactValue"), reason: get("reason"),
+        sourceChannel: get("sourceChannel"), isMinor: fd.get("isMinor") === "on",
       });
     } else if (kind === "new-task") {
       r = await api("POST", "/api/tasks", {
         campaignId: get("campaignId"), tier: 4, taskKind: get("taskKind"), title: get("title"),
-        briefText: get("briefText"), vendorChannel: get("vendorChannel"),
+        city: state.selectedCity || "nyc", briefText: get("briefText"), vendorChannel: get("vendorChannel"),
         amountCents: Math.round(Number(get("amountUsd")) * 100), qrBatchCode: get("qrBatchCode") || null,
       });
     } else if (kind === "submit-proof") {
@@ -1469,16 +1903,24 @@ export function renderCommandCenterJs(): string {
       });
     } else if (kind === "new-bd") {
       r = await api("POST", "/api/bd", {
-        campaignId: get("campaignId"), venueName: get("venueName"), vertical: get("vertical"),
+        campaignId: get("campaignId"), city: get("city") || state.selectedCity || "nyc",
+        venueName: get("venueName"), vertical: get("vertical"),
         offeredCents: Math.round(Number(get("offeredUsd")) * 100), contactEmail: get("contactEmail") || null, businessPhone: get("businessPhone") || null,
       });
     } else if (kind === "new-qr") {
       r = await api("POST", "/api/qr-batches", {
-        campaignId: get("campaignId"), batchCode: get("batchCode"), printQty: Number(get("printQty")) || 5000, destinationUrl: get("destinationUrl"),
+        campaignId: get("campaignId"), city: state.selectedCity || "nyc",
+        batchCode: get("batchCode"), printQty: Number(get("printQty")) || 5000, destinationUrl: get("destinationUrl"),
       });
     } else if (kind === "new-vip") {
       r = await api("POST", "/api/vips", {
-        campaignId: get("campaignId"), name: get("name"), archetype: get("archetype"), publicSource: "manual_ui", organization: get("organization") || null, sourceUrl: get("sourceUrl") || null,
+        campaignId: get("campaignId"), city: get("city") || state.selectedCity || "nyc",
+        name: get("name"), archetype: get("archetype"), publicSource: "operator_curated",
+        organization: get("organization") || null, sourceUrl: get("sourceUrl") || null,
+      });
+    } else if (kind === "vip-draft-invite") {
+      r = await api("POST", "/api/vips/" + encodeURIComponent(get("id")) + "/invite", {
+        proofOfWork1Line: get("proofOfWork1Line"),
       });
     } else if (kind === "new-video") {
       r = await api("POST", "/api/videos", {
@@ -1492,7 +1934,7 @@ export function renderCommandCenterJs(): string {
     if (r.ok) {
       state.drawer = null;
       toast("Saved.", "ok");
-      await refreshAll();
+      await refreshActiveView();
     }
   });
 
@@ -1512,17 +1954,18 @@ export function renderCommandCenterJs(): string {
       return;
     }
     if (e.key === "?") { state.modal = { kind: "help" }; render(); return; }
-    if (e.key === "r" || e.key === "R") { void refreshAll(); toast("Refreshed.", "ok"); return; }
+    if (e.key === "r" || e.key === "R") { void refreshActiveView(); toast("Refreshed.", "ok"); return; }
     const idx = Number(e.key) - 1;
     if (idx >= 0 && idx < VIEWS.length) {
       state.view = VIEWS[idx].id;
       render();
+      void refreshActiveView();
     }
   });
 
   render();
   if (state.token) {
-    void refreshAll();
+    void refreshActiveView();
     void startSse();
   }
 })();

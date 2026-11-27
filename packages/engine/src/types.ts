@@ -1,11 +1,11 @@
 import type {
-  Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, ScoreComponents, WorldSnapshot,
+  Category, City, MemberId, OpenOpportunity, OpportunityKind, Proposal, QualitySignals, ReliabilityEvidence, ScoreComponents, VampireTelemetry, WorldSnapshot,
 } from "@thenetwork/core";
 
 import type { LaneSide, MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { EntityId } from "./match/profile.ts";
 
-export type { NetworkEvent } from "@thenetwork/core";
+export type { NetworkEvent, QualitySignals, ReliabilityEvidence, VampireTelemetry } from "@thenetwork/core";
 export interface SafetyHold { memberId: MemberId; from: number; to?: number; reason?: string }
 export interface FeedbackRecord {
   id: string; from: MemberId; about: MemberId; opportunityId?: string; at: number;
@@ -36,7 +36,6 @@ export interface EngineAsk {
   kind: "ask"; id: string; memberId: MemberId; reason: AskReason; question: string; createdAt: number;
   intentId?: string;
 }
-export interface ReliabilityEvidence { noShows: number; completedSinceLastNoShow: number }
 
 export type RecentProposal = Proposal & { roles?: Record<MemberId, Role> };
 

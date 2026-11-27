@@ -1,34 +1,5 @@
-export {
-  attributionFunnelSvg,
-  banditWeightsChartSvg,
-  budgetAllocationChartSvg,
-  deviceHealthGaugeSvg,
-  type BanditArmDatum,
-  type BanditChartInput,
-  type BudgetChartInput,
-  type BudgetTrackDatum,
-  type DeviceGaugeInput,
-  type FunnelChartInput,
-} from "./charts.ts";
 export { renderCommandCenterJs } from "./client.ts";
-export {
-  brandMarkSvg,
-  channelIconSvg,
-  deviceIconSvg,
-  escHtml,
-  navIconSvg,
-  NETWORK_FAVICON_DATA_URI,
-  providerLogoSvg,
-  resolveStatusTone,
-  safeHref,
-  statusMarkSvg,
-  type BrandMarkKey,
-  type ChannelIconKey,
-  type DeviceIconKey,
-  type NavIconKey,
-  type ProviderLogoKey,
-  type StatusTone,
-} from "./icons.ts";
+export { escHtml, NETWORK_FAVICON_DATA_URI, safeHref } from "./icons.ts";
 export {
   commandCenterSecurityHeaders,
   renderCommandCenterHtml,

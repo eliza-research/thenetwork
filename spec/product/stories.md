@@ -733,6 +733,90 @@ Acceptance:
 
 Spec: [console analysis panels](../consolePanels.md).
 
+## Story F53 — [DECIDE] Match across five launch cities, suggest one red-line-safe venue, and pivot cleanly
+
+> As a matched member in San Francisco, New York, Los Angeles, Chicago, or Miami, I want one verified open public venue near a fair midpoint that honors my hard boundaries and lets me swap cleanly without endless back-and-forth.
+
+### One five-city registry enforces barrier-aware midpoints, hard boundaries before ranking, and at most three venue pivots
+
+Expand launch venue intelligence across `sf`, `nyc`, `la`, `chicago`, and `miami` in one shared registry (`packages/core/src/cities.ts`) with local IANA time zones (`CITY_TZ`), barrier-aware minimax midpoints (`+5m/+10m` bounded relaxation), and Google Places API (New). Stop external search calls when at least ten qualified local venues exist. Enforce the union of all attendees' hard red lines before ranking. Check three-level alcohol boundaries (`drinks_ok`, `alcohol_optional`, `strict_sober`), severe allergens, religious diets, accessibility, low noise, and after-dark safety floors. Keep private red lines hidden from other attendees. Use strong interest-biased hobby venues for `friends` and classic low-commitment venues for `slop`. Keep all-ages public venue marks aligned with [teen friend introductions](../friendIntroAge.md) for in-network teen friend rosters.
+
+Acceptance:
+
+- Present one top-ranked verified open public venue per match rather than a multi-option menu, with opening-hour verification (`24h` weekdays, `6h` weekends/holidays) and `>= 90m` (pair) / `>= 120m` (group) open buffer.
+- Never propose an alcohol-centric venue to a `strict_sober` member or an unverified kitchen to a member with severe allergen or religious-diet red lines.
+- Limit venue swaps to at most three pivots per scheduling round (`MAX_SUGGESTION_PIVOTS = 3`), then ask for a member-chosen public spot or pause.
+- Record rejected venues immediately, update newly revealed red lines, and never tell another attendee who rejected a spot.
+- Quarantine closed venues immediately and enforce overlapping two-hour concurrent walk-in capacity locks.
+
+Models: [city travel and fair midpoints](../cityTravel.md), [venue selection](../venueSelection.md), [suggestion flow](../suggestionFlow.md), [venue lifecycle](../models/venue_lifecycle.md), [friend introductions with a minor](../friendIntroAge.md).
+
+## Story F54 — [DECIDE] Keep meetups on track with arrival pivots, panic halt, and quiet-hour follow-ups
+
+> As a booked meetup participant, I want safe arrival coordination, instant backup pivots if a venue is closed or full, a private safety exit, and respectful follow-up timing.
+
+### Arrival coordination stays inside its timed window and halts immediately on panic or block
+
+Extend [booked meeting late arrivals](../groupLateArrival.md) with a `T-75m` pre-brief carrying an explicit arrival landmark and a pre-verified nearby backup venue. Open arrival relay from `T-30m` to `T+45m` for confirmed unblocked participants through the leak guard and Clef classifier. Keep teen friend threads strictly on moderated text-only rules. Trigger an immediate backup venue broadcast when a venue is reported closed or full, quarantining the venue only when closed. Check late arrivals at `T+12m` and release waiting participants at `T+18m`. Run a `T-3h` anchor check-in and promote a co-anchor or cancel cleanly if quorum fails.
+
+Acceptance:
+
+- Halt arrival relay immediately on any panic signal, block, `STOP`, or `leave`, and never alert the other party to a safety exit.
+- Keep `venue_full` spots active while logging crowded feedback; mark `venue_closed` spots `suspect_closed` immediately.
+- Send post-encounter follow-ups outside `20:30–09:00` local quiet hours within the three-per-day proactive cap and at most two attempts, updating first-party Bayesian venue priors on feedback.
+
+Models: [meetup coordination](../meetupCoordination.md), [meetup arrival coordination](../meetupArrival.md), [encounter follow-ups](../encounterFollowup.md), [late arrival in a booked meeting](../groupLateArrival.md), [meetup coordination flow](../models/meetup_coordination.md).
+
+## Story F55 — [DECIDE] Spin up density-aware impromptu friend meetups on sanctioned external event platforms
+
+> As an adult member in a sparse interest cluster, I want the Network to organize a walk-in public meetup with screened local guests so I still get a real group hangout.
+
+### External syndication uses sanctioned channels, adult screening, confirmed anchors, and post-event invite gating
+
+Route `friends` groups by local density. Dense zones stay 100% in-network, medium zones run small in-network groups first, and sparse adult zones may host walk-in interest meetups. Allow only sanctioned channels: Luma Plus official API, Meetup Pro official GraphQL API, and a human-assisted Partiful Event Kit. Scrub telecom-filtered terms from Partiful copy. Never scrape guest lists or run unofficial bots. Require at least one confirmed adult Network anchor, review approval, upfront external-crowd disclosure, hidden guest lists, and 18+ approval screening. Never admit a minor into any external syndicated event or external co-attendance.
+
+Acceptance:
+
+- Clamp approved external RSVPs so total confirmed plus approved headcount never exceeds `min(15, venueWalkInCapacity)`.
+- Cancel a single-anchor sparse event cleanly at `T-24h` if fewer than three external RSVPs are approved.
+- Invite an external guest to join The Network at most once, only after completed attendance, positive Network member feedback, and zero safety flags.
+
+Models: [external event bridge](../externalEventBridge.md), [public event catalog](../publicEventCatalog.md), [automated review](../automatedReview.md), [external event bridge flow](../models/external_event_bridge.md).
+
+## Story F56 — [DECIDE] Match sparse adult dating supply through per-city dual-persona matchmakers
+
+> As an opted-in adult dating member in a sparse local pool, I want a real city matchmaker to vet an outside match safely while protecting everyone's privacy and consent.
+
+### Human-operated city personas follow strict disclosure, single-persona locks, bounded caching, and quality-gated invites
+
+Register one female and one male human-operated matchmaker persona per launch city to serve sparse adult `slop` supply and adult `friends` hosting. Enforce an upfront matchmaker bio, review approval before outreach, zero URLs or brand spam on dating platforms, and low daily human caps. Lock each external prospect exclusively to one city persona (`singlePersonaPerProspect`). Trip an automatic kill-switch on any ban or verification signal without burner evasion and without stranding booked SMS dates. Require logged off-app SMS consent on a dedicated channel and never cold-text scraped numbers.
+
+Acceptance:
+
+- Cache only minimal 18+ conversation facets for the five launch cities with hard TTLs (`14d` uncontacted, `60d` explicit `intro_future_optin`).
+- Purge all prospect PII immediately on `STOP`, decline, block, underage disclosure, red flag, or deletion request, keeping only a keyed HMAC suppression tombstone.
+- Never reuse a cached prospect for another member without explicit `intro_future_optin`, review approval, and a 30-day cooldown.
+- Send at most one Network join invite only after a completed meetup with positive or vouched member feedback and zero safety flags.
+- Enforce a schema, RLS, and formal-core firewall so `peon.biz` never reads `slop` appearance ratings or external prospect data.
+
+Models: [external matchmaker](../externalMatchmaker.md), [automated review](../automatedReview.md), [external matchmaker flow](../models/external_matchmaker.md).
+
+## Story F57 — Deliver non-in-person work introductions on peon.biz
+
+> As an adult candidate or verified hiring manager on peon.biz, I want double-opt-in work introductions delivered by warm email, a mutually confirmed video slot, or mediated relay instead of a physical venue or an unsolicited group text.
+
+### Work introductions require adult candidate-first double opt-in and never assign an in-person venue
+
+Acceptance:
+
+- Only adults (`>= 18`) are probed or introduced on `peon.biz`. Minors stay single-player.
+- Candidate-first sequential double opt-in is enforced: the hiring manager is never probed until the candidate gives an explicit `yes` to the blind role summary, and no introduction is delivered until both parties opt in.
+- `peon.biz` work introductions never book or assign a physical venue, never create an unsolicited group SMS, and never place a cold three-way call.
+- Channel priority selects `WarmEmail` by default when both opted-in adults have email addresses on file, `ScheduledVideo` only after explicit mutual slot confirmation (never an unsolicited calendar invite), and `RelayShare` (leak-checked relay with explicit bilateral `SHARE` contact swap) when email and a confirmed video slot are unavailable.
+- Work follow-ups send a lightweight `T+72h` nudge only on email bounce or non-response, followed by one `T+7d` outcome check-in during local business hours (`10:00` local).
+
+Spec: [work introduction channel](../workIntroChannel.md). Model: [work introduction](../models/work_intro.md).
+
 ## Later stories
 
 Original later IDs stay attached to their prerequisites. They do not enter launch scope merely because a shared state machine supports them.

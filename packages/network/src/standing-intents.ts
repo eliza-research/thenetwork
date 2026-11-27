@@ -61,15 +61,22 @@ export function standingIntentReference(app: string, member: string, key: string
   return encodeReference(digest.slice(0, 12));
 }
 
-const dayFormat = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" });
-const standingDate = (ms: number) => dayFormat.format(new Date(ms));
+const dayFormats = new Map<string, Intl.DateTimeFormat>();
+const standingDate = (ms: number, tz = "America/New_York") => {
+  let fmt = dayFormats.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" });
+    dayFormats.set(tz, fmt);
+  }
+  return fmt.format(new Date(ms));
+};
 const quoted = (summaries: readonly string[]) => summaries.map(s => `“${s}”`).join(", ");
 const LINE_STATUS: Record<StandingStatus, string> = { active: "active", paused: "paused", waiting_on_you: "waiting on you", open: "open" };
 
 export const STANDING_COPY = {
   listHeader: (app: string, page: number, pages: number) => `What you're looking for in ${app} (${page}/${pages})`,
-  listLine: (e: StandingEntry, endsSoon: boolean) =>
-    `${e.number}. ${e.summary} · ${LINE_STATUS[e.status]}${e.inProgress ? " · introduction in progress" : ""}${endsSoon && e.endsAt !== null ? ` · ends ${standingDate(e.endsAt)}` : ""} · ${e.ref}`,
+  listLine: (e: StandingEntry, endsSoon: boolean, tz?: string) =>
+    `${e.number}. ${e.summary} · ${LINE_STATUS[e.status]}${e.inProgress ? " · introduction in progress" : ""}${endsSoon && e.endsAt !== null ? ` · ends ${standingDate(e.endsAt, tz)}` : ""} · ${e.ref}`,
   listFooter: (first: number, nextPage: number | undefined) =>
     `Reply PAUSE ${first}, RESUME ${first} or CLOSE ${first}.${nextPage ? ` For more, say “list my intents ${nextPage}”.` : ""}`,
   listEmpty: (app: string) => `Nothing is active for you in ${app} right now. Tell me what you'd like to find.`,
@@ -84,7 +91,7 @@ export const STANDING_COPY = {
   paused: (summaries: readonly string[], inProgress: boolean) =>
     `Paused: ${quoted(summaries)}. No new searches for it. Reply UNDO to turn it back on.${inProgress ? " An introduction already in progress continues. Reply CLOSE to close that too." : ""}`,
   resumed: (summaries: readonly string[]) => `Back on: ${quoted(summaries)}.`,
-  kept: (summary: string, until: number) => `Kept: “${summary}”. I'll keep looking until ${standingDate(until)}.`,
+  kept: (summary: string, until: number, tz?: string) => `Kept: “${summary}”. I'll keep looking until ${standingDate(until, tz)}.`,
   pausedAgain: (summaries: readonly string[]) => `Paused again: ${quoted(summaries)}.`,
   nothingToUndo: "There's nothing to undo right now. Say “what am I looking for” to see your list.",
   unknown: "I couldn't find that one. Say “what am I looking for” to see your current list.",
@@ -92,8 +99,8 @@ export const STANDING_COPY = {
   already: (summary: string, state: "paused" | "on" | "closed") => `“${summary}” is already ${state}. No change made.`,
   pausedStays: (summary: string) => `“${summary}” is paused, so I'm not looking for it now. Say “what am I looking for” to see your list and turn it back on.`,
   postingNoPause: (title: string) => `Job posts can't be paused. Say “close my ${title} post” to close it.`,
-  renewal: (summary: string, deadline: number) =>
-    `Still looking for “${summary}”? Reply KEEP to keep looking for 60 more days. If not, it ends on ${standingDate(deadline)}.`,
+  renewal: (summary: string, deadline: number, tz?: string) =>
+    `Still looking for “${summary}”? Reply KEEP to keep looking for 60 more days. If not, it ends on ${standingDate(deadline, tz)}.`,
   agentPaused: (summary: string, app: string, inProgress: boolean) =>
     `Your assistant paused “${summary}” in ${app}. No new searches for it. Reply UNDO to turn it back on.${inProgress ? " An introduction already in progress continues. Reply CLOSE to close that too." : ""}`,
   agentResumed: (summary: string, app: string) => `Your assistant turned “${summary}” back on in ${app}. Reply UNDO to pause it again.`,

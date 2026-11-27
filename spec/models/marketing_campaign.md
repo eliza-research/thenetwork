@@ -59,6 +59,12 @@ module marketing_campaign {
   pure val DEVICE_WARMUP_CAP = 2
   pure val AGENT_DAILY_QUOTA = 2
 
+  pure val DAILY_LLM_TOKEN_CAP = 1000
+  pure val DAILY_LLM_COST_MICROS_CAP = 500
+  pure val COLD_COOLDOWN_DAYS = 14
+  pure val MAX_COLD_TOUCHES_30D = 2
+  pure val MAX_UNANSWERED_COLD = 2
+
   pure val TASKS = Set("t1", "t2", "t3", "t4")
   pure val WORKERS = Set("adult_a", "adult_b", "minor_16", "unknown_age")
   pure val AGENTS = Set("chadwick", "sloane", "peon", "venn", "operator")
@@ -72,6 +78,8 @@ module marketing_campaign {
   pure val BONUS_AMOUNTS = Set(200, 500, 1500)
   pure val BATTERY_SAMPLES = Set(20, 35, 55, 80, 92)
   pure val TEMP_SAMPLES = Set(-5, 0, 32, 41, 45)
+  pure val LLM_TOKEN_SAMPLES = Set(200, 500, 600)
+  pure val LLM_COST_SAMPLES = Set(100, 250, 300)
 
   // ---------------------------------------------------------------- types
   type WorkerInfo = { ageKnown: bool, ageYears: int }
@@ -111,7 +119,21 @@ module marketing_campaign {
 
   type ContactState = {
     stopped: bool,
+    banned: bool,
+    knownMinor: bool,
     lifetimeBonusCents: int,
+    daysSinceCold: int,
+    coldTouches30d: int,
+    unansweredCold: int,
+  }
+
+  type LlmCallEvent = {
+    seq: int,
+    agent: str,
+    tokensBefore: int,
+    tokensEst: int,
+    costBefore: int,
+    costEst: int,
   }
 
   type HireEvent = {
@@ -164,6 +186,8 @@ module marketing_campaign {
     riskDial: str,
     contact: str,
     contactStopped: bool,
+    contactBanned: bool,
+    contactKnownMinor: bool,
   }
 
   type OutreachEvent = {
@@ -171,6 +195,11 @@ module marketing_campaign {
     contact: str,
     tier: int,
     contactStopped: bool,
+    contactBanned: bool,
+    contactKnownMinor: bool,
+    daysSinceCold: int,
+    coldTouches30d: int,
+    unansweredCold: int,
   }
 
   type DeviceExecEvent = {
@@ -191,6 +220,8 @@ module marketing_campaign {
     riskDial: str,
     slopCashEnabled: bool,
     dailySpentCents: int,
+    llmTokensToday: int,
+    llmCostMicrosToday: int,
     tasks: str -> Task,
     agents: str -> AgentState,
     devices: str -> DeviceState,
@@ -203,6 +234,7 @@ module marketing_campaign {
     agentDispatches: Set[AgentDispatchEvent],
     outreachSent: Set[OutreachEvent],
     deviceExecutions: Set[DeviceExecEvent],
+    llmCalls: Set[LlmCallEvent],
     blockedUnderage: int,
     blockedBudget: int,
     blockedSlopCash: int,
@@ -212,6 +244,8 @@ module marketing_campaign {
     blockedDeviceEnvelope: int,
     blockedStopFence: int,
     blockedAntiFraud: int,
+    blockedLlmBudget: int,
+    blockedContactFence: int,
   }
 
   var s: State
@@ -299,19 +333,41 @@ module marketing_campaign {
     not(clusterQuarantined),
   }
 
-  pure def canDispatchAgent(ag: AgentState, contactStopped: bool, riskDial: str): bool = and {
+  pure def canDispatchAgent(ag: AgentState, ct: ContactState, riskDial: str): bool = and {
     ag.turnsToday < ag.dailyQuota,
     ag.sessionHealthy,
     not(ag.optedOut),
     not(ag.rateLimited),
-    not(contactStopped),
+    not(ct.stopped),
+    not(ct.banned),
+    not(ct.knownMinor),
     riskDial != "lockdown",
   }
 
-  pure def canSendOutreach(contactStopped: bool, tier: int, billingArmed: bool, riskDial: str): bool = and {
-    not(contactStopped),
+  pure def coldCooldownOk(ct: ContactState): bool = and {
+    ct.daysSinceCold >= COLD_COOLDOWN_DAYS,
+    ct.coldTouches30d >= 0,
+    ct.coldTouches30d < MAX_COLD_TOUCHES_30D,
+    ct.unansweredCold >= 0,
+    ct.unansweredCold < MAX_UNANSWERED_COLD,
+  }
+
+  pure def canSendOutreach(ct: ContactState, tier: int, billingArmed: bool, riskDial: str): bool = and {
+    not(ct.stopped),
+    not(ct.banned),
+    not(ct.knownMinor),
+    coldCooldownOk(ct),
     riskDial != "lockdown",
     tierBillingAllowed(tier, billingArmed, riskDial),
+  }
+
+  pure def llmCallFits(tokensUsed: int, estTokens: int, costUsed: int, estCost: int): bool = and {
+    tokensUsed >= 0,
+    estTokens >= 0,
+    tokensUsed + estTokens <= DAILY_LLM_TOKEN_CAP,
+    costUsed >= 0,
+    estCost >= 0,
+    costUsed + estCost <= DAILY_LLM_COST_MICROS_CAP,
   }
 
   pure def deviceEnvelopeOk(
@@ -348,6 +404,8 @@ module marketing_campaign {
       riskDial: dial,
       slopCashEnabled: slopEnabled,
       dailySpentCents: 0,
+      llmTokensToday: 0,
+      llmCostMicrosToday: 0,
       tasks: TASKS.mapBy(_ => NO_TASK),
       agents: AGENTS.mapBy(a => {
         provider: AGENT_PROVIDER.get(a),
@@ -367,7 +425,15 @@ module marketing_campaign {
         leaseOwner: "",
         needsTakeover: false,
       }),
-      contacts: CONTACTS.mapBy(_ => { stopped: false, lifetimeBonusCents: 0 }),
+      contacts: CONTACTS.mapBy(_ => {
+        stopped: false,
+        banned: false,
+        knownMinor: false,
+        lifetimeBonusCents: 0,
+        daysSinceCold: COLD_COOLDOWN_DAYS,
+        coldTouches30d: 0,
+        unansweredCold: 0,
+      }),
       nextSeq: 1,
       hiredEvents: Set(),
       paidEvents: Set(),
@@ -376,6 +442,7 @@ module marketing_campaign {
       agentDispatches: Set(),
       outreachSent: Set(),
       deviceExecutions: Set(),
+      llmCalls: Set(),
       blockedUnderage: 0,
       blockedBudget: 0,
       blockedSlopCash: 0,
@@ -385,6 +452,8 @@ module marketing_campaign {
       blockedDeviceEnvelope: 0,
       blockedStopFence: 0,
       blockedAntiFraud: 0,
+      blockedLlmBudget: 0,
+      blockedContactFence: 0,
     },
   }
 
@@ -614,12 +683,53 @@ module marketing_campaign {
     }
   }
 
+  action contactSetBanned(c: str, banned: bool): bool = {
+    val ct = s.contacts.get(c)
+    all {
+      ct.banned != banned,
+      s' = { ...s, contacts: s.contacts.set(c, { ...ct, banned: banned }) },
+    }
+  }
+
+  action contactSetKnownMinor(c: str, knownMinor: bool): bool = {
+    val ct = s.contacts.get(c)
+    all {
+      ct.knownMinor != knownMinor,
+      s' = { ...s, contacts: s.contacts.set(c, { ...ct, knownMinor: knownMinor }) },
+    }
+  }
+
+  action dispatchLlmCall(a: str, estTokens: int, estCost: int): bool = all {
+    AGENTS.contains(a),
+    LLM_TOKEN_SAMPLES.contains(estTokens),
+    LLM_COST_SAMPLES.contains(estCost),
+    if (not(llmCallFits(s.llmTokensToday, estTokens, s.llmCostMicrosToday, estCost)))
+      s' = { ...s, blockedLlmBudget: s.blockedLlmBudget + 1 }
+    else
+      s' = {
+        ...s,
+        nextSeq: s.nextSeq + 1,
+        llmTokensToday: s.llmTokensToday + estTokens,
+        llmCostMicrosToday: s.llmCostMicrosToday + estCost,
+        llmCalls: s.llmCalls.union(Set({
+          seq: s.nextSeq,
+          agent: a,
+          tokensBefore: s.llmTokensToday,
+          tokensEst: estTokens,
+          costBefore: s.llmCostMicrosToday,
+          costEst: estCost,
+        })),
+      },
+  }
+
   action dispatchAgentTurn(a: str, c: str): bool = {
     val ag = s.agents.get(a)
     val ct = s.contacts.get(c)
     if (ct.stopped)
       s' = { ...s, blockedStopFence: s.blockedStopFence + 1 }
-    else if (not(canDispatchAgent(ag, ct.stopped, s.riskDial)))
+    else if (ct.banned or ct.knownMinor)
+      s' = { ...s, blockedContactFence: s.blockedContactFence + 1 }
+    else if (not(canDispatchAgent(ag, ct, s.riskDial)))
       s' = { ...s, blockedAgentCap: s.blockedAgentCap + 1 }
     else
       s' = {
@@ -638,6 +748,8 @@ module marketing_campaign {
           riskDial: s.riskDial,
           contact: c,
           contactStopped: ct.stopped,
+          contactBanned: ct.banned,
+          contactKnownMinor: ct.knownMinor,
         })),
       }
   }
@@ -648,17 +760,30 @@ module marketing_campaign {
       tier == 1 or tier == 3,
       if (ct.stopped)
         s' = { ...s, blockedStopFence: s.blockedStopFence + 1 }
-      else if (not(canSendOutreach(ct.stopped, tier, s.billingArmed, s.riskDial)))
+      else if (ct.banned or ct.knownMinor or not(coldCooldownOk(ct)))
+        s' = { ...s, blockedContactFence: s.blockedContactFence + 1 }
+      else if (not(canSendOutreach(ct, tier, s.billingArmed, s.riskDial)))
         s' = { ...s, blockedBillingGate: s.blockedBillingGate + 1 }
       else
         s' = {
           ...s,
           nextSeq: s.nextSeq + 1,
+          contacts: s.contacts.set(c, {
+            ...ct,
+            daysSinceCold: 0,
+            coldTouches30d: ct.coldTouches30d + 1,
+            unansweredCold: ct.unansweredCold + 1,
+          }),
           outreachSent: s.outreachSent.union(Set({
             seq: s.nextSeq,
             contact: c,
             tier: tier,
             contactStopped: ct.stopped,
+            contactBanned: ct.banned,
+            contactKnownMinor: ct.knownMinor,
+            daysSinceCold: ct.daysSinceCold,
+            coldTouches30d: ct.coldTouches30d,
+            unansweredCold: ct.unansweredCold,
           })),
           dispatchedTiers: if (tier == 3)
             s.dispatchedTiers.union(Set({ tier: 3, billingArmed: s.billingArmed, riskDial: s.riskDial }))
@@ -744,6 +869,8 @@ module marketing_campaign {
     s' = {
       ...s,
       dailySpentCents: 0,
+      llmTokensToday: 0,
+      llmCostMicrosToday: 0,
       agents: AGENTS.mapBy(a => {
         val ag = s.agents.get(a)
         { ...ag, turnsToday: 0, rateLimited: false }
@@ -820,6 +947,22 @@ module marketing_campaign {
       nondet c = CONTACTS.oneOf()
       nondet st = Set(true, false).oneOf()
       contactSetStop(c, st)
+    },
+    {
+      nondet c = CONTACTS.oneOf()
+      nondet b = Set(true, false).oneOf()
+      contactSetBanned(c, b)
+    },
+    {
+      nondet c = CONTACTS.oneOf()
+      nondet m = Set(true, false).oneOf()
+      contactSetKnownMinor(c, m)
+    },
+    {
+      nondet a = AGENTS.oneOf()
+      nondet tok = LLM_TOKEN_SAMPLES.oneOf()
+      nondet cost = LLM_COST_SAMPLES.oneOf()
+      dispatchLlmCall(a, tok, cost)
     },
     {
       nondet a = AGENTS.oneOf()
@@ -931,6 +1074,29 @@ module marketing_campaign {
     s.agentDispatches.forall(d => not(d.contactStopped)),
   }
 
+  val inv_llm_budget_respected = and {
+    s.llmTokensToday >= 0,
+    s.llmTokensToday <= DAILY_LLM_TOKEN_CAP,
+    s.llmCostMicrosToday >= 0,
+    s.llmCostMicrosToday <= DAILY_LLM_COST_MICROS_CAP,
+    s.llmCalls.forall(e =>
+      e.tokensBefore >= 0 and e.tokensEst >= 0 and e.tokensBefore + e.tokensEst <= DAILY_LLM_TOKEN_CAP
+        and e.costBefore >= 0 and e.costEst >= 0 and e.costBefore + e.costEst <= DAILY_LLM_COST_MICROS_CAP
+    ),
+  }
+
+  val inv_contact_fence_respected = and {
+    s.agentDispatches.forall(d => not(d.contactStopped) and not(d.contactBanned) and not(d.contactKnownMinor)),
+    s.outreachSent.forall(m => and {
+      not(m.contactStopped),
+      not(m.contactBanned),
+      not(m.contactKnownMinor),
+      m.daysSinceCold >= COLD_COOLDOWN_DAYS,
+      m.coldTouches30d < MAX_COLD_TOUCHES_30D,
+      m.unansweredCold < MAX_UNANSWERED_COLD,
+    }),
+  }
+
   val inv_antifraud_caps_respected = and {
     CONTACTS.forall(c => s.contacts.get(c).lifetimeBonusCents <= CONSUMER_LIFETIME_CAP_CENTS),
     s.bonusPaidEvents.forall(b => and {
@@ -951,6 +1117,8 @@ module marketing_campaign {
     inv_agent_subscription_cap,
     inv_device_safety_envelope,
     inv_stop_fence_respected,
+    inv_llm_budget_respected,
+    inv_contact_fence_respected,
     inv_antifraud_caps_respected,
   }
 
@@ -987,6 +1155,12 @@ module marketing_campaign {
 
   val witness_antifraud_blocked =
     s.blockedAntiFraud == 0
+
+  val witness_llm_budget_blocked =
+    s.blockedLlmBudget == 0
+
+  val witness_contact_fence_blocked =
+    s.blockedContactFence == 0
 
   // ---------------------------------------------------------------- deterministic traces
   run humanPaidWithProofHappyPathTest =
@@ -1206,6 +1380,48 @@ module marketing_campaign {
         assert(s.blockedAntiFraud == 5),
         assert(s.contacts.get("c1").lifetimeBonusCents == 1700),
         assert(s.bonusPaidEvents.size() == 2),
+        assert(safety),
+        s' = s,
+      })
+
+  run llmBudgetCapTest =
+    init
+      .then(dispatchLlmCall("chadwick", 600, 250))
+      .then(dispatchLlmCall("sloane", 500, 100))
+      .then(dispatchLlmCall("venn", 200, 300))
+      .then(dispatchLlmCall("peon", 200, 250))
+      .then(all {
+        assert(s.llmTokensToday == 800),
+        assert(s.llmCostMicrosToday == 500),
+        assert(s.llmCalls.size() == 2),
+        assert(s.blockedLlmBudget == 2),
+        assert(safety),
+        s' = s,
+      })
+      .then(dailyReset)
+      .then(dispatchLlmCall("operator", 500, 250))
+      .then(all {
+        assert(s.llmTokensToday == 500),
+        assert(s.llmCostMicrosToday == 250),
+        assert(s.llmCalls.size() == 3),
+        assert(safety),
+        s' = s,
+      })
+
+  run contactFenceAndMinorBlockedTest =
+    init
+      .then(contactSetKnownMinor("c1", true))
+      .then(contactSetBanned("c2", true))
+      .then(dispatchAgentTurn("chadwick", "c1"))
+      .then(sendOutreach("c1", 1))
+      .then(dispatchAgentTurn("sloane", "c2"))
+      .then(sendOutreach("c2", 1))
+      .then(sendOutreach("c3", 1))
+      .then(sendOutreach("c3", 1))
+      .then(all {
+        assert(s.blockedContactFence == 5),
+        assert(s.outreachSent.size() == 1),
+        assert(s.agentDispatches.size() == 0),
         assert(safety),
         s' = s,
       })

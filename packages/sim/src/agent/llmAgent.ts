@@ -4,8 +4,7 @@
 // are known to over-accept, so letting the model choose would grade the engine against
 // unrealistically agreeable people (docs/research/matching-and-graphs.md). Set
 // `llmDecides: true` only for experiments comparing the two. PRD 34.3 "Persona agents".
-import type { LLM } from "@thenetwork/core";
-import { chatJson } from "@thenetwork/core";
+import { chatJson, getCity, type LLM, type LLMBudget } from "@thenetwork/core";
 import { anyJson, SIM_JSON_GROW } from "../llmGenerator.ts";
 import type { SimMessage } from "../channel.ts";
 import type { Persona } from "../persona.ts";
@@ -19,7 +18,20 @@ export interface LLMAgentOptions {
   llmDecides?: boolean;
   /** Options for the choice model (policy.ts PolicyOptions; e.g. timeAware, reactions). Default none. */
   policy?: PolicyOptions;
+  /** Optional shared spend/request guard; once exhausted, replies fall back cleanly to deterministic templates. */
+  budget?: LLMBudget;
 }
+
+const DEFAULT_AGENT_MAX_TOKENS = 700;
+
+const RESPOND_SYSTEM_PREFIX = `You are texting with "the Network agent", an AI that occasionally suggests people or plans. Stay fully in character as a real person texting from your phone. Never mention being an AI, a persona, or percentages.
+Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"none", "worthwhile": boolean}
+- "text": your SMS reply in your writing style.
+- "decision": for proposals, the decision your reply expresses; otherwise "none".
+- "worthwhile": was the agent's latest message worth a text, in your honest opinion?`;
+
+const INITIATIVE_SYSTEM_PREFIX = `You are role-playing a real person sending a short SMS to "the Network agent". Preserve the exact meaning in your own voice. Never mention being an AI or a persona.
+Return ONLY JSON {"text": string}.`;
 
 /**
  * Intents whose reply must be exact, so the template text is sent without a model call: a menu answer
@@ -35,8 +47,9 @@ const skill = (t: string) => SKILLS.find(s => s.tag === t)?.label ?? t;
 /** The persona card the model plays. Contains hidden truth: it IS the person. */
 export function personaCard(p: Persona): string {
   const h = p.hidden;
+  const cityName = getCity(p.homeCity)?.name ?? p.homeCity;
   const lines = [
-    `You are ${p.name}, ${p.public.claimedAge} (${p.gender}), living in ${p.routine.homeArea}, ${p.homeCity === "sf" ? "San Francisco" : "New York"}.`,
+    `You are ${p.name}, ${p.public.claimedAge} (${p.gender}), living in ${p.routine.homeArea}, ${cityName}.`,
     `Archetype: ${p.archetype.replace("_", " ")}. Social energy ${pct(h.socialEnergy)}, spare time this month ${pct(h.capacity)}.`,
     `What you're truly into: ${h.interests.map(label).join(", ")}.`,
     h.skills.length ? `Skills: ${h.skills.map(skill).join(", ")}.` : "",
@@ -111,9 +124,20 @@ function situation(d: PolicyDecision, llmDecides: boolean): string {
 export class LLMPersonaAgent implements PersonaAgent {
   readonly mode = "llm" as const;
   private fallback: PolicyPersonaAgent;
-  calls = 0; failures = 0;
+  calls = 0; failures = 0; budgetSkipped = 0;
   constructor(private llm: LLM, private worldStart: number, private opts: LLMAgentOptions = {}) {
     this.fallback = new PolicyPersonaAgent(worldStart, opts.policy);
+  }
+
+  private tunedClient(cacheKey: string): LLM {
+    return {
+      chat: (messages, chatOpts) =>
+        this.llm.chat(messages, {
+          ...chatOpts,
+          reasoningEffort: "low",
+          promptCacheKey: cacheKey,
+        }),
+    };
   }
 
   async respond(ctx: PersonaContext, msg: SimMessage): Promise<AgentReply> {
@@ -124,21 +148,22 @@ export class LLMPersonaAgent implements PersonaAgent {
       const text = templateText(ctx, d);
       return { ...d, action: text ? "reply" : "ignore", text };
     }
+    if (this.opts.budget?.exhausted) {
+      this.budgetSkipped++;
+      const text = templateText(ctx, d);
+      if (d.intent === "answer_question") ctx.memory.questionsAnswered++;
+      if (d.disclose) ctx.memory.disclosed = true;
+      return { ...d, action: text ? "reply" : "ignore", text };
+    }
     const history = ctx.history.filter(m => !m.system).slice(-(this.opts.maxHistory ?? 10))
       .map(m => `${m.direction === "outbound" ? "Network agent" : "You"}: ${m.body}`).join("\n");
-    const system = `${personaCard(ctx.persona)}
-
-You are texting with "the Network agent", an AI that occasionally suggests people or plans. Stay fully in character as a real person texting from your phone. Never mention being an AI, a persona, or percentages.
-Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"none", "worthwhile": boolean}
-- "text": your SMS reply in your writing style.
-- "decision": for proposals, the decision your reply expresses; otherwise "none".
-- "worthwhile": was the agent's latest message worth a text, in your honest opinion?`;
+    const system = `${RESPOND_SYSTEM_PREFIX}\n\nPersona profile:\n${personaCard(ctx.persona)}`;
     const user = `Conversation so far:\n${history || "(none)"}\n\nNew message from the Network agent:\n"${msg.body}"\n\nSituation: ${situation(d, !!this.opts.llmDecides)}`;
     try {
       this.calls++;
-      const j = await chatJson(this.llm,
+      const j = await chatJson(this.tunedClient("sim-persona-respond-v2"),
         [{ role: "system", content: system }, { role: "user", content: user }], anyJson<{ text?: string; decision?: string; worthwhile?: boolean }>,
-        { attempts: 2, maxTokens: this.opts.maxTokens ?? 3000, temperature: this.opts.temperature ?? 0.8, grow: SIM_JSON_GROW });
+        { attempts: 2, maxTokens: this.opts.maxTokens ?? DEFAULT_AGENT_MAX_TOKENS, temperature: this.opts.temperature ?? 0.8, grow: SIM_JSON_GROW });
       const text = String(j.text ?? "").trim();
       if (!text) throw new Error("empty text");
       const reply: AgentReply = { ...d, action: "reply", text };
@@ -166,13 +191,17 @@ Return ONLY JSON: {"text": string, "decision": "accept"|"decline"|"counter"|"non
 
   async initiative(ctx: PersonaContext): Promise<Initiative | undefined> {
     const ini = policyInitiative(ctx, this.worldStart, this.opts.policy);
-    if (!ini || (ini.kind !== "ask" && ini.kind !== "travel")) return ini; // keep attack payloads verbatim
+    if (!ini || (ini.kind !== "ask" && ini.kind !== "travel")) return ini;
+    if (this.opts.budget?.exhausted) {
+      this.budgetSkipped++;
+      return ini;
+    }
     try {
       this.calls++;
-      const j = await chatJson(this.llm, [
-        { role: "system", content: `${personaCard(ctx.persona)}\nReturn ONLY JSON {"text": string}.` },
+      const j = await chatJson(this.tunedClient("sim-persona-initiative-v2"), [
+        { role: "system", content: `${INITIATIVE_SYSTEM_PREFIX}\n\nPersona profile:\n${personaCard(ctx.persona)}` },
         { role: "user", content: `Rewrite this text message to the Network agent in your own voice, same meaning, as an SMS: "${ini.text}"` },
-      ], anyJson<{ text?: string }>, { attempts: 2, maxTokens: 3000, temperature: 0.8, grow: SIM_JSON_GROW });
+      ], anyJson<{ text?: string }>, { attempts: 2, maxTokens: this.opts.maxTokens ?? DEFAULT_AGENT_MAX_TOKENS, temperature: 0.8, grow: SIM_JSON_GROW });
       const text = String(j.text ?? "").trim();
       return text ? { ...ini, text } : ini;
     } catch { this.failures++; return ini; }

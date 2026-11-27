@@ -45,10 +45,11 @@ phone number.
    Only if this client cannot add a remote connector at all, or the person cannot
    add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
    profile. Use the client's supported authorization flow.
-2. Read the public app facts at `https://friends.help/api/app` without credentials. <!-- agentSignup: readAppFacts -->
-   Confirm `id` is `friends`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
-   and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
-   these facts.
+2. Read the public app facts at `https://friends.help/api/app` without credentials <!-- agentSignup: readAppFacts -->
+   (or call `app_info` with `app: "friends"`, which returns the same `cities`, `ages`,
+   and exact current `consent.text` and `consent.version`). Confirm `id` is `friends`.
+   Use this app's `joinMode`, `minJoinAge`, `minMatchAge`, and exact current
+   `consent.text` and `consent.version`. Stop if you cannot confirm these facts.
 3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
    to explain what they get. Use the lowest age that any statement gives. Never send a
    birthday or an age through a tool; the person types their birthday on the app's
@@ -58,10 +59,13 @@ phone number.
    help, with answers, public events and plans for themselves. They are never matched
    for work. Never promise them an introduction.
    Draft their confirmed first name and home region.
-   Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
-   separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
-   or ZIP code or pick an incorrect region.
-   Draft a friendship profile with interests, availability and whether they prefer
+   Confirm their home city — New York City (`nyc`), San Francisco / Bay Area (`sf`),
+   Los Angeles (`la`), Chicago (`chicago`), or Miami (`miami`) — and keep their
+   neighborhood separate. Ask if the region is ambiguous. Do not guess it from a
+   neighborhood or ZIP code or pick an incorrect region.
+   Draft a friendship profile with interests, availability, any venue red lines
+   (dietary, alcohol-free/sober, severe allergies, wheelchair accessibility, or
+   low-noise/daytime preferences), and whether they prefer
    groups or one-on-one. Leave out private information intended for other apps.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
    recurring texts, variable frequency, possible message and data rates, STOP

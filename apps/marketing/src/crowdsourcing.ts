@@ -4,7 +4,7 @@
 // delegate to canonical ./policy.ts, ./constants.ts, and ./cities.ts.
 
 import { RealClock } from "../../../packages/core/src/clock.ts";
-import { LeakGuard } from "../../../packages/core/src/guard.ts";
+import { type LeakGuard } from "../../../packages/core/src/guard.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import {
   spendAuthFromCampaign,
@@ -17,21 +17,32 @@ import {
 } from "./cities.ts";
 import {
   ANTI_POSTING_NOTICE,
+  buildOpsContractUrl,
+  buildOpsProofUploadUrl,
+  buildOpsReleaseUrl,
   DEFAULT_DAILY_OUTREACH_CAP,
   FTC_DISCLOSURE_CLAUSE,
   marketingAdultAge,
+  marketingLeakAllowlist,
   MTA_EXCLUSION_NOTICE,
   NY_RELEASE_CLAUSE,
   RENTAHUMAN_BUYER_FEE_RATE,
   RENTAHUMAN_MCP_ENDPOINT,
   renderMarketingEmailTemplate,
 } from "./constants.ts";
+import { detectUnderageText } from "./llm-cache.ts";
+import type { NetworkCoreBridge } from "./network-bridge.ts";
 import { VETTED_NYC_AGENCIES } from "./nyc-seed.ts";
 import {
+  createMarketingLeakGuard,
+  evaluateContactHygiene,
   evaluateOutreachPolicy,
   evaluateProofPolicy,
   evaluateSpendAuth,
   isAdultReading,
+  isGlobalOptOutText,
+  isLocalQuietHours,
+  keyedContactHash,
   minAgeReading,
   PolicyViolationError,
 } from "./policy.ts";
@@ -204,19 +215,10 @@ export interface CrowdsourcingEngineOptions {
   transport?: OutreachTransport;
   paidAdapters?: PaidAdapterRegistry;
   leakGuard?: LeakGuard;
+  bridge?: NetworkCoreBridge;
 }
 
-const DEFAULT_OUTREACH_LEAK_ALLOW: readonly string[] = [
-  "ops-nyc@ntwrk.party",
-  "ntwrk.party",
-  "slop.date",
-  "peon.biz",
-  "friends.help",
-  "go.ntwrk.party",
-  "go.slop.date",
-  "go.peon.biz",
-  "go.friends.help",
-];
+const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const NYC_DIRECT_BOOKING_AGENCIES: readonly string[] = VETTED_NYC_AGENCIES.filter(
   (agency) => agency.zeroTouchBookingReadiness !== "low_m1",
@@ -226,6 +228,21 @@ const NYC_DIRECT_BOOKING_AGENCIES: readonly string[] = VETTED_NYC_AGENCIES.filte
 
 function formatUsd(cents: number): string {
   return (cents / 100).toFixed(2);
+}
+
+function splitShiftHours(shiftHours: string): { startTime: string; endTime: string } {
+  const withoutDuration = shiftHours.replace(/\s*\([^)]*\)\s*/g, " ").trim();
+  const rangeMatch = /^(.+?)\s*(?:–|—|-|\bto\b)\s*(.+)$/i.exec(withoutDuration);
+  if (rangeMatch?.[1] && rangeMatch[2]) {
+    return {
+      startTime: rangeMatch[1].trim(),
+      endTime: rangeMatch[2].trim(),
+    };
+  }
+  return {
+    startTime: withoutDuration || "1:00 PM",
+    endTime: "5:00 PM",
+  };
 }
 
 function defaultContractorMode(role: HiringRole): "1099_direct" | "w2_agency" | "creator_direct" {
@@ -248,6 +265,7 @@ export class CrowdsourcingEngine {
   private readonly transport?: OutreachTransport;
   private readonly paidAdapters?: PaidAdapterRegistry;
   private readonly leakGuard: LeakGuard;
+  private readonly bridge?: NetworkCoreBridge;
 
   constructor(opts: CrowdsourcingEngineOptions) {
     this.store = opts.store;
@@ -255,12 +273,11 @@ export class CrowdsourcingEngine {
     this.env = opts.env ?? process.env;
     this.transport = opts.transport;
     this.paidAdapters = opts.paidAdapters;
+    this.bridge = opts.bridge;
     this.leakGuard =
       opts.leakGuard ??
-      new LeakGuard({
-        contacts: true,
-        canaryShapes: true,
-        allow: [...DEFAULT_OUTREACH_LEAK_ALLOW],
+      createMarketingLeakGuard(this.env, {
+        allow: [...marketingLeakAllowlist([], this.env)],
       });
   }
 
@@ -312,9 +329,10 @@ export class CrowdsourcingEngine {
       opts.shiftDate ?? new Date(this.clock.now() + 48 * 3_600_000).toISOString().slice(0, 10);
     const shiftHours = opts.shiftHours ?? "1:00 PM – 5:00 PM (4 hours)";
     const qrBatchCode = opts.qrBatchCode ?? `${cityCode.toUpperCase()}-001`;
-    const shortLink = opts.shortLink ?? `https://ntwrk.party/?b=${qrBatchCode}`;
-    const releaseFormUrl = opts.releaseFormUrl ?? `https://ntwrk.party/release?batch=${qrBatchCode}`;
-    const contractUrl = opts.contractUrl ?? `https://ntwrk.party/contractor-terms?batch=${qrBatchCode}`;
+    const shortLink = opts.shortLink ?? `https://go.ntwrk.party/j/${encodeURIComponent(qrBatchCode)}`;
+    const releaseFormUrl = opts.releaseFormUrl ?? buildOpsReleaseUrl(qrBatchCode, this.env);
+    const contractUrl = opts.contractUrl ?? buildOpsContractUrl(qrBatchCode, this.env);
+    const proofUploadUrl = buildOpsProofUploadUrl(qrBatchCode, this.env);
     const targetBrand =
       opts.targetBrand ?? "The Network (ntwrk.party / slop.date / peon.biz / friends.help)";
     const budgetUsd = formatUsd(budgetCents);
@@ -349,12 +367,18 @@ export class CrowdsourcingEngine {
           ? `$30/hr + Bonus — ${cityLabel} Live Event Activator (${neighborhood}, ${marketingAdultAge}+)`
           : `$22/hr + Bonus — ${cityLabel} Hand-to-Hand Flier Street Team (${neighborhood}, ${marketingAdultAge}+)`;
 
+    const { startTime, endTime } = splitShiftHours(shiftHours);
     const renderedCl = renderMarketingEmailTemplate("craigslist_gig_post", {
+      CITY_LABEL: cityLabel,
+      CITY_CODE: cityCode.toUpperCase(),
       NEIGHBORHOOD: neighborhood,
       SHIFT_DATE: shiftDate,
-      START_TIME: shiftHours,
-      END_TIME: "end of shift",
+      START_TIME: startTime,
+      END_TIME: endTime,
       LANDMARK_AND_NEIGHBORHOOD: `${neighborhood} (${cityLabel})`,
+      LOCAL_ANTI_POSTING: antiPostingNotice,
+      LOCAL_TRANSIT_RULE: mtaExclusionNotice,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
 
     const craigslistBody = [
@@ -396,7 +420,7 @@ export class CrowdsourcingEngine {
                 `Unique batch QR ${qrBatchCode} shown on screen and pinned`,
               ]
             : [
-                "3 timestamped GPS check-in photos (Start, Midpoint, End)",
+                `3 timestamped GPS check-in photos (Start, Midpoint, End) uploaded via ${proofUploadUrl}`,
                 "Remaining flier stack count photo",
                 `Active QR Batch ${qrBatchCode} scan verification`,
               ],
@@ -404,12 +428,16 @@ export class CrowdsourcingEngine {
     };
 
     const renderedAgency = renderMarketingEmailTemplate("agency_rfp", {
+      CITY_LABEL: cityLabel,
       AGENCY_NAME: `${cityLabel} Staffing Partner`,
       TARGET_DATES: shiftDate,
       HEADCOUNT: "2",
       NEIGHBORHOODS: `${neighborhood} (${cityLabel})`,
       SHIFT_HOURS: shiftHours,
       BUDGET_CAP: budgetUsd,
+      LOCAL_ANTI_POSTING: antiPostingNotice,
+      LOCAL_TRANSIT_RULE: mtaExclusionNotice,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
     const targetAgencies =
       cityCode === "nyc"
@@ -431,6 +459,7 @@ export class CrowdsourcingEngine {
     ];
 
     const renderedCreator = renderMarketingEmailTemplate("creator_street_interview_brief", {
+      CITY_LABEL: cityLabel,
       CREATOR_NAME: "Creator",
       RECENT_VIDEO_TITLE: `your recent ${cityLabel} street video`,
       NEIGHBORHOOD: neighborhood,
@@ -441,6 +470,7 @@ export class CrowdsourcingEngine {
       RELEASE_FORM_URL: releaseFormUrl,
       CREATOR_CONTRACT_URL: contractUrl,
       TARGET_PUBLISH_DATE: shiftDate,
+      LOCAL_LABOR_STATUTE: localLaborNote,
     });
 
     const creatorBrief = {
@@ -480,9 +510,30 @@ export class CrowdsourcingEngine {
 
   async screenApplicantReply(input: ApplicantScreenInput): Promise<ApplicantScreenResult> {
     const optOut = parseOptOut(input.replyText);
-    if (optOut.match !== "none") {
+    const globalStop = isGlobalOptOutText(input.replyText);
+    if (optOut.match !== "none" || globalStop) {
       if (input.humanId) {
-        await this.store.markHumanStopped(input.humanId, `applicant_opt_out_${optOut.match}`);
+        const stoppedHuman = await this.store.markHumanStopped(
+          input.humanId,
+          `applicant_opt_out_${optOut.match !== "none" ? optOut.match : "global_stop"}`,
+        );
+        await this.store.recordContactSuppression({
+          contactHash: stoppedHuman.handleOrEmailHmac,
+          reason: "applicant_opt_out",
+          sourceChannel: stoppedHuman.channel,
+          isMinor: false,
+        });
+        if (stoppedHuman.contactEmail) {
+          const emailHash = keyedContactHash("email", stoppedHuman.contactEmail, this.env);
+          if (emailHash && emailHash !== stoppedHuman.handleOrEmailHmac) {
+            await this.store.recordContactSuppression({
+              contactHash: emailHash,
+              reason: "applicant_opt_out",
+              sourceChannel: stoppedHuman.channel,
+              isMinor: false,
+            });
+          }
+        }
       }
       return {
         passed: false,
@@ -501,8 +552,56 @@ export class CrowdsourcingEngine {
           : await this.store.getHuman(input.humanId);
     }
 
-    const effectiveAge = minAgeReading(input.statedAge, persistedHuman?.lowestAge);
-    if (!isAdultReading(effectiveAge)) {
+    if (this.bridge && persistedHuman) {
+      const fence = await this.bridge.checkContactFence({
+        email: persistedHuman.contactEmail ?? null,
+        phoneHash: persistedHuman.handleOrEmailHmac,
+      });
+      if (!fence.allowed) {
+        if (fence.knownMinor) {
+          await this.store.recordContactSuppression({
+            contactHash: persistedHuman.handleOrEmailHmac,
+            reason: fence.reason ?? "platform_known_minor",
+            sourceChannel: persistedHuman.channel,
+            isMinor: true,
+          });
+          return {
+            passed: false,
+            optedOut: false,
+            score: 0,
+            decision: "rejected_underage",
+            reasons: ["worker_must_be_18_plus"],
+          };
+        }
+        await this.store.markHumanStopped(persistedHuman.id, fence.reason ?? "platform_fence_blocked");
+        return {
+          passed: false,
+          optedOut: true,
+          score: 0,
+          decision: "rejected_opt_out",
+          reasons: [fence.reason ?? "platform_fence_blocked"],
+        };
+      }
+    }
+
+    const detectedUnderage = detectUnderageText(input.replyText);
+    const effectiveAge = minAgeReading(
+      input.statedAge,
+      persistedHuman?.lowestAge,
+      detectedUnderage.statedAge,
+    );
+    if (detectedUnderage.isMinor || !isAdultReading(effectiveAge)) {
+      if (
+        persistedHuman &&
+        (detectedUnderage.isMinor || (effectiveAge !== null && effectiveAge < marketingAdultAge))
+      ) {
+        await this.store.recordContactSuppression({
+          contactHash: persistedHuman.handleOrEmailHmac,
+          reason: detectedUnderage.reason ?? "underage_applicant",
+          sourceChannel: persistedHuman.channel,
+          isMinor: true,
+        });
+      }
       return {
         passed: false,
         optedOut: false,
@@ -557,8 +656,109 @@ export class CrowdsourcingEngine {
     return { passed: false, optedOut: false, score, decision: "rejected_low_score", reasons };
   }
 
+  private async checkContactGate(
+    human: HumanPartner,
+    campaign: Campaign,
+    isCold: boolean,
+  ): Promise<{
+    allowed: boolean;
+    blockedStatus?: "blocked_stop" | "blocked_policy";
+    reason?: string;
+    contactHash: string;
+  }> {
+    const contactHash = human.handleOrEmailHmac;
+    const emailHash = human.contactEmail
+      ? keyedContactHash("email", human.contactEmail, this.env)
+      : null;
+
+    const suppression =
+      (await this.store.isContactSuppressed(contactHash)) ??
+      (emailHash ? await this.store.isContactSuppressed(emailHash) : null);
+
+    let bridgeBanned = false;
+    let bridgeStopped = false;
+    let bridgeMinor = false;
+    let bridgeReason: string | undefined;
+    if (this.bridge) {
+      const verdict = await this.bridge.checkContactFence({
+        email: human.contactEmail ?? null,
+        phoneHash: contactHash,
+      });
+      if (!verdict.allowed) {
+        bridgeBanned = verdict.banned || verdict.recycledHold || (!verdict.globallyStopped && !verdict.knownMinor);
+        bridgeStopped = verdict.globallyStopped;
+        bridgeMinor = verdict.knownMinor;
+        bridgeReason = verdict.reason;
+      }
+    }
+
+    const isKnownMinor =
+      (human.lowestAge !== null && human.lowestAge < marketingAdultAge) ||
+      Boolean(suppression?.isMinor) ||
+      bridgeMinor;
+    const isStopped =
+      human.stopped ||
+      bridgeStopped ||
+      Boolean(suppression && suppression.reason.includes("stop"));
+    const isBanned =
+      human.banned ||
+      bridgeBanned ||
+      Boolean(suppression && !suppression.isMinor && !suppression.reason.includes("stop"));
+
+    const stats = await this.store.getContactTouchpointStats(contactHash, this.clock.now());
+    const hygiene = evaluateContactHygiene({
+      isStopped,
+      isBanned,
+      isKnownMinor,
+      lockdown: campaign.riskDial === "lockdown",
+      isCold,
+      isQuietHours: isLocalQuietHours(campaign.city, this.clock.now()),
+      daysSinceCold: stats.daysSinceLastCold,
+      coldTouches30d: stats.coldTouches30d,
+      unansweredCold: stats.unansweredColdStreak,
+      opTouchesToday: stats.opTouchesToday,
+    });
+
+    if (!hygiene.allowed) {
+      return {
+        allowed: false,
+        blockedStatus: isStopped ? "blocked_stop" : "blocked_policy",
+        reason: bridgeReason ?? hygiene.reason,
+        contactHash,
+      };
+    }
+
+    return { allowed: true, contactHash };
+  }
+
   async queueOutreach(input: QueueOutreachInput): Promise<OutreachMessage> {
     const leaks = this.leakGuard.check(input.bodyText);
+    const [campaign, human] = await Promise.all([
+      this.store.getCampaign(input.campaignId),
+      this.store.getHuman(input.humanId),
+    ]);
+    if (campaign && human) {
+      const isCold =
+        ((input.tier ?? 1) === 1 || input.channel === "email") &&
+        human.role !== "street_worker" &&
+        human.role !== "creator";
+      const gate = await this.checkContactGate(human, campaign, isCold);
+      if (!gate.allowed) {
+        return this.store.createOutreachMessage({
+          campaignId: input.campaignId,
+          agentId: input.agentId,
+          humanId: input.humanId,
+          channelAccountId: input.channelAccountId ?? null,
+          channel: input.channel,
+          tier: input.tier ?? 1,
+          subject: input.subject ?? null,
+          bodySummary: input.bodyText,
+          leakCheckPass: leaks.length === 0,
+          desiredStatus: gate.blockedStatus ?? "blocked_policy",
+          dailyOutreachCap: input.dailyOutreachCap,
+        });
+      }
+    }
     return this.store.createOutreachMessage({
       campaignId: input.campaignId,
       agentId: input.agentId,
@@ -604,6 +804,20 @@ export class CrowdsourcingEngine {
         continue;
       }
 
+      const isCold =
+        (msg.tier === 1 || msg.channel === "email") &&
+        human.role !== "street_worker" &&
+        human.role !== "creator";
+      const contactGate = await this.checkContactGate(human, campaign, isCold);
+      if (!contactGate.allowed) {
+        const blockedStatus = contactGate.blockedStatus ?? "blocked_policy";
+        const updated = await this.store.updateOutreachStatus(msg.id, blockedStatus);
+        if (blockedStatus === "blocked_stop") blockedStop += 1;
+        else blockedPolicy += 1;
+        processed.push(updated);
+        continue;
+      }
+
       const policyDecision = evaluateOutreachPolicy({
         human,
         lockdown: campaign.riskDial === "lockdown",
@@ -626,6 +840,13 @@ export class CrowdsourcingEngine {
           "sent",
           `dry-run:${msg.id}`,
         );
+        await this.store.recordContactTouchpoint({
+          contactHash: contactGate.contactHash,
+          campaignId: campaign.id,
+          surface: "outreach",
+          isCold,
+          answered: false,
+        });
         dryRun += 1;
         processed.push(updated);
         continue;
@@ -640,6 +861,13 @@ export class CrowdsourcingEngine {
               "sent",
               res.externalRef ?? `live:${msg.id}`,
             );
+            await this.store.recordContactTouchpoint({
+              contactHash: contactGate.contactHash,
+              campaignId: campaign.id,
+              surface: "outreach",
+              isCold,
+              answered: false,
+            });
             sent += 1;
             processed.push(updated);
           } else {
@@ -651,11 +879,22 @@ export class CrowdsourcingEngine {
         }
 
         if (this.paidAdapters && msg.channel === "email") {
+          const recipientEmail = human.contactEmail?.trim() ?? "";
+          if (!VALID_EMAIL_RE.test(recipientEmail)) {
+            const updated = await this.store.updateOutreachStatus(
+              msg.id,
+              "failed",
+              "error:missing_or_invalid_contact_email",
+            );
+            failed += 1;
+            processed.push(updated);
+            continue;
+          }
           const receipt = await this.paidAdapters.execute(
             "email",
             {
-              to: human.displayLabel,
-              subject: msg.subject ?? "The Network NYC Opportunity",
+              to: recipientEmail,
+              subject: msg.subject ?? `Quick note for ${campaign.city.toUpperCase()}`,
               text: msg.bodySummary,
             },
             {
@@ -674,6 +913,13 @@ export class CrowdsourcingEngine {
               "sent",
               receipt.externalRef ?? `adapter:${msg.id}`,
             );
+            await this.store.recordContactTouchpoint({
+              contactHash: contactGate.contactHash,
+              campaignId: campaign.id,
+              surface: "outreach",
+              isCold,
+              answered: false,
+            });
             if (receipt.mode === "live") sent += 1;
             else dryRun += 1;
             processed.push(updated);
@@ -690,6 +936,13 @@ export class CrowdsourcingEngine {
           "sent",
           `dry-run:${msg.id}`,
         );
+        await this.store.recordContactTouchpoint({
+          contactHash: contactGate.contactHash,
+          campaignId: campaign.id,
+          surface: "outreach",
+          isCold,
+          answered: false,
+        });
         dryRun += 1;
         processed.push(updated);
       } catch {
@@ -724,26 +977,54 @@ export class CrowdsourcingEngine {
 
     const evidenceUrl = input.evidenceUrl?.trim() || null;
     const hasEvidenceUrl = Boolean(evidenceUrl && /^https?:\/\//i.test(evidenceUrl));
+    const mediaHashes = (input.checkinMediaHashes ?? []).map((h) => h.trim()).filter(Boolean);
+
+    let duplicateMediaHash: string | null = null;
+    for (const hash of mediaHashes) {
+      if (await this.store.hasMediaHash(hash, task.id)) {
+        duplicateMediaHash = hash;
+        break;
+      }
+    }
+
     const verifiedSignupsOrShiftDone = Boolean(
       input.shiftDone ||
         (input.verifiedSignupsCount ?? 0) > 0 ||
         (input.qrScansCount ?? 0) > 0 ||
-        (input.checkinMediaHashes?.length ?? 0) >= 2,
+        mediaHashes.length >= 2,
     );
 
     const proof = await this.store.createProof({
       taskId: task.id,
       proofKind: input.proofKind,
       evidenceUrl: hasEvidenceUrl ? evidenceUrl : null,
-      checkinMediaHashes: input.checkinMediaHashes ?? [],
+      checkinMediaHashes: mediaHashes,
       qrScansCount: input.qrScansCount ?? 0,
       verifiedSignupsCount: input.verifiedSignupsCount ?? 0,
       ftcDisclosed: input.ftcDisclosed,
       geoTimeValid: input.geoTimeValid,
       likenessReleaseOk:
         input.proofKind === "creator_video" ? Boolean(input.likenessReleaseOk) : true,
-      verifierNotes: input.verifierNotes ?? null,
+      verifierNotes: duplicateMediaHash
+        ? `duplicate_media_hash:${duplicateMediaHash}`
+        : (input.verifierNotes ?? null),
     });
+
+    if (duplicateMediaHash) {
+      const rejectedEval = await this.store.evaluateProof(proof.id, {
+        workerAge: -1,
+        workerBanned: true,
+        shiftDone: false,
+        verifierNotes: `duplicate_media_hash:${duplicateMediaHash}`,
+      });
+      return {
+        proof: rejectedEval.proof,
+        task: rejectedEval.task,
+        approved: false,
+        rejectionReason: "duplicate_media_hash",
+        payoutAuthorized: false,
+      };
+    }
 
     const preApproveDecision = evaluateProofPolicy({
       proof,

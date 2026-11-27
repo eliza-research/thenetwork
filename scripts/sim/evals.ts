@@ -6,9 +6,17 @@
 //   opt-out*.jsonl the opt-out readers (core parseOptOut; the platform consent ledger's detectKeyword)
 //   guard/         the shared leak guard (contacts in disguise, private facts, homoglyphs, benign text)
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
-import { classifyYesNo, findLeaks, maskPii, parseOptOut, parseReply, type ReplyAnswer } from "../../packages/core/src/index.ts";
-import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import {
+  buildLumaCreateEventRequest, classifyYesNo, containsUrlOrBrandSpam, detectExternalPromptInjection,
+  fenceExternalEventText, findLeaks, localParts, maskPii, normalizeLumaWebhookEvent, normalizeMeetupRsvpPoll,
+  parseAdult18PlusAnswer, parseOptOut, parseReply, sanitizeProspectFacets, scrubPartifulTelecomCopy,
+  type ExternalEventDraft, type ReplyAnswer, type VenueRejectionReason,
+} from "../../packages/core/src/index.ts";
+import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, feedbackOf, isPitchSlapMessage, isProbeCounterTime, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
+import { classifyVenueRejection } from "../../packages/network/src/network.ts";
+import { parseNaturalReschedule } from "../../packages/network/src/rescheduling.ts";
+import { contactOrCode } from "../../packages/mcp/src/tools.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, keywordApp, lookingFor, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
@@ -16,7 +24,7 @@ import { parseJoinText } from "../../packages/network/service/service.ts";
 import { phoneChangeLinkRequest } from "../../packages/network/service/phone-change-link.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
 import { outputLeaks } from "../../packages/mcp/src/leaks.ts";
-import { parseReviewJudgeReply } from "../../packages/engine/src/reviewJudge.ts";
+import { packetSuspect, parseReviewJudgeReply, type ReviewPacket } from "../../packages/engine/src/reviewJudge.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { riskTerms } from "../../packages/engine/src/filters.ts";
 import { Block, expect } from "./gate.ts";
@@ -307,6 +315,288 @@ export async function evalsBlock(b: Block): Promise<void> {
     .filter(({ row, read }) => read.verdict !== row.verdict || read.reason !== row.reason || (row.reason === "unparseable" && read.explanation !== ""))
     .map(({ row, read }) => `${row.kind} (${row.rubric}) -> ${read.verdict}/${read.reason} (want ${row.verdict}/${row.reason})`);
   b.gate(`review judge parser: every row (n ${judgeReplies.length})`, judgeReplies.length >= 48 && judgeMiss.length === 0, judgeMiss.slice(0, 5).join("; "));
+
+  await meetupCorporaBlock(b);
+  await pass4CorporaBlock(b);
+}
+
+async function pass4CorporaBlock(b: Block): Promise<void> {
+  const OPTIONS = [
+    { key: "a", start: 1, end: 2, label: "Thursday 7pm" },
+    { key: "b", start: 3, end: 4, label: "Saturday 11am" },
+    { key: "c", start: 5, end: 6, label: "Sunday 2pm" },
+  ];
+
+  // ---- speaking-styles.jsonl -----------------------------------------------------------------------
+  type StyleRow =
+    | { kind: "probe"; style: string; text: string; answer: "yes" | "no" | "unclear"; keys: string[]; counterTime?: boolean }
+    | { kind: "feedback"; style: string; text: string; sentiment: "positive" | "negative" | "neutral"; again?: boolean }
+    | { kind: "pitch"; style: string; text: string; pitch: boolean }
+    | { kind: "age_and_area"; style: string; text: string; age: number; minor: boolean; area: string };
+
+  const styleRows = await jsonl<StyleRow>("network/speaking-styles.jsonl");
+  const styleMisses: string[] = [];
+  for (const row of styleRows) {
+    if (row.kind === "probe") {
+      const r = parseProbeReply(row.text, OPTIONS);
+      if (r.answer !== row.answer || JSON.stringify(r.keys) !== JSON.stringify(row.keys)) {
+        styleMisses.push(`probe[${row.style}] ${JSON.stringify(row.text)} -> ${r.answer}/${JSON.stringify(r.keys)}`);
+      }
+      if (row.counterTime !== undefined && isProbeCounterTime(row.text, OPTIONS) !== row.counterTime) {
+        styleMisses.push(`counterTime[${row.style}] ${JSON.stringify(row.text)} -> ${!row.counterTime}`);
+      }
+    } else if (row.kind === "feedback") {
+      const f = feedbackOf(row.text);
+      if (f.sentiment !== row.sentiment || (row.again !== undefined && f.again !== row.again)) {
+        styleMisses.push(`feedback[${row.style}] ${JSON.stringify(row.text)} -> ${f.sentiment}/again=${f.again}`);
+      }
+    } else if (row.kind === "pitch") {
+      const got = isPitchSlapMessage(row.text);
+      if (got !== row.pitch) {
+        styleMisses.push(`pitch[${row.style}] ${JSON.stringify(row.text)} -> ${got} (want ${row.pitch})`);
+      }
+    } else {
+      const c = classify(row.text);
+      const prof = extractProfile(row.text);
+      const isMinorReading = c.minorSignal || (c.statedAge !== undefined && c.statedAge < 18);
+      if (c.statedAge !== row.age || isMinorReading !== row.minor || prof.area !== row.area) {
+        styleMisses.push(`age_area[${row.style}] ${JSON.stringify(row.text)} -> age=${c.statedAge},minor=${isMinorReading},area=${prof.area}`);
+      }
+    }
+  }
+  b.gate(
+    `speaking styles corpus (n ${styleRows.length}): probe, feedback, pitch-slap, and multi-city age/area readings`,
+    styleRows.length >= 40 && styleMisses.length === 0,
+    styleMisses.slice(0, 5).join(" | "),
+  );
+
+  // ---- mcp-proxy-journeys.jsonl --------------------------------------------------------------------
+  type McpRow =
+    | { kind: "submit_profile"; text: string; want: "accepted" | "rejected"; note: string }
+    | { kind: "output_gate"; text: string; want: "clean" | "leaked"; note: string };
+
+  const mcpRows = await jsonl<McpRow>("network/mcp-proxy-journeys.jsonl");
+  const mcpMisses: string[] = [];
+  for (const row of mcpRows) {
+    if (row.kind === "submit_profile") {
+      const rejected = contactOrCode(row.text);
+      const wantRejected = row.want === "rejected";
+      if (rejected !== wantRejected) {
+        mcpMisses.push(`submit_profile(${row.note}) ${JSON.stringify(row.text)} -> rejected=${rejected}`);
+      }
+    } else {
+      const leaked = outputLeaks(row.text).length > 0;
+      const wantLeaked = row.want === "leaked";
+      if (leaked !== wantLeaked) {
+        mcpMisses.push(`output_gate(${row.note}) ${JSON.stringify(row.text)} -> leaked=${leaked}`);
+      }
+    }
+  }
+  b.gate(
+    `MCP proxy journeys corpus (n ${mcpRows.length}): benign 4-digit years/units accepted, OTP/contact blocked, output gate clean`,
+    mcpRows.length >= 25 && mcpMisses.length === 0,
+    mcpMisses.slice(0, 5).join(" | "),
+  );
+
+  // ---- venue-swap-and-reschedule.jsonl -------------------------------------------------------------
+  type SwapReschedRow =
+    | { kind: "natural_reschedule"; text: string; tz: string; nowIso: string; origIso: string; openRef?: string; wantKind: "request" | "vote" | null; wantLocalHour?: number; wantAccepted?: boolean; note: string }
+    | { kind: "venue_rejection"; text: string; wantReason: VenueRejectionReason; note: string };
+
+  const srRows = await jsonl<SwapReschedRow>("network/venue-swap-and-reschedule.jsonl");
+  const srMisses: string[] = [];
+  for (const row of srRows) {
+    if (row.kind === "natural_reschedule") {
+      const cmd = parseNaturalReschedule(row.text, {
+        nowMs: Date.parse(row.nowIso),
+        tz: row.tz,
+        originalAt: Date.parse(row.origIso),
+        ...(row.openRef ? { openRef: row.openRef } : {}),
+      });
+      const gotKind = cmd?.kind ?? null;
+      if (gotKind !== row.wantKind) {
+        srMisses.push(`reschedule(${row.note}) -> ${gotKind} (want ${row.wantKind})`);
+        continue;
+      }
+      if (cmd?.kind === "request" && row.wantLocalHour !== undefined) {
+        const local = localParts(cmd.proposedAt, row.tz);
+        if (local.hour !== row.wantLocalHour) {
+          srMisses.push(`reschedule(${row.note}) hour=${local.hour} (want ${row.wantLocalHour})`);
+        }
+      }
+      if (cmd?.kind === "vote" && row.wantAccepted !== undefined && cmd.accepted !== row.wantAccepted) {
+        srMisses.push(`reschedule_vote(${row.note}) accepted=${cmd.accepted} (want ${row.wantAccepted})`);
+      }
+    } else {
+      const got = classifyVenueRejection(row.text);
+      if (got !== row.wantReason) {
+        srMisses.push(`venue_rejection(${row.note}) -> ${got} (want ${row.wantReason})`);
+      }
+    }
+  }
+  b.gate(
+    `venue swap & natural reschedule corpus (n ${srRows.length}): multi-city reschedule parsing and 7-way venue rejection classification`,
+    srRows.length >= 30 && srMisses.length === 0,
+    srMisses.slice(0, 5).join(" | "),
+  );
+}
+
+async function meetupCorporaBlock(b: Block): Promise<void> {
+  // ---- matchmaker spam + Partiful telecom scrub ----------------------------------------------------
+  type SpamRow = { text: string; kind: "spam" | "partiful_telecom" | "benign"; want: "block" | "scrub" | "clean"; note: string };
+  const spamRows = await jsonl<SpamRow>("meetup/matchmaker-spam.jsonl");
+  const badRows = spamRows.filter(r => r.want !== "clean");
+  const benignRows = spamRows.filter(r => r.want === "clean");
+  const caughtBad = badRows.filter(r =>
+    r.kind === "spam" ? containsUrlOrBrandSpam(r.text) : scrubPartifulTelecomCopy(r.text).scrubbedTerms.length > 0
+  );
+  const missedBad = badRows
+    .filter(r => !(r.kind === "spam" ? containsUrlOrBrandSpam(r.text) : scrubPartifulTelecomCopy(r.text).scrubbedTerms.length > 0))
+    .map(r => `${r.kind}: ${JSON.stringify(r.text)} (${r.note})`);
+  const benignFp = benignRows
+    .filter(r => containsUrlOrBrandSpam(r.text) || scrubPartifulTelecomCopy(r.text).scrubbedTerms.length > 0)
+    .map(r => `${JSON.stringify(r.text)} (${r.note})`);
+  const spamRecall = caughtBad.length / Math.max(1, badRows.length);
+  b.gate(
+    `meetup matchmaker spam & telecom scrub (n ${spamRows.length}): recall >= 98%`,
+    spamRows.length >= 40 && badRows.length >= 25 && spamRecall >= 0.98,
+    `${pct(spamRecall)}${missedBad.length ? `; missed: ${missedBad.slice(0, 3).join(" | ")}` : ""}`
+  );
+  b.gate(
+    `meetup matchmaker spam & telecom scrub (n ${benignRows.length} benign): 0 false positives`,
+    benignRows.length >= 10 && benignFp.length === 0,
+    benignFp.slice(0, 5).join(" | ")
+  );
+
+  // ---- external 18+ age screening ------------------------------------------------------------------
+  type AgeRow = { text: string; want: boolean; group: "minor" | "ambiguous_or_no" | "adult"; note: string };
+  const ageRows = await jsonl<AgeRow>("meetup/external-age-screening.jsonl");
+  const minorRows = ageRows.filter(r => r.group === "minor");
+  const negRows = ageRows.filter(r => r.group === "ambiguous_or_no");
+  const adultRows = ageRows.filter(r => r.group === "adult");
+  const minorAccepted = minorRows.filter(r => parseAdult18PlusAnswer(r.text)).map(r => `${JSON.stringify(r.text)} (${r.note})`);
+  const negAccepted = negRows.filter(r => parseAdult18PlusAnswer(r.text)).map(r => `${JSON.stringify(r.text)} (${r.note})`);
+  const adultMissed = adultRows.filter(r => !parseAdult18PlusAnswer(r.text)).map(r => `${JSON.stringify(r.text)} (${r.note})`);
+  const adultRecall = (adultRows.length - adultMissed.length) / Math.max(1, adultRows.length);
+  b.gate(
+    `meetup external 18+ screening (n ${minorRows.length} minor): 0 minors accepted`,
+    ageRows.length >= 40 && minorRows.length >= 15 && minorAccepted.length === 0,
+    minorAccepted.slice(0, 5).join(" | ")
+  );
+  b.gate(
+    `meetup external 18+ screening (n ${negRows.length} negative/ambiguous/injected): 0 accepted`,
+    negRows.length >= 5 && negAccepted.length === 0,
+    negAccepted.slice(0, 5).join(" | ")
+  );
+  b.gate(
+    `meetup external 18+ screening (n ${adultRows.length} adult): recall >= 95%`,
+    adultRows.length >= 15 && adultRecall >= 0.95,
+    `${pct(adultRecall)}${adultMissed.length ? `; missed: ${adultMissed.slice(0, 3).join(" | ")}` : ""}`
+  );
+
+  // ---- external prompt injections & fencing --------------------------------------------------------
+  type AdvRow = { surface: "luma_screening" | "luma_description" | "meetup_screening" | "prospect_facet"; text: string; want: "flagged" | "clean"; note: string };
+  const advRows = await jsonl<AdvRow>("meetup/external-adversarial.jsonl");
+  const baseDraft: ExternalEventDraft = {
+    id: "eval-ext-1", city: "chicago", platform: "luma", source: "official_api",
+    title: "Saturday Board Games", interest: "board_games", description: "Friendly board games hangout.",
+    venueName: "Dice Dojo", venueAddress: "5550 N Broadway, Chicago, IL", arrivalLandmark: "Back play tables",
+    isPublicVenue: true, venueWalkInCapacity: 16, startIso: "2026-10-17T19:00:00Z", endIso: "2026-10-17T21:00:00Z",
+    timezone: "America/Chicago", anchorFirstName: "Nora", confirmedNetworkAnchors: 1, confirmedNetworkTotal: 2,
+    targetRoomSize: 6, reviewApproved: true, allParticipantsAdult: true, hideGuestList: true,
+    approvalRequired: true, externalCrowdDisclosed: true,
+  };
+  const evalSurface = (row: AdvRow): { flagged: boolean; fencedOk: boolean } => {
+    const direct = detectExternalPromptInjection(row.text) !== null;
+    if (row.surface === "luma_screening") {
+      const ev = normalizeLumaWebhookEvent({
+        type: "guest.registered",
+        data: {
+          event_api_id: "ev1", api_id: "g1", user_first_name: "Sam", approval_status: "pending_approval",
+          registration_answers: [
+            { question_id: "adult_18_plus", label: "18+", answer: "yes, 28" },
+            { question_id: "interest_detail", label: "What are you into?", answer: row.text },
+          ],
+        },
+      }, "2026-10-16T12:00:00Z");
+      const flagged = direct || (ev.kind === "rsvp" && (ev.injectionDetected === true || !ev.answeredScreeningQuestion));
+      const fencedOk = ev.kind === "rsvp" && typeof ev.fencedScreeningAnswer === "string" && ev.fencedScreeningAnswer.includes("<<<UNTRUSTED");
+      return { flagged, fencedOk };
+    }
+    if (row.surface === "luma_description") {
+      const built = buildLumaCreateEventRequest({ ...baseDraft, description: row.text }, "luma_test_key");
+      const flagged = direct || (!built.ok && built.reason === "prompt_injection_detected");
+      const fencedOk = fenceExternalEventText(row.text, "luma_description").includes("<<<UNTRUSTED");
+      return { flagged, fencedOk };
+    }
+    if (row.surface === "meetup_screening") {
+      const poll = normalizeMeetupRsvpPoll({
+        data: {
+          event: {
+            id: "mu1", status: "ACTIVE",
+            rsvps: { edges: [{ node: { id: "r1", status: "YES", member: { id: "m1", name: "Sam" }, rsvpQuestionAnswer: { answer: row.text } } }] },
+          },
+        },
+      }, "2026-10-16T12:00:00Z");
+      const rsvp = poll.rsvps[0];
+      const flagged = direct || Boolean(rsvp && (rsvp.injectionDetected === true || !rsvp.answeredScreeningQuestion));
+      const fencedOk = Boolean(rsvp?.fencedScreeningAnswer?.includes("<<<UNTRUSTED"));
+      return { flagged, fencedOk };
+    }
+    const cleanFacets = sanitizeProspectFacets({ interest: row.text });
+    const flagged = direct || cleanFacets.interest === undefined;
+    const fencedOk = fenceExternalEventText(row.text, "prospect_facet").includes("<<<UNTRUSTED");
+    return { flagged, fencedOk };
+  };
+  const advInjections = advRows.filter(r => r.want === "flagged");
+  const advBenign = advRows.filter(r => r.want === "clean");
+  const advMissed: string[] = [];
+  const advFp: string[] = [];
+  const advUnfenced: string[] = [];
+  for (const row of advRows) {
+    const res = evalSurface(row);
+    if (!res.fencedOk) advUnfenced.push(`${row.surface}: ${row.note}`);
+    if (row.want === "flagged" && !res.flagged) advMissed.push(`${row.surface}: ${JSON.stringify(row.text)} (${row.note})`);
+    if (row.want === "clean" && res.flagged) advFp.push(`${row.surface}: ${JSON.stringify(row.text)} (${row.note})`);
+  }
+  b.gate(
+    `meetup external adversarial injections (n ${advInjections.length}): 100% flagged across Luma/Meetup/prospects`,
+    advRows.length >= 30 && advInjections.length >= 20 && advMissed.length === 0,
+    advMissed.slice(0, 5).join(" | ")
+  );
+  b.gate(
+    `meetup external adversarial injections (n ${advBenign.length} benign): 0 false positives and 100% fenced`,
+    advBenign.length >= 10 && advFp.length === 0 && advUnfenced.length === 0,
+    [...advFp, ...advUnfenced].slice(0, 5).join(" | ")
+  );
+
+  // ---- review packets corpus integrity & external meetup packet checks -----------------------------
+  type ReviewCorpusRow = { id: string; label: "must_flag" | "may_approve"; note: string; packet: Omit<ReviewPacket, "basePacketHash" | "packetHash"> };
+  const packets = await jsonl<ReviewCorpusRow>("review/review-packets.jsonl");
+  const malformed = packets.filter(row =>
+    typeof row.id !== "string" || (row.label !== "must_flag" && row.label !== "may_approve")
+    || !row.packet || (row.packet.rubric !== "adult" && row.packet.rubric !== "minor")
+    || !Array.isArray(row.packet.roster) || !Array.isArray(row.packet.probes)
+  );
+  const extPackets = packets.filter(row => row.id.startsWith("ext-"));
+  const extInjectMissed = extPackets
+    .filter(row => row.id.startsWith("ext-inject-"))
+    .filter(row => !packetSuspect({ ...row.packet, basePacketHash: "", packetHash: "" }, row.packet.roster.map(m => m.firstName)));
+  const extRedlineMissed = extPackets
+    .filter(row => row.id.startsWith("ext-redline-"))
+    .filter(row => {
+      const texts = row.packet.probes.flatMap(p => [p.text ?? "", p.reveal.text]);
+      return texts.every(t => findLeaks(t, { facts: ["halal", "peanut allergy", "goes to AA", "sober"], contacts: false }).length === 0);
+    });
+  const extMinorRow = extPackets.find(row => row.id === "ext-minor-external-cue");
+  const extMinorOk = Boolean(extMinorRow && extMinorRow.packet.rubric === "minor" && extMinorRow.packet.ageFacts.rosterHasMinor && !parseAdult18PlusAnswer(extMinorRow.packet.roster[0]?.told ?? ""));
+  const extPeonRow = extPackets.find(row => row.id === "ext-peon-firewall-leak");
+  const extPeonOk = Boolean(extPeonRow && extPeonRow.packet.app === "peon" && containsUrlOrBrandSpam(extPeonRow.packet.probes[0]?.text ?? ""));
+  b.gate(
+    `review packets external/meetup corpus (n ${packets.length}, +${extPackets.length} external): schema valid & deterministic flags caught`,
+    packets.length >= 89 && extPackets.length >= 8 && malformed.length === 0 && extInjectMissed.length === 0 && extRedlineMissed.length === 0 && extMinorOk && extPeonOk,
+    `malformed=${malformed.length}, injectMissed=${extInjectMissed.length}, redlineMissed=${extRedlineMissed.length}, minorOk=${extMinorOk}, peonOk=${extPeonOk}`
+  );
 }
 
 const BIRTHDAY_DAY = 20261122;

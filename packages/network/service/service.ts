@@ -6,9 +6,12 @@ import { profileSuggestionDisconnectEndpoint, type SuggestionRevokedOwnerResolve
 import { createHash, createSecretKey, hkdfSync, randomUUID, timingSafeEqual } from "node:crypto";
 import { SQL } from "../../core/src/runtime/postgres.ts";
 import { isDeepStrictEqual } from "node:util";
-import { DAY, isMinor, judgeLLM, judgeModelOf, LLMBudget, providerKeyPresent, RealClock, recommenderLLM, type Clock, type City, type Intent, type LLM, type MemberId } from "@thenetwork/core";
+import {
+  checkExternalEventT24Quorum, DAY, formatAnchorOrQuorumCancel, getCityIds, isMinor, judgeLLM, judgeModelOf, LAUNCH_CITIES, LLMBudget, normalizeLumaWebhookEvent, providerKeyPresent, RealClock, recommenderLLM, verifyLumaWebhookSignature,
+  type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
+} from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
-import { engineJudgeLimitsFromEnv, llmSpentMicros, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
+import { engineJudgeLimitsFromEnv, llmUsageForDay, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
 import { pendingReportReplyNames, storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions, type StandingView } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
@@ -29,7 +32,7 @@ import { standingIntentPhaseAt } from "../../core/src/standing-intent.ts";
 import { homeHelpOfferChangeAllowed } from "../../core/src/generated/boundedHelp.ts";
 import { projectInvitationWelcome, projectRemoteInvitationNotice } from "../../core/src/generated/invitationJoinProjection.ts";
 import { forgetEndsAppAccess, profileAgeCounts, publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment.ts";
-import { ageAnswer, agesStated, birthDateIn, classify, type UnclearBirthDate } from "../src/classify.ts";
+import { ageAnswer, agesStated, birthDateIn, classify, extractRedLineTags, type UnclearBirthDate } from "../src/classify.ts";
 import * as BirthDay from "../../core/src/birth-date.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
@@ -119,7 +122,7 @@ import { detectKeyword as platformKeyword, keywordEvent, leaveTarget, type Keywo
 import { devShortcutsAllowed, isProduction, MIN_SECRET_LENGTH, platformEnv, type Env } from "../../platform/src/env.ts";
 import { keyedHash, maskPhone, normalizePhone, safeEqual } from "../../platform/src/phone.ts";
 import { PgPeopleStore } from "../../platform/src/pg-store.ts";
-import { confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
+import { ageOnDay, birthKeyUsable, confirmedUnderage, textUseAllowedAtAge } from "../../core/src/generated/memberAge.ts";
 import type { Membership, PeopleStore, PendingText, Person, SignupBirth } from "../../platform/src/store.ts";
 import { createPublicApi, type HomeHelpVenueAnswer, type HomeHelpVenueRequest, type MemberParticipation, type PublicApi, type PublicApiOptions } from "../../platform/src/api.ts";
 import { otpProviderFromEnv } from "../../platform/src/otp.ts";
@@ -136,7 +139,7 @@ import { fetchMediaCapped, PHOTO_APP, PhotoIntake, type PhotoIntakeDeps } from "
 import { phoneChangeLinkReply, phoneChangeLinkRequest } from "./phone-change-link.ts";
 import { sweepPhotos } from "./photoSweep.ts";
 import { PHOTO_RELAY_TEXT, PhotoRelayFlow, type PhotoRequestStatus } from "./photoRelayFlow.ts";
-import type { PhotoHoldingsView } from "../../mcp/src/hooks.ts";
+import type { LeakContext, PhotoHoldingsView } from "../../mcp/src/hooks.ts";
 import { textPhotoLineAllowed } from "../../core/src/generated/photoPolicy.ts";
 import { biasAlerts, biasReport, type BiasMember, type StoredBiasReport } from "./bias.ts";
 import { weeklyBiasDue } from "../../core/src/generated/weeklyBias.ts";
@@ -149,7 +152,7 @@ import { parseBlooioWebhook, SIGNATURE_HEADER, verifyBlooioSignature } from "../
 import { normalizeAddress } from "../../blooio/src/phone.ts";
 import { gatewayReceiptMoves, recipientWindowHasher, type QueueRow, type RecipientWindowKey } from "../../blooio/src/outbound-queue.ts";
 import { resolveTimeZone } from "../../blooio/src/quiet-hours.ts";
-import { Notifier, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface } from "../../notify/src/index.ts";
+import { hasActiveLocalAgent, Notifier, type Channel, type InboxItem, type NotifyStore, type OutboundSink, type Recipient, type Surface, type SurfacePrefs } from "../../notify/src/index.ts";
 import { PgNotifyStore } from "../../notify/src/pg-store.ts";
 import { type ConnectorUpdateOutcome, connectorUpdateMarkedSeen, connectorUpdateOutcome } from "../../core/src/generated/connectorTools.ts";
 import { passesOutputGate } from "../../mcp/src/leaks.ts";
@@ -173,9 +176,11 @@ import { serviceTokenGrants } from "./line-staff-boot.ts";
 import { serviceStaffStep } from "../../../apps/observatory/src/staffSteps.ts";
 import { staffStepActorAccepted, staffStepAdmitted, staffStepRoles, type StepActor } from "../../core/src/generated/staffPermissions.ts";
 import type { AuditEntry, RoleGrant, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
+import { PgMeetupStore, type ExternalEventStatus } from "./meetup-store.ts";
 
 /** The homes a conversation can have; each belongs to exactly one network of an app (runtimeForHome). */
-const CONVERSATION_CITIES: readonly City[] = ["nyc", "sf", "la"];
+export const CONVERSATION_CITIES: readonly City[] = LAUNCH_CITIES;
+const conversationCities = (): readonly CityId[] => getCityIds();
 
 export { NetworkRuntime } from "./runtime.ts";
 type Row = Record<string, unknown>;
@@ -184,6 +189,7 @@ const MAX_BODY_BYTES = 256 * 1024;
 export const CONTEXT_UNAVAILABLE_REPLY = "Sorry, I can't help with that right now. Please try again later.";
 const contextUnavailableReply = (id: string): CollectedReply => ({id: `sys:${id}:context`, body: CONTEXT_UNAVAILABLE_REPLY, kind: "reply"});
 export const WEBHOOK_PATH = "/webhooks/blooio";
+export const LUMA_WEBHOOK_PATH = "/webhooks/luma";
 /**
  * STOP, START, HELP and "leave <app>" have one owner: this service, inside the signed turn
  * (POST /internal/turn) or the legacy webhook. The handled turn reports the change as `consent`, and the
@@ -209,8 +215,8 @@ export function turnSecretProblem(env: Record<string, string | undefined> = proc
 }
 /** The tables the service needs (pnpm run db:migrate). */
 const REQUIRED_TABLES = [
-  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests"].map(t => `network.${t}`),
-  ...["apps", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites"].map(t => `platform.${t}`),
+  ...["members", "channel_identities", "facets", "intents", "presence", "edges", "messages", "events", "matching_runs", "staff_audit", "network_state", "opportunities", "review_items", "requests", "bounded_home_help", "bounded_home_help_consent", "bounded_home_help_venue", "monthly_gatherings", "monthly_gathering_rsvps", "monthly_gathering_invitation_reviews", "monthly_gathering_invitees", "monthly_gathering_grouping_reviews", "monthly_gathering_group_members", "monthly_gathering_attendance", "monthly_gathering_followup_choices", "review_judgments", "review_judge_requests", "venue_visits", "venue_rejections", "meetup_arrivals"].map(t => `network.${t}`),
+  ...["apps", "cities", "networks", "people", "phone_identities", "memberships", "consent_events", "person_blocks", "staff_safety_holds", "report_safety_carryovers", "app_lines", "share_grants", "eliza_notices", "member_invitations", "member_invitation_reviews", "expected_member_invitations", "expected_invitation_contacts", "outbound_recipient_window", "seed_invitation_batches", "seed_invitations", "seed_invitation_attributions", "profile_fact_edit_drafts", "calendar_invites", "venues", "venue_api_cache", "venue_concurrent_holds", "matchmaker_personas", "external_events", "external_event_rsvps", "external_prospects", "external_prospect_suppressions", "external_sourcing_tickets"].map(t => `platform.${t}`),
 ];
 /** The dev-only key for keyed phone hashes (the platform's own default). Production needs PLATFORM_HASH_KEY. */
 const DEV_HASH_KEY = "dev-only-platform-hash-key";
@@ -229,7 +235,11 @@ export const LOOKING_FOR_ASK = `What are you looking for: friends, dating, work,
 export const LOOKING_FOR_ASK_MINOR = `What are you looking for? Since you're under 18, I can help you find friends. Reply FRIENDS to start. ${LOOKING_FOR_DISCLOSURE} ${POWERED_BY}`;
 export const lookingForAsk = (age: number | undefined) => (canBeMatched(age) ? LOOKING_FOR_ASK : LOOKING_FOR_ASK_MINOR);
 const listApps = (apps: AppInfo[]) => apps.map(a => a.domain).join(apps.length === 2 ? " and " : ", ");
-/** The Network's answer after it enrolled the person in the apps they named. */
+const SKEPTICAL_JOIN_RE = /\b(?:who is this|who are you|what is this|is this (?:a )?(?:scam|spam|bot|legit|real)|why do you need (?:my )?(?:age|birthday|dob|name)|what do you do with my (?:data|info|number)|how did you get my number|are you (?:a )?(?:bot|ai|real))\b/i;
+
+const SKEPTICAL_JOIN_PRIVACY_REPLY = "I'm Eliza, an AI matchmaker for real-world introductions—your details stay private, nothing is posted publicly, and you can text STOP anytime. If you'd like to join, reply with your first name and birthday.";
+
+const ALL_LAUNCH_CITIES_HOME_ASK = "Tell me your home city: New York, San Francisco / Bay Area, Los Angeles, Chicago, or Miami. Include your first name and birthday (month, day and year).";
 export const enrolledText = (apps: AppInfo[]) =>
   `Done: you're in ${listApps(apps)}. Text an app's name (like ${apps[0]!.domain}) to talk to it, or "leave ${apps[0]!.domain}" to leave one. ${POWERED_BY}`;
 /** Safety on every app (safety@* or admin@*): what a hold on other apps and a ban need. */
@@ -278,6 +288,8 @@ export interface ServiceOptions {
   webhookSecret?: string;
   /** One app's line: /webhooks/blooio/<app> with <APP>_BLOOIO_WEBHOOK_SECRET. Without a secret that path answers 503. */
   webhookSecrets?: Partial<Record<AppId, string>>;
+  /** Luma external event webhook signing secret (LUMA_WEBHOOK_SECRET). Without it /webhooks/luma answers 503. */
+  lumaWebhookSecret?: string;
   /** network.staff_audit sink. Default: PgAudit on `auditUrl` or `url`. */
   audit?: AuditSink;
   auditUrl?: string;
@@ -327,18 +339,58 @@ const LINE_COMMAND: Record<Keyword | "none", LineCommand> = { none: "LineNoComma
 /** Words that are never a first name in a join answer. */
 const NOT_NAMES = new Set(["hi", "hey", "hello", "yo", "sup", "im", "i'm", "i", "am", "my", "name", "names", "name's", "is", "and", "age", "aged", "years", "year", "old", "yrs", "y", "o",
   "join", "start", "please", "pls", "the", "a", "in", "at", "from", "near", "live", "here", "there", "yes", "yeah", "no", "ok", "okay", "sure", "thanks", "thank", "you", "it's", "its",
-  "this", "that", "what", "who", "so", "me", "call", "it", "network", "turning", "just", "turned"]);
+  "this", "that", "what", "who", "so", "me", "call", "it", "network", "turning", "just", "turned",
+  "um", "uh", "hmm", "go", "by", "hola", "llamo", "soy", "buenas", "buenos", "dias", "días", "mi", "nombre", "es", "well", "actually", "basically", "oh", "ah", "ya", "yep", "yup", "nope", "nah"]);
 
 /** Words that may stand next to a bare number in a join answer ("Hi, I'm Sam, 29"). Any other word makes the number not an age. */
 const JOIN_FILLER = new Set(["hi", "hey", "hello", "yo", "im", "i'm", "i", "am", "my", "name", "names", "name's", "is", "and", "age", "aged", "years", "year", "old", "yrs", "y", "o",
-  "it's", "its", "call", "me", "just", "turned", "turning", "join", "please", "pls"]);
+  "it's", "its", "call", "me", "just", "turned", "turning", "join", "please", "pls",
+  "um", "uh", "yeah", "go", "by", "hola", "llamo", "soy", "mi", "nombre", "es"]);
+
+const TWO_DIGIT_DATE_RX = /(?<![\w/.-])(\d{1,2})[/-](\d{1,2})[/-](\d{2})(?![\w/-]|\.\d)/g;
+const TWO_DIGIT_MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function twoDigitBirthDateIn(text: string, dayKey: number): { birthDate?: number; birthAge?: number; unclear?: UnclearBirthDate; rest: string } {
+  const matches = [...text.matchAll(TWO_DIGIT_DATE_RX)];
+  if (matches.length !== 1) return { rest: text };
+  const m = matches[0]!;
+  const first = Number(m[1]), second = Number(m[2]), yy = Number(m[3]);
+  const currentYear = Math.floor(dayKey / 10000);
+  // Only accept unambiguous 19xx two-digit years (e.g. 05/12/92 -> 1992).
+  // Two-digit years <= currentYY (e.g. 3/15/10) are ambiguous between 19xx and 20xx/minors and require a 4-digit year.
+  if (yy <= currentYear % 100) return { rest: text };
+  const year = 1900 + yy;
+  const rest = `${text.slice(0, m.index ?? 0)} ${text.slice((m.index ?? 0) + m[0].length)}`.trim();
+  const keyFirst = first >= 1 && first <= 12 && second >= 1 && second <= 31 ? BirthDay.birthKeyOfParts(year, first, second) : undefined;
+  const keySecond = second >= 1 && second <= 12 && first >= 1 && first <= 31 ? BirthDay.birthKeyOfParts(year, second, first) : undefined;
+  const usableFirst = keyFirst !== undefined && birthKeyUsable(keyFirst, dayKey) ? keyFirst : undefined;
+  const usableSecond = keySecond !== undefined && birthKeyUsable(keySecond, dayKey) ? keySecond : undefined;
+  const chosen = usableFirst ?? usableSecond;
+  if (chosen === undefined) return { rest: text };
+  return { birthDate: chosen, birthAge: ageOnDay(chosen, dayKey), rest };
+}
+
+const formatJoinName = (word: string) =>
+  word.split("-").map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()).join("-");
+
+const isJoinNameToken = (word: string, appWords: readonly string[]): boolean => {
+  if (!/^\p{L}[\p{L}'-]{0,29}$/u.test(word) || word.includes("--")) return false;
+  const lw = lower(word);
+  if (NOT_NAMES.has(lw) || appWords.includes(lw)) return false;
+  if (word.includes("-")) {
+    const parts = word.split("-");
+    if (parts.some(p => !/^\p{L}[\p{L}']*$/u.test(p))) return false;
+    if (parts.every(p => NOT_NAMES.has(lower(p)) || appWords.includes(lower(p)))) return false;
+  }
+  return true;
+};
 
 const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
 
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
-  const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' ]+/gu, " ").split(/\s+/).filter(Boolean).map(lower)
+  const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' -]+/gu, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean).map(lower)
     .filter(w => !JOIN_FILLER.has(w) && !appWords.includes(w));
   return nums.length === 1 && others.length <= 1 && !/\d[^\d\s,.;:!)]|[^\d\s,.;:(]\d/.test(text) ? Number(nums[0]![1]) : undefined;
 };
@@ -357,8 +409,11 @@ const joinSuffixKind = (segment: string, head: string, appWords: readonly string
  * only in a short answer: one name at most, and filler words ("Sam, 29", "Kim 16"). In a sentence
  * ("Sounds good, 7 works for me") it is not an age.
  */
-export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean, dayKey: number): { age?: number; birthDate?: number; unclearDate?: UnclearBirthDate; name?: string; homeCity?: City; invalidHome?: boolean } {
-  const found = birthDateIn(text.normalize("NFKC").trim(), dayKey);
+export function parseJoinText(text: string, appWords: readonly string[], nameOk: boolean, dayKey: number): { age?: number; birthDate?: number; unclearDate?: UnclearBirthDate; name?: string; homeCity?: CityId; invalidHome?: boolean } {
+  const normalized = text.normalize("NFKC").trim();
+  const baseFound = birthDateIn(normalized, dayKey);
+  const twoDigit = baseFound.birthDate === undefined && !baseFound.unclear ? twoDigitBirthDateIn(baseFound.rest, dayKey) : undefined;
+  const found = twoDigit && (twoDigit.birthDate !== undefined || twoDigit.unclear !== undefined) ? twoDigit : baseFound;
   const t = found.rest;
   const homes = [...t.matchAll(/(?:\b(?:my home(?: city)?(?: is| in|:)?|i live in|i am based in|i'm based in)|(?:^|[.!?;,]\s*)(?:home(?: city)?(?: is| in|:)?|based in))\s+([^.!?;,\n]+)/gi)];
   let nameText = homes.reduce((text, m) => text.replace(m[0], " "), t);
@@ -383,15 +438,16 @@ export function parseJoinText(text: string, appWords: readonly string[], nameOk:
   age = lowestAge(typedKept ? age : undefined, birthKept ? found.birthAge : undefined);
   const unclear = found.unclear && age === undefined ? { unclearDate: found.unclear } : {};
   if (!nameOk && age === undefined) return { ...unclear, ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
-  const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/[\s-]+/).filter(Boolean);
-  const name = ageOnly === undefined ? words.find(w => /^\p{L}[\p{L}']{0,29}$/u.test(w) && !NOT_NAMES.has(lower(w)) && !appWords.includes(lower(w))) : undefined;
-  return { ...(age !== undefined ? { age } : {}), ...(birthDate !== undefined ? { birthDate } : {}), ...unclear, ...(name ? { name: name.charAt(0).toUpperCase() + name.slice(1).toLowerCase() } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
+  const words = nameText.replace(/[^\p{L}' -]+/gu, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean);
+  const name = ageOnly === undefined ? words.find(w => isJoinNameToken(w, appWords)) : undefined;
+  return { ...(age !== undefined ? { age } : {}), ...(birthDate !== undefined ? { birthDate } : {}), ...unclear, ...(name ? { name: formatJoinName(name) } : {}), ...(cities[0] ? { homeCity: cities[0] } : {}), ...(invalidHome ? { invalidHome: true } : {}) };
 }
 
 class RouteAuthorityExpiredError extends Error {}
 
 export class NetworkService implements RuntimeHost {
   readonly sql: SQL;
+  readonly meetup: PgMeetupStore;
   readonly profileSuggestions: ProfileSuggestions;
   private readonly suggestionIdentity?: SuggestionIdentityResolver;
   private readonly suggestionAuthorization?: SuggestionAuthorization;
@@ -420,6 +476,7 @@ export class NetworkService implements RuntimeHost {
   private readonly consoleToken?: string;
   private readonly secret?: string;
   private readonly secrets: Partial<Record<AppId, string>>;
+  private readonly lumaWebhookSecret?: string;
   private readonly hashKey: string;
   private readonly expectedInvitations: ExpectedMemberInvitations;
   private readonly seedInvitations: SeedInvitations;
@@ -469,6 +526,7 @@ export class NetworkService implements RuntimeHost {
     this.secret = o.webhookSecret;
     this.consoleToken = o.consoleToken || undefined;
     this.secrets = o.webhookSecrets ?? {};
+    this.lumaWebhookSecret = o.lumaWebhookSecret ?? this.env.LUMA_WEBHOOK_SECRET;
     this.cap = o.personDailyCap ?? PERSON_DAILY_CAP;
     const turnProblem = turnSecretProblem(this.env);
     if (turnProblem) throw new Error(turnProblem);
@@ -495,8 +553,9 @@ export class NetworkService implements RuntimeHost {
     if (this.calendarScheduling && calendarSecret && [...this.tokens.keys(), ...(this.consoleToken ? [this.consoleToken] : [])].some(t => safeEqual(t, calendarSecret)))
       throw new Error("NETWORK_CALENDAR_FREE_BUSY_SECRET must differ from console and staff tokens");
     const specs = o.networks?.length ? o.networks : [{ id: o.id ?? "ntwrk:nyc" }];
-    // Each network's tick holds one connection for its advisory lock and needs more inside it: size the pool from the network count.
+    // Each parallel network tick holds one advisory-lock connection plus a worker connection, so keep at least 2 * specs.length + 4 to prevent pool self-deadlock.
     this.sql = new SQL({ url: o.url, max: Math.max(8, 2 * specs.length + 4), connection: { application_name: `network-service:${this.instance}` } });
+    this.meetup = new PgMeetupStore(this.sql);
     const profileReview = profileReviewFromEnv(this.env, () => this.clock.now());
     this.suggestionIdentity = o.profileSuggestionIdentity ?? profileReview.profileSuggestionIdentity;
     this.suggestionAuthorization = o.profileSuggestionAuthorization ?? profileReview.profileSuggestionAuthorization;
@@ -539,7 +598,7 @@ export class NetworkService implements RuntimeHost {
       clock: this.clock, judgeFor, limits: reviewLimits, log: this.log,
       teenFacts: (rt, memberId) => this.teenAccountFacts(rt, memberId),
     });
-    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks() });
+    this.accounts = new Accounts(this.people, { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], hooks: this.hooks(), sql: this.sql });
     if (o.notify !== false) this.notify = new Notifier(o.notify ?? new PgNotifyStore(this.sql), { get: personId => this.notifyRecipient(personId) });
     const ids = specs.map(spec => (spec.id.includes(":") ? spec.id : `ntwrk:${spec.id}`));
     for (const [i, spec] of specs.entries()) {
@@ -558,7 +617,7 @@ export class NetworkService implements RuntimeHost {
       // The homes this network owns (runtimeForHome): its own city, and for the app's first network
       // every home that no network of the app serves.
       const mine = ids.filter(x => x.split(":")[0] === app);
-      const cities = CONVERSATION_CITIES.filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
+      const cities = conversationCities().filter(c => (mine.find(x => x.split(":")[1] === c) ?? mine[0]) === id);
       this.runtimes.set(id, new NetworkRuntime(this, { id, app: this.apps[app], city, cities, matchingAllowed: spec.matchingEnabled ?? true, network, calendarScheduling: this.calendarScheduling, adapter: o.adapter }));
     }
     this.photoBaseUrl = o.photoBaseUrl ?? this.env.PHOTO_VIEW_BASE_URL ?? undefined;
@@ -617,7 +676,7 @@ export class NetworkService implements RuntimeHost {
 
   /** Reuse canonical account policy inside the caller's existing PostgreSQL transaction. */
   accountsFor(tx: SQL): Accounts {
-    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id] });
+    return new Accounts(new PgPeopleStore(tx), { hashKey: this.hashKey, now: () => this.clock.now(), apps: id => this.apps[id], sql: tx });
   }
 
   private homeHelpAuthority(user?: StaffUser) {
@@ -837,7 +896,7 @@ export class NetworkService implements RuntimeHost {
   static async fromDatabase(o: Omit<ServiceOptions, "networks" | "apps" | "id">): Promise<NetworkService> {
     const sql = new SQL({ url: o.url, max: 1 });
     try {
-      const nets = await sql`select id, matching_enabled from platform.networks order by (app_id = 'ntwrk') desc, id`;
+      const nets = await sql`select id, matching_enabled from platform.networks order by (app_id = 'ntwrk') desc, matching_enabled desc, (city = 'nyc') desc, id`;
       const rows = await sql`select id, name, domain, min_join_age, min_match_age, join_mode from platform.apps`;
       const apps = { ...APPS };
       for (const r of rows as any[]) if (isAppId(r.id)) apps[r.id as AppId] = { ...APPS[r.id as AppId], name: r.name, domain: r.domain, minJoinAge: r.min_join_age, minMatchAge: r.min_match_age, joinMode: r.join_mode };
@@ -846,10 +905,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   // ------------------------------------------------------------------ the networks
-  /** The first network: The Network's (ntwrk) when it runs here. The single-network API below uses it. */
+  /** The first network: The Network's (ntwrk) primary network when it runs here. The single-network API below uses it. */
   get main(): NetworkRuntime {
-    const all = [...this.runtimes.values()];
-    return all.find(r => r.app.id === "ntwrk") ?? all[0]!;
+    return this.runtimeFor("ntwrk") ?? this.runtimes.values().next().value!;
   }
   get net() { return this.main.net; }
   get pg() { return this.main.pg; }
@@ -858,10 +916,20 @@ export class NetworkService implements RuntimeHost {
   get lastTick() { return this.main.lastTick; }
   /** Address to member of The Network (the first network). */
   memberOf = (address: string): MemberId | undefined => this.main.memberOf(address);
-  /** The network of an app (and a city; default its first network here). */
+  /** The network of an app (and a city; default its primary network: matching-allowed NYC, else matching-allowed, else NYC, else first). */
   runtimeFor(app: AppId, city?: string): NetworkRuntime | undefined {
-    for (const r of this.runtimes.values()) if (r.app.id === app && (city === undefined || r.city === city)) return r;
-    return undefined;
+    if (city !== undefined) {
+      for (const r of this.runtimes.values()) if (r.app.id === app && r.city === city) return r;
+      return undefined;
+    }
+    let best: NetworkRuntime | undefined;
+    let bestRank = -1;
+    for (const r of this.runtimes.values()) {
+      if (r.app.id !== app) continue;
+      const rank = (r.matchingAllowed ? 2 : 0) + (r.city === "nyc" ? 1 : 0);
+      if (rank > bestRank) { best = r; bestRank = rank; }
+    }
+    return best;
   }
   /** A registered home owns its conversation; an unserved home uses this app's existing default. */
   runtimeForHome(app: AppId, homeCity: string): NetworkRuntime | undefined {
@@ -908,7 +976,7 @@ export class NetworkService implements RuntimeHost {
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
     if (declared && envRow?.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow ? envRow.value : "missing"}: fix one of them`);
     const injected = this.relayClassifier;
-    this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost);
+    this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost, { now: () => this.clock.now() });
     await replayPrivacyAtStart(this);
     for (const app of this.engineBudgets.keys()) await this.refreshEngineBudget(app);
     for (const rt of this.runtimes.values()) await rt.start();
@@ -917,6 +985,7 @@ export class NetworkService implements RuntimeHost {
   /** One tick on every network, each under its own lock. True when any network ran (one network: whether it ran). */
   async tick(): Promise<boolean> {
     await this.inboxTick();
+    await this.refreshEngineBudgets();
     const ran: NetworkRuntime[] = [];
     for (const rt of this.runtimes.values()) if (await rt.tick()) ran.push(rt);
     if (ran.length) await this.reviewJudgeTick(ran);
@@ -924,22 +993,43 @@ export class NetworkService implements RuntimeHost {
     return ran.length > 0;
   }
 
-  async reviewJudgeTick(runtimes: readonly NetworkRuntime[] = [...this.runtimes.values()]): Promise<void> {
-    for (const app of this.engineBudgets.keys()) {
+  async refreshEngineBudgets(onlyIfDayChanged = false): Promise<void> {
+    const today = dayOf(this.clock.now());
+    for (const [app, entry] of this.engineBudgets) {
+      if (onlyIfDayChanged && entry.day === today) continue;
       await this.refreshEngineBudget(app).catch(e => this.log(`[engine-judge] the budget refresh waits for the next tick (${app}): ${(e as Error).message}`));
     }
-    await Promise.all(runtimes.map(rt => this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
-      .catch(e => this.log(`[review-judge] the judge pass waits for the next tick (${rt.id}): ${(e as Error).message}`))));
+  }
+
+  private reviewJudgeConcurrency(): number {
+    const raw = Number(this.env.NETWORK_REVIEW_JUDGE_CONCURRENCY);
+    return Number.isSafeInteger(raw) && raw >= 1 ? Math.min(raw, 16) : 4;
+  }
+
+  async reviewJudgeTick(runtimes: readonly NetworkRuntime[] = [...this.runtimes.values()]): Promise<void> {
+    await this.refreshEngineBudgets(true);
+    const limit = Math.max(1, Math.min(this.reviewJudgeConcurrency(), runtimes.length));
+    let next = 0;
+    await Promise.all(Array.from({ length: limit }, async () => {
+      while (next < runtimes.length) {
+        const rt = runtimes[next++]!;
+        await this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
+          .catch(e => this.log(`[review-judge] the judge pass waits for the next tick (${rt.id}): ${(e as Error).message}`));
+      }
+    }));
   }
 
   private async refreshEngineBudget(app: AppId): Promise<void> {
     const entry = this.engineBudgets.get(app);
     if (!entry) return;
     const day = dayOf(this.clock.now());
-    entry.budget.spentMicro = await llmSpentMicros(this.sql, app, day, "engine_judge");
+    const { spentMicros, requests } = await llmUsageForDay(this.sql, app, day, "engine_judge");
+    entry.budget.spentMicro = spentMicros;
     if (entry.day !== day) {
-      entry.budget.requests = 0;
+      entry.budget.requests = requests;
       entry.day = day;
+    } else {
+      entry.budget.requests = Math.max(entry.budget.requests, requests);
     }
   }
 
@@ -1059,9 +1149,64 @@ export class NetworkService implements RuntimeHost {
     await this.inbox.purge(this.clock.now() - inboxKeepMs).catch(e => this.log(`[purge] inbox failed: ${(e as Error).message}`));
     await this.lineAdapter()?.purge?.().catch(e => { this.log(`[purge] line counters failed: ${(e as Error).message}`); return 0; });
     await this.photos.sweep().catch(e => this.log(`[purge] photos failed: ${(e as Error).message}`));
+    await this.meetup.purgeExpiredProspects(this.clock.now()).catch(e => this.log(`[purge] expired prospects failed: ${(e as Error).message}`));
+    await this.meetup.releaseExpiredVenueHolds(this.clock.now()).catch(e => this.log(`[purge] venue holds failed: ${(e as Error).message}`));
+    await this.runExternalEventT24QuorumHook(this.clock.now()).catch(e => this.log(`[purge] external event T-24h sweep failed: ${(e as Error).message}`));
     await this.reconcileAges().catch(e => this.log(`[purge] age reconcile failed: ${(e as Error).message}`));
     if (n) this.log(`[purge] removed ${n} expired platform row(s)`);
     return n;
+  }
+
+  private externalEventsEnabled(): boolean {
+    const flag = this.env.NETWORK_EXTERNAL_EVENTS?.trim().toLowerCase();
+    return flag !== "0" && flag !== "false" && flag !== "off";
+  }
+
+  async runExternalEventT24QuorumHook(now = this.clock.now()): Promise<{ checked: number; cancelledNoAnchor: string[]; cancelledLowQuorum: string[]; kept: string[] }> {
+    if (!this.externalEventsEnabled()) return { checked: 0, cancelledNoAnchor: [], cancelledLowQuorum: [], kept: [] };
+    const preCandidates = await this.sql<{
+      id: string; app_id: string; title: string; anchor_member_id: string | null; start_at: Date;
+      confirmed_network_anchors: number; confirmed_network_total: number; approved_external_rsvps: number;
+    }[]>`select e.id, e.app_id, e.title, e.anchor_member_id, e.start_at, e.confirmed_network_anchors, e.confirmed_network_total,
+        coalesce(count(r.id) filter (where r.status = 'approved'), 0)::int as approved_external_rsvps
+      from platform.external_events e
+      left join platform.external_event_rsvps r on r.event_id = e.id
+      where e.status in ('published', 'active') and e.start_at > ${new Date(now)}
+      group by e.id`;
+    const byId = new Map(preCandidates.map(ev => [ev.id, ev]));
+    const swept = await this.meetup.sweepExternalEventT24Quorum(now);
+    const cancelled: Array<{ id: string; reason: "anchor_drop" | "low_quorum" }> = [
+      ...swept.cancelledNoAnchor.map(id => ({ id, reason: "anchor_drop" as const })),
+      ...swept.cancelledLowQuorum.map(id => ({ id, reason: "low_quorum" as const })),
+    ];
+    for (const item of cancelled) {
+      const ev = byId.get(item.id);
+      if (!ev) continue;
+      const hoursToStart = Math.floor((ev.start_at.getTime() - now) / 3_600_000);
+      const decision = checkExternalEventT24Quorum(
+        Number(ev.confirmed_network_anchors),
+        Number(ev.confirmed_network_total),
+        Number(ev.approved_external_rsvps),
+        hoursToStart,
+      );
+      this.log(`[external-events] T-24h quorum check ${ev.id} -> ${decision}`);
+      if (!this.notify || !ev.anchor_member_id || !isAppId(ev.app_id)) continue;
+      const rt = this.runtimeFor(ev.app_id);
+      if (!rt) continue;
+      const [row] = await rt.scoped(tx => tx<{ person_id: string | null }[]>`select person_id::text as person_id from network.members where app_id=${ev.app_id} and id=${ev.anchor_member_id!}`);
+      if (!row?.person_id) continue;
+      const summary = formatAnchorOrQuorumCancel(item.reason, { activity: ev.title });
+      await this.notify.add({
+        personId: row.person_id,
+        app: ev.app_id,
+        eventType: "external_event_quorum_cancel",
+        subjectId: `ext_quorum:${ev.id}`,
+        urgency: "urgent",
+        summary,
+        expiresAt: ev.start_at.getTime(),
+      }, now).catch(e => this.log(`[external-events] quorum notice skipped (${ev.id}): ${(e as Error).message}`));
+    }
+    return swept;
   }
 
   private async reconcileAges() {
@@ -1198,11 +1343,20 @@ export class NetworkService implements RuntimeHost {
       teen.set(id, await storedTeenStatus(tx, app, id, now, roster.map(r => r.member_id)));
     }
     const facts = new Map(rows.map(row => [row.id, row]));
+    const unsafeUnboundForMinor = (item: InboxItem): boolean => {
+      if (/^(?:ext_|ev_ext_|mm_|luma_|meetup_|partiful_)/i.test(item.subjectId)) return true;
+      if (/external|matchmaker|prospect|dating|romance/i.test(item.eventType)) return true;
+      return /\b(?:18\+|21\+|adults?[- ]only|over (?:18|21)|luma|partiful|meetup\.com|open crowd|external (?:guests?|attendees?|crowd|event)|cocktail bar|wine bar|nightclub|brewery|pub crawl|speakeasy|dive bar|sports bar|bar only|dating|date match)\b/i.test(item.summary);
+    };
     return new Map(items.map(item => {
       const row = facts.get(item.id);
       const stillCurrent = !!row && inboxOpportunityAllowsUpdate(row.bound, row.state !== null, row.state ?? "");
       const { status, minor } = (row?.opportunity_id ? teen.get(row.opportunity_id) : undefined) ?? { status: "unmarked", minor: false };
       const readerAgeAllowed = status === "current" || (readerMatchable && (status === "adult" || (status === "unmarked" && !minor)));
+      if (!row?.bound && !readerMatchable) {
+        if (!teenFriendApp(app)) return [item.id, "InboxUpdateWithheld"];
+        if (unsafeUnboundForMinor(item)) return [item.id, "InboxUpdateRetired"];
+      }
       return [item.id, connectorUpdateOutcome(stillCurrent, readerAgeAllowed, !!row?.bound, passesLeakGate(item.summary))];
     }));
   }
@@ -1288,16 +1442,44 @@ export class NetworkService implements RuntimeHost {
 
   /** The notify recipient of a person: their first live member with an address on a running network (The Network first). */
   private async notifyRecipient(personId: string): Promise<Recipient | undefined> {
+    const validChannels = new Set<Channel>(["imessage", "sms", "telegram"]);
+    const validSurfaces = new Set<Surface>(["imessage", "sms", "telegram", "chatgpt", "claude", "grok", "local_agent", "web"]);
+    const now = this.clock.now();
+    const signals = this.notify ? await this.notify.store.signals(personId).catch(() => []) : [];
+    const localAgentActive = hasActiveLocalAgent(signals, now);
     const rts = [...this.runtimes.values()].sort((a, b) => Number(b.app.id === "ntwrk") - Number(a.app.id === "ntwrk"));
     for (const rt of rts) {
-      const rows = await rt.scoped(tx => tx<{ id: MemberId; time_zone: string | null }[]>`select member.id,city.tz as time_zone
+      const rows = await rt.scoped(tx => tx<{
+        id: MemberId; time_zone: string | null; prefs: Record<string, unknown> | null;
+        participation_state: string | null; participation_window: unknown;
+      }[]>`select member.id,city.tz as time_zone,member.prefs,member.participation_state,member.participation_window
         from network.members member left join platform.cities city on city.id=member.home_city
         where member.app_id=${rt.app.id} and member.person_id=${personId} and not member.opted_out`);
       for (const r of rows) {
         const to = rt.addressOf(r.id);
         if (!to) continue;
         this.notifyTargets.set(normalizeAddress(to), { rt, memberId: r.id });
-        return { personId, to, timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York", prefs: { channel: "imessage" }, proactiveAllowed: true };
+        const rawPrefs = r.prefs && typeof r.prefs === "object" ? r.prefs : {};
+        const nested = rawPrefs.surfacePrefs && typeof rawPrefs.surfacePrefs === "object" ? rawPrefs.surfacePrefs as Record<string, unknown> : undefined;
+        const rawChannel = nested?.channel ?? rawPrefs.notifyChannel ?? rawPrefs.channel;
+        const channel: Channel = typeof rawChannel === "string" && validChannels.has(rawChannel as Channel) ? (rawChannel as Channel) : "imessage";
+        const rawExplicit = nested?.explicit ?? rawPrefs.explicitSurface ?? rawPrefs.notifySurface;
+        const storedExplicit: Surface | undefined = typeof rawExplicit === "string" && validSurfaces.has(rawExplicit as Surface) ? (rawExplicit as Surface) : undefined;
+        const explicit: Surface | undefined = storedExplicit ?? (localAgentActive ? "local_agent" : undefined);
+        const prefs: SurfacePrefs = explicit ? { channel, explicit } : { channel };
+        const participation = effectiveParticipation({
+          participation_state: (r.participation_state ?? "normal") as "normal" | "paused" | "quiet" | "receiving",
+          participation_window: r.participation_window,
+        }, now);
+        const paused = participation.state === "paused";
+        const suppressProactiveForLocalAgent = explicit === "local_agent" || (localAgentActive && storedExplicit === undefined);
+        return {
+          personId,
+          to,
+          timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York",
+          prefs,
+          proactiveAllowed: !paused && !suppressProactiveForLocalAgent,
+        };
       }
     }
     return undefined;
@@ -1729,19 +1911,27 @@ export class NetworkService implements RuntimeHost {
   private async forget(app: AppInfo, memberId: MemberId, ordinaryLeavePersonId?: string) {
     const rt = await this.runtimeOfMember(app.id, memberId) ?? this.runtimeFor(app.id);
     if (!rt) return;
-    await rt.unitOfWork(n => {
+    let quarantineReason: string | undefined;
+    const at = this.clock.now();
+    await rt.unitOfWork(async n => {
       const carriesHold = carryTrustHoldOnAppLeave(ordinaryLeavePersonId !== undefined, n.trust.level(memberId));
       const reports = n.reportRestrictionsForLeave(memberId, ordinaryLeavePersonId !== undefined);
       if (ordinaryLeavePersonId && (carriesHold || reports.length)) {
-        const at = this.clock.now();
+        const existingHold = await rt.scoped(tx => currentStaffHold(tx, app.id, ordinaryLeavePersonId));
         rt.unit.memberCommand = async tx => {
           if (carriesHold) await recordCarriedTrustHold(tx, app.id, memberId, ordinaryLeavePersonId, at);
           if (reports.length) await carryReportRestrictions(tx, { app: app.id, runtime: rt.id }, memberId, ordinaryLeavePersonId, reports);
         };
+        if (existingHold.local === null) {
+          quarantineReason = carriesHold ? "trust_hold_carryover" : "report_restriction_carryover";
+        }
       }
       n.forgetMember(memberId);
       rt.unit.forget.add(memberId);
     });
+    if (ordinaryLeavePersonId && quarantineReason) {
+      await this.accounts.recordSafetyQuarantine(ordinaryLeavePersonId, quarantineReason, app.id, null, at);
+    }
   }
 
   /** spec/accountPrivacy.md, "An export includes the member's own facts and photo metadata" */
@@ -1812,7 +2002,9 @@ export class NetworkService implements RuntimeHost {
     const p = effectiveParticipation({ participation_state: row.participation_state, participation_window: row.participation_window }, now);
     const w = p.window && (p.window.until === null || Date.parse(p.window.until) > now) ? p.window : null;
     const q = row.prefs?.quietHours;
-    const quietHours: [number, number] | undefined = Array.isArray(q) && q.length === 2 && q.every((h: unknown) => Number.isInteger(h) && (h as number) >= 0 && (h as number) < 24) ? [q[0], q[1]] : undefined;
+    const quietHours: [number, number] | undefined = Array.isArray(q) && q.length === 2
+      && q.every((h: unknown) => typeof h === "number" && Number.isFinite(h) && h >= 0 && h < 24 && Math.round(h * 2) === h * 2)
+      ? [q[0], q[1]] : undefined;
     const base = row.participation_state === "paused" ? "paused" : row.participation_state === "quiet" ? "busy" : "open";
     return { state: w ? w.state : base, from: w?.from ?? null, until: w?.until ?? null, ...(quietHours ? { quietHours } : {}) };
   }
@@ -2070,7 +2262,7 @@ export class NetworkService implements RuntimeHost {
     const gatheringRsvp = !kw && gatheringRsvpCommand(ev.text);
     const gatheringFollowup = !kw && gatheringFollowupRequested(ev.text);
     const surveyAnswer = !kw && interruptionFeedbackAnswer(ev.text);
-    const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text) : undefined;
+    const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     const threadRead = !kw && threadUpdateRequested(ev.text);
@@ -2345,12 +2537,63 @@ export class NetworkService implements RuntimeHost {
     if (!m || !rt || !["active", "onboarding"].includes(m.state)) return "not_member";
     if (await this.accounts.banned(e164)) return "not_member";
     const t = this.clock.now(), rowId = `agent_${randomUUID()}`;
+    const redLines = extractRedLineTags(text);
+    if (redLines.length) {
+      await this.persistMcpRedLines(rt, m, redLines, t);
+    }
     const ev: Extract<ChannelEvent, { kind: "message" }> = {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
     await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
     await rt.projectRecordedAges(m.memberId as MemberId);
     return "accepted";
+  }
+
+  private async persistMcpRedLines(rt: NetworkRuntime, m: Membership, redLines: readonly string[], at: number): Promise<void> {
+    const now = new Date(at);
+    const unique = [...new Set(redLines.map(t => t.trim().toLowerCase()).filter(Boolean))].sort();
+    if (!unique.length) return;
+    await rt.scoped(async tx => {
+      for (const tag of unique) {
+        const facetId = `${m.memberId}:mcp:redline:${tag}`;
+        await tx`insert into network.facets (app_id, id, member_id, kind, value, tags, privacy_scope, provenance, source, status, confidence, valid_from, observed_at)
+          values (${rt.app.id}, ${facetId}, ${m.memberId}, 'boundary', ${tag}, ${tx.array([tag], "TEXT")}, 'agent_private', 'said', 'ai_memory', 'confirmed', 1, ${now}, ${now})
+          on conflict (id) do update set value=excluded.value, tags=excluded.tags, privacy_scope='agent_private', provenance='said', source='ai_memory', status='confirmed', valid_to=null, observed_at=${now}`;
+      }
+    });
+    const prior = Array.isArray(m.profile.redLines) ? m.profile.redLines.filter((x): x is string => typeof x === "string") : [];
+    const merged = [...new Set([...prior, ...unique])].sort();
+    if (merged.length !== prior.length || merged.some((v, i) => v !== prior[i])) {
+      await this.people.putMembership({ ...m, profile: { ...m.profile, redLines: merged } });
+    }
+  }
+
+  async memberRedLines(personId: string, appId: AppId, e164: string): Promise<string[]> {
+    const member = await this.ownMember(personId, appId, e164);
+    if (!member) return [];
+    const rows = await member.rt.scoped(tx => tx<{ tags: string[] }[]>`select tags from network.facets
+      where app_id=${appId} and member_id=${member.memberId} and status='confirmed' and privacy_scope='agent_private'
+        and kind='boundary' and (valid_to is null or valid_to > ${new Date(this.clock.now())})`);
+    const fromFacets = rows.flatMap(r => Array.isArray(r.tags) ? r.tags : []);
+    const fromProfile = Array.isArray(member.own.membership.profile.redLines)
+      ? member.own.membership.profile.redLines.filter((x): x is string => typeof x === "string")
+      : [];
+    return [...new Set([...fromProfile, ...fromFacets])].sort();
+  }
+
+  async mcpLeakContext(personId: string, appId: AppId, e164: string): Promise<LeakContext | undefined> {
+    const member = await this.ownMember(personId, appId, e164);
+    if (!member) return { forbidden: [e164, personId] };
+    const rows = await member.rt.scoped(tx => tx<{ value: string }[]>`select value from network.facets
+      where app_id=${appId} and member_id<>${member.memberId} and status='confirmed' and privacy_scope='agent_private'
+        and length(trim(value)) >= 6
+      order by observed_at desc nulls last, id
+      limit 100`);
+    const facts = [...new Set(rows.map(r => r.value.trim()).filter(v => v.split(/\s+/).length >= 2))];
+    return {
+      forbidden: [e164, personId],
+      ...(facts.length ? { facts } : {}),
+    };
   }
 
   private async photoMember(personId: string, appId: AppId, phone?: string): Promise<string | undefined> {
@@ -2422,6 +2665,9 @@ export class NetworkService implements RuntimeHost {
   private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
     const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply);
+    if (out === "handled") {
+      await this.syncAutoSafetyQuarantine(rt, memberId).catch(e => this.log(`[safety] quarantine sync failed (${rt.id}): ${(e as Error).message}`));
+    }
     // The member wrote in the thread: pending notify deliveries count as acted on (an assistant's submit_profile does not).
     if ((out === "handled" || out === "member_invitation" || out === "member_invitation_review" || out === "member_invitation_delivery" || out === "bounded_home_help")
       && fromThread && this.notify && kw !== "stop" && kw !== "stop_all" && !profileReadRequest(ev.text, this.apps)) {
@@ -2556,7 +2802,7 @@ export class NetworkService implements RuntimeHost {
         rt.unit.memberCommand = tx => this.replyToInvitationReview(tx, rt, memberId, signedDirect.from, rowId, inviteReview);
         return "handled";
       }
-      const travel = signedDirect ? travelPresenceCommand(ev.text) : undefined;
+      const travel = signedDirect ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
       const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
       const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
       if (travel || soloEvents || contributionPage !== undefined) {
@@ -2726,9 +2972,16 @@ export class NetworkService implements RuntimeHost {
     }
     if (command.kind === "invalid") return { id: `fact-edit:${rowId}`, body: memberFactReply("invalid") };
     const { ref, ...change } = command;
-    const draft = await this.profileFactEdits.stage(tx, owner, { reference: ref, change });
+    const resolvedRef = /^\d+$/.test(ref) ? await this.resolveNumberedFactRef(tx, owner, Number(ref)) : ref;
+    const draft = resolvedRef ? await this.profileFactEdits.stage(tx, owner, { reference: resolvedRef, change }) : undefined;
     if (!draft) return { id: `fact-edit:${rowId}`, body: unavailable };
     return { id: `fact-draft:${rowId}`, body: memberFactEditPrompt({ draft: draft.code, fact: draft.fact, change: draft.change }) };
+  }
+
+  private async resolveNumberedFactRef(tx: SQL, owner: { app: AppId; memberId: MemberId }, itemNumber: number): Promise<string | undefined> {
+    if (!Number.isSafeInteger(itemNumber) || itemNumber < 1) return undefined;
+    const { facts } = await this.profileFactEdits.list(tx, owner, itemNumber - 1);
+    return facts[0]?.reference;
   }
 
   private async profileFactReplyCurrent(input: TurnRequest, reply: Extract<TurnResponse, { outcome: "handled" }>): Promise<boolean> {
@@ -3029,7 +3282,7 @@ export class NetworkService implements RuntimeHost {
         floorRefused: floor !== undefined && !canJoinApp(floor, app) },
     });
     const requestHome = async (): Promise<InboundOutcome> => {
-      await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and birthday (month, day and year).", `sys:${rowId}`, "reply");
+      await this.direct(rt, ev.from, ALL_LAUNCH_CITIES_HOME_ASK, `sys:${rowId}`, "reply");
       return "join_asked";
     };
     const declineAge = async (stated: boolean): Promise<InboundOutcome> => {
@@ -3043,9 +3296,13 @@ export class NetworkService implements RuntimeHost {
     if (answer.phase === "RefuseAge") return declineAge(false);
     if (answer.phase === "AskForHome") return requestHome();
     if (answer.phase === "AskForAge") {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity } : {}), at: t });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: name ?? null, age: null, ...(homeCity ? { homeCity: homeCity as City } : {}), at: t });
       const { count } = await this.people.hit(`join_ask:${app.id}:${key}`, DAY, t);
-      const again = said.unclearDate ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst) : ask;
+      const again = said.unclearDate
+        ? c.birthdayWhich(said.unclearDate.monthFirst, said.unclearDate.dayFirst)
+        : SKEPTICAL_JOIN_RE.test(ev.text)
+          ? SKEPTICAL_JOIN_PRIVACY_REPLY
+          : ask;
       if (count <= 3) await this.direct(rt, ev.from, again, `sys:${rowId}`, "reply");
       return "join_asked";
     }
@@ -3058,7 +3315,7 @@ export class NetworkService implements RuntimeHost {
     if (ageCheck.phase === "RefuseAge") return declineAge(true);
     if (ageCheck.phase === "AskForHome") return requestHome();
     if (ageCheck.phase === "AskForName") {
-      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, birthDate: birthDate ?? null, ...(homeCity ? { homeCity } : {}), at: t });
+      await this.people.putPending({ phoneHash: key, kind: "join", app: app.id, name: null, age, birthDate: birthDate ?? null, ...(homeCity ? { homeCity: homeCity as City } : {}), at: t });
       await this.direct(rt, ev.from, c.joinNeedName, `sys:${rowId}`, "reply");
       return "join_asked";
     }
@@ -3085,18 +3342,22 @@ export class NetworkService implements RuntimeHost {
     if (!await this.createMember(rt, membership, { age: Math.min(age, check.effective ?? age),
       recordedAge: Math.min(age, known.independent ?? age), firstName: name, homeCity })) return "held";
     if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
-    // Their answer is their first message: the Network welcomes them as a reply to it.
-    await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
-    // A person who uses another app with this number: the link notice (never names the other app).
     const welcomed = stepTextJoin(stored, { type: "recordWelcome", hasOtherApp: others.length > 0, sharedNetwork, invited });
-    if (welcomed.phase === "JoinedWithShare") {
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "reply", "info"); });
-      await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
-    } else if (welcomed.phase === "JoinedWithLookingFor") {
-      // No keyword: The Network asks what they are looking for, then enrolls them (founder decision 2).
+    if (welcomed.phase === "JoinedWithLookingFor") {
       const askText = lookingForAsk(Math.min(age, check.effective ?? age));
-      await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info"); });
+      const greeting = `Hi ${name}, welcome to ${app.name}.`;
+      await rt.unitOfWork(async () => {
+        rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+        rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
+        rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
+      });
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
+    } else {
+      await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
+      if (welcomed.phase === "JoinedWithShare") {
+        await rt.unitOfWork(() => { rt.system(membership.memberId, `link:${rowId}`, c.linkNotice, "reply", "info"); });
+        await this.people.putPending({ phoneHash: key, kind: "share", app: app.id, name: null, age: null, at: t });
+      }
     }
     return "joined";
   }
@@ -3130,6 +3391,9 @@ export class NetworkService implements RuntimeHost {
         const admitted = await this.people.admitMembership(m, { e164, app: id, state: "opted_in", source: "looking_for",
           wording: asked, ref: `${rowId}:${id}`, at: this.consentAt(ev) }, key, null);
         if (!admitted || (m.state === "active" && !await this.createMember(art, m, { age: lowest, recordedAge: independent ?? null, firstName: ntwrk.firstName ?? "there", homeCity }))) continue;
+        if (m.state === "active" && !turn) {
+          await art.unitOfWork(n => { n.welcomeJoined(m.memberId as MemberId); }).catch(e => this.log(`[enroll] child welcome deferred (${art.id}): ${(e as Error).message}`));
+        }
         joined.push(app);
       }
     }
@@ -3252,19 +3516,75 @@ export class NetworkService implements RuntimeHost {
     return this.staffAction(rt, user, "review_stop", { type: "opportunity", id: oppId }, { revision }, n => n.stopApproved(oppId, user.id, revision));
   }
 
+  private async syncAutoSafetyQuarantine(rt: NetworkRuntime, actorMemberId: MemberId): Promise<void> {
+    const URGENT_KINDS = new Set(["harassment", "unsafe", "scam", "minor", "older_than_stated"]);
+    const flagged = await rt.readState(n => {
+      const quarantines: { memberId: MemberId; reason: string; ref: string | null }[] = [];
+      const selfPromos: { subjectId: MemberId; reporterId: MemberId }[] = [];
+      const actorHeld = n.trust.level(actorMemberId) === "hold";
+      if (actorHeld) {
+        quarantines.push({ memberId: actorMemberId, reason: "auto_trust_hold", ref: null });
+      }
+      for (const rep of n.safetyReports()) {
+        if (rep.status !== "open" || rep.reporterId !== actorMemberId) continue;
+        if (rep.kind === "self_promotion") {
+          selfPromos.push({ subjectId: rep.subjectId, reporterId: rep.reporterId });
+          continue;
+        }
+        const met = rep.opportunityId !== undefined || rep.source === "check_in";
+        if (!actorHeld && URGENT_KINDS.has(rep.kind) && met) {
+          quarantines.push({ memberId: rep.subjectId, reason: `urgent_report:${rep.kind}`, ref: rep.id });
+        }
+      }
+      return { quarantines, selfPromos };
+    });
+    const at = this.clock.now();
+    for (const item of flagged.quarantines) {
+      const pid = await this.personOfMember(rt, item.memberId);
+      if (pid) await this.accounts.recordSafetyQuarantine(pid, item.reason, rt.app.id, item.ref, at);
+    }
+    for (const sp of flagged.selfPromos) {
+      const subjectPid = await this.personOfMember(rt, sp.subjectId);
+      if (!subjectPid) continue;
+      const hashes = await this.people.phoneHashesOf(subjectPid);
+      const subjectPhoneHash = hashes[0];
+      if (!subjectPhoneHash) continue;
+      const reporterHash = this.accounts.phoneHash(`member:${sp.reporterId}`);
+      await this.accounts.recordBoundarySignal({
+        subjectPersonId: subjectPid,
+        subjectPhoneHash,
+        reporterHash,
+        appId: rt.app.id,
+        kind: "self_promotion",
+        at,
+      });
+    }
+  }
+
   liftHold(user: StaffUser, memberId: MemberId, note?: string, rt = this.main) {
     const everywhere = crossAppSafety(user);
     return this.audited(rt, user, { type: "member", id: memberId }, { safety: "lift_hold" }, async () => {
       try {
-        return await rt.unitOfWork(async n => {
+        let liftedPersonId: string | undefined;
+        const lifted = await rt.unitOfWork(async n => {
           const personId = await this.personOfMember(rt, memberId);
           if (!personId) return n.liftHold(memberId, user.id, note);
           const expected = await rt.scoped(tx => currentStaffHold(tx, rt.app.id, personId));
           if (!durableStaffHoldLiftAllowed(expected.global !== null, everywhere)) return { ok: false, reason: "needs_safety_everywhere" };
           const result = n.liftHold(memberId, user.id, note, expected.local !== null || expected.global !== null);
-          if (result.ok) rt.unit.memberCommand = tx => liftStaffHold(tx, rt.app.id, memberId, personId, expected, everywhere);
+          if (result.ok) {
+            liftedPersonId = personId;
+            rt.unit.memberCommand = tx => liftStaffHold(tx, rt.app.id, memberId, personId, expected, everywhere);
+          }
           return result;
         });
+        if (lifted.ok && liftedPersonId) {
+          const activeQ = await this.accounts.activeSafetyQuarantine(liftedPersonId);
+          if (activeQ && (everywhere || activeQ.originApp === rt.app.id)) {
+            await this.accounts.clearSafetyQuarantine(liftedPersonId, this.clock.now());
+          }
+        }
+        return lifted;
       } catch (error) {
         if (error instanceof StaffHoldStateChanged) return { ok: false, reason: "hold_changed" };
         throw error;
@@ -3468,6 +3788,9 @@ export class NetworkService implements RuntimeHost {
       }
       const hold = stepStaffSafety(initialStaffSafety, { type: "readPrimaryHold", applied: r.ok });
       if (hold.phase !== "HoldRemainingTargets") return r;
+      if (personId && scope === "*") {
+        await this.accounts.recordSafetyQuarantine(personId, `hold:${note}`, rt.app.id, decisionId, this.clock.now());
+      }
       const relatedReport = staffSafetyReportFor(false, reportId ?? "") || undefined;
       for (const x of members) {
         if (!personId || (x.rt === rt && x.memberId === memberId)) continue;
@@ -3570,6 +3893,8 @@ export class NetworkService implements RuntimeHost {
       if (!saved) return { ok: true };
       const bannedHashes = [...new Set([...hashes, ...pending.flatMap(ban => ban.phoneHash ? [ban.phoneHash] : [])])];
       for (const h of bannedHashes) await this.people.suppress(h, "banned", at);
+      await this.photos.banMediaForPerson(personId);
+      await this.accounts.recordSafetyQuarantine(personId, `ban:${saved.reason}`, rt.app.id, saved.id, at);
       await this.dropRatings(personId);
       await this.people.restrictBannedMemberships(personId);
       const { members } = await this.membersOfPerson(rt, memberId, personId);
@@ -4278,6 +4603,10 @@ export class NetworkService implements RuntimeHost {
     if (url.pathname === RELAY_PATH) return relayEndpoint({ sql: this.sql, clock: this.clock, secret: this.env.SERVICE_TURN_SECRET, routePolicy: this.routePolicy, accounts: this.accounts, photoRequest: input => this.photoRelayFlow.relay(input), runtimeFor: app => this.runtimeFor(app), runtimeOfMember: (app, memberId) => this.runtimeOfMember(app, memberId), hookFor: this.relayHookFor }, req);
     let path = url.pathname.replace(/\/+$/, "") || "/";
     try {
+      if (path === LUMA_WEBHOOK_PATH) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        return this.lumaWebhook(req);
+      }
       if (path === WEBHOOK_PATH || path.startsWith(`${WEBHOOK_PATH}/`)) {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         const appPart = path.slice(WEBHOOK_PATH.length + 1);
@@ -4497,6 +4826,89 @@ export class NetworkService implements RuntimeHost {
         await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_turn_watch", mode: "real", ok: true, app: rt.app.id });
         return json({ ok: true, ...await turnWatchMetrics(this.sql, this.clock.now()) });
       }
+      if (path === "/ops/cities") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_city_ops", mode: "real", ok: true, app: rt.app.id, ...(city ? { detail: { city } } : {}) });
+        return json({ ok: true, cities: await this.meetup.cityReadinessSnapshot(city) });
+      }
+      if (path === "/venues") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        const rawStatus = url.searchParams.get("status")?.trim() || undefined;
+        const validVenueStatuses = new Set<VenueStatus>(["active", "suspect_closed", "closed_temporary", "closed_permanent"]);
+        if (rawStatus !== undefined && !validVenueStatuses.has(rawStatus as VenueStatus)) return json({ ok: false, error: "invalid_status" }, 400);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_venues", mode: "real", ok: true, app: rt.app.id, detail: { ...(city ? { city } : {}), ...(rawStatus ? { status: rawStatus } : {}) } });
+        return json({ ok: true, venues: await this.meetup.listVenues(city, rawStatus as VenueStatus | undefined) });
+      }
+      const venueStatusPath = path.match(/^\/venues\/([^/]+)\/status$/);
+      if (venueStatusPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        let venueId: string;
+        try { venueId = decodeURIComponent(venueStatusPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const status = b?.status;
+        const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : undefined;
+        const validVenueStatuses = new Set<VenueStatus>(["active", "suspect_closed", "closed_temporary", "closed_permanent"]);
+        if (!venueId || venueId.length > 200 || typeof status !== "string" || !validVenueStatuses.has(status as VenueStatus)) {
+          return json({ ok: false, error: "invalid_venue_status" }, 400);
+        }
+        const updated = await this.meetup.updateVenueStatus(venueId, status as VenueStatus, reason);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "update_venue_status", targetType: "case", targetId: venueId, mode: "real", ok: !!updated, app: rt.app.id, ...(reason ? { reason } : {}), detail: { status } });
+        return updated ? json({ ok: true, venue: updated.venue }) : json({ ok: false, error: "not_found" }, 404);
+      }
+      if (path === "/external-events") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        const rawStatus = url.searchParams.get("status")?.trim() || undefined;
+        const validEventStatuses = new Set<ExternalEventStatus>(["draft", "pending_review", "published", "active", "completed", "cancelled_no_anchor", "cancelled_low_quorum", "cancelled"]);
+        if (rawStatus !== undefined && !validEventStatuses.has(rawStatus as ExternalEventStatus)) return json({ ok: false, error: "invalid_status" }, 400);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_external_events", mode: "real", ok: true, app: rt.app.id, detail: { ...(city ? { city } : {}), ...(rawStatus ? { status: rawStatus } : {}) } });
+        return json({ ok: true, events: await this.meetup.listExternalEvents(city, rawStatus as ExternalEventStatus | undefined) });
+      }
+      const externalEventReviewPath = path.match(/^\/external-events\/([^/]+)\/review$/);
+      if (externalEventReviewPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        let eventId: string;
+        try { eventId = decodeURIComponent(externalEventReviewPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const approved = typeof b?.approved === "boolean" ? b.approved : b?.decision === "approve" ? true : b?.decision === "reject" ? false : undefined;
+        const publish = b?.publish === true;
+        if (!eventId || eventId.length > 200 || approved === undefined) return json({ ok: false, error: "invalid_review" }, 400);
+        const reviewed = await this.meetup.reviewExternalEvent(eventId, approved, user.id);
+        if (!reviewed) {
+          await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "review_external_event", targetType: "case", targetId: eventId, mode: "real", ok: false, app: rt.app.id, detail: { approved } });
+          return json({ ok: false, error: "not_found" }, 404);
+        }
+        let published: Awaited<ReturnType<PgMeetupStore["publishExternalEvent"]>> | undefined;
+        if (approved && publish) published = await this.meetup.publishExternalEvent(eventId, this.clock.now());
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "review_external_event", targetType: "case", targetId: eventId, mode: "real", ok: true, app: rt.app.id, detail: { approved, publish, published: published?.ok ?? false } });
+        return json({ ok: true, event: published?.ok ? published.event : reviewed.event, ...(published && !published.ok ? { publishError: published.reason } : {}) });
+      }
+      if (path === "/matchmakers") {
+        if (req.method !== "GET") return json({ ok: false, error: "method_not_allowed" }, 405);
+        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        const city = url.searchParams.get("city")?.trim() || undefined;
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "read_matchmakers", mode: "real", ok: true, app: rt.app.id, ...(city ? { detail: { city } } : {}) });
+        return json({ ok: true, personas: await this.meetup.listMatchmakerPersonas(city, rt.app.id) });
+      }
+      const matchmakerStatusPath = path.match(/^\/matchmakers\/([^/]+)\/status$/);
+      if (matchmakerStatusPath) {
+        if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
+        if (rt.app.id === "peon") return json({ ok: false, code: "forbidden", error: "matchmakers unavailable on peon" }, 403);
+        let personaId: string;
+        try { personaId = decodeURIComponent(matchmakerStatusPath[1]!); } catch { return json({ ok: false, error: "invalid_id" }, 400); }
+        const b = await body(req) as Record<string, unknown> | undefined;
+        const status = b?.status;
+        const reason = typeof b?.reason === "string" ? b.reason.trim().slice(0, 500) : undefined;
+        const validPersonaStatuses = new Set<PersonaHealthStatus>(["active", "degraded", "suspended"]);
+        if (!personaId || personaId.length > 200 || typeof status !== "string" || !validPersonaStatuses.has(status as PersonaHealthStatus)) {
+          return json({ ok: false, error: "invalid_matchmaker_status" }, 400);
+        }
+        const updated = await this.meetup.updateMatchmakerPersonaStatus(personaId, status as PersonaHealthStatus, reason, rt.app.id);
+        await this.audit.write({ at: this.clock.now(), actor: user.id, roles: user.roles, action: "update_matchmaker_status", targetType: "case", targetId: personaId, mode: "real", ok: !!updated, app: rt.app.id, ...(reason ? { reason } : {}), detail: { status } });
+        return updated ? json({ ok: true, persona: updated.persona, preservedOffAppTickets: updated.preservedOffAppTickets }) : json({ ok: false, error: "not_found" }, 404);
+      }
       if (path === "/inbound/resolve") {
         if (req.method !== "POST") return json({ ok: false, error: "method_not_allowed" }, 405);
         const b = await body(req) as Record<string, any> | undefined;
@@ -4658,6 +5070,48 @@ export class NetworkService implements RuntimeHost {
 
   /** The console's token may name the signed-in staff member (X-Network-Staff-Id); any other token may not. */
   private reviewerOfRecord(req: Request, user: StaffUser): { user: StaffUser; actor: StepActor } { return reviewerOfRecord(req, user, this.consoleToken); }
+
+  /** POST /webhooks/luma: verify HMAC-SHA256 signature on raw body, normalize, and persist adult-screened RSVPs. */
+  private async lumaWebhook(req: Request): Promise<Response> {
+    if (!this.lumaWebhookSecret) return json({ ok: false, error: "luma_webhook_secret_missing" }, 503);
+    const bytes = await readCapped(req, MAX_BODY_BYTES);
+    if (bytes === "too_large") return json({ ok: false, error: "payload_too_large" }, 413);
+    const raw = new TextDecoder().decode(bytes);
+    const sigHeader = req.headers.get("x-luma-signature") ?? req.headers.get("luma-signature");
+    const tsHeader = req.headers.get("x-luma-timestamp");
+    const valid = await verifyLumaWebhookSignature(this.lumaWebhookSecret, raw, sigHeader, {
+      ...(tsHeader !== null ? { timestampHeader: tsHeader, nowMs: this.clock.now() } : {}),
+    });
+    if (!valid) return json({ ok: false, error: "invalid_signature" }, 401);
+    let payload: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return json({ ok: false, error: "invalid_json" }, 400);
+      payload = parsed as Record<string, unknown>;
+    } catch {
+      return json({ ok: false, error: "invalid_json" }, 400);
+    }
+    const normalized = normalizeLumaWebhookEvent(payload, new Date(this.clock.now()).toISOString());
+    if (normalized.kind === "ignored") return json({ ok: true, kind: "ignored", rawType: normalized.rawType });
+    const event = await this.meetup.findExternalEventByExternalId("luma", normalized.eventExternalId);
+    if (!event) return json({ ok: false, error: "event_not_found" }, 404);
+    if (normalized.kind === "cancellation") {
+      await this.sql`update platform.external_events set status = 'cancelled', updated_at = ${new Date(this.clock.now())} where id = ${event.id}`;
+      return json({ ok: true, kind: "cancellation", eventId: event.id });
+    }
+    const rsvpResult = await this.meetup.recordExternalEventRsvp({
+      eventId: event.id,
+      platform: "luma",
+      guestExternalId: normalized.guestExternalId,
+      firstName: normalized.firstName,
+      confirmedAdult18Plus: normalized.confirmedAdult18Plus,
+      answeredScreeningQuestion: normalized.answeredScreeningQuestion,
+      screeningAnswer: normalized.screeningAnswerText,
+      requestedStatus: normalized.status,
+      nowMs: this.clock.now(),
+    });
+    return json({ ok: true, kind: "rsvp", eventId: event.id, result: rsvpResult });
+  }
 
   /** POST /webhooks/blooio[/:app]: verify the signature on the raw body (the prototype's rules), parse, handle. 401 never retries; 500 asks Blooio to retry. */
   private async webhook(req: Request, secret: string | undefined, app?: AppId): Promise<Response> {

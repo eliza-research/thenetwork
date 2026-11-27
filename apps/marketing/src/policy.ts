@@ -2,6 +2,8 @@
 // Every policy and device safety decision delegates directly to the Vibestack/Dafny-proved
 // generated cores in packages/core/src/generated/marketingPolicy.ts and marketingDevice.ts.
 
+import { createHmac } from "node:crypto";
+import { appKeys, brandFor } from "../../../packages/core/src/generated/brandIdentity.ts";
 import {
   canDispatchDeviceStep,
   deviceBatteryMax,
@@ -11,6 +13,7 @@ import {
   deviceTempMinC,
   warmupDailyCap,
 } from "../../../packages/core/src/generated/marketingDevice.ts";
+import * as generatedMarketingPolicy from "../../../packages/core/src/generated/marketingPolicy.ts";
 import {
   adultParticipantAge,
   antiFraudPayoutAllowed,
@@ -21,10 +24,21 @@ import {
   canAuthorizeTaskSpend,
   canDispatchAgentTurn,
   canSendOutreach,
+  coldCooldownDays,
   consumerLifetimeBonusCapCents,
+  contactCooldownAllowed,
+  contactSafetyEligible,
+  llmBudgetWithinCaps,
+  maxColdTouches30d,
+  maxOpTouchesPerDay,
+  maxUnansweredCold,
   mvnoBonusCapCents,
+  queuePressurePaused,
   w9AnnualThresholdCents,
 } from "../../../packages/core/src/generated/marketingPolicy.ts";
+import { LeakGuard, setLeakLabelKey, type LeakOptions } from "../../../packages/core/src/guard.ts";
+import { keywordKey, optOutPhrase, parseOptOut } from "../../../packages/core/src/replies.ts";
+import { getCityPack } from "./city-registry.ts";
 import { DEFAULT_BANDIT_MAX_CPA_CENTS, DEFAULT_DAILY_OUTREACH_CAP } from "./constants.ts";
 import type {
   Campaign,
@@ -579,4 +593,516 @@ export function evaluateDeviceActionPolicy(
               ? `battery_or_thermal_unsafe (battery=${device.batteryPct}% needs ${deviceBatteryMin}..${deviceBatteryMax}%, temp=${device.tempC}C needs ${deviceTempMinC}..${deviceTempMaxC}C)`
               : `warmup_cap_reached (${device.dailyActionsUsed}/${cap} on day ${device.warmupDay})`;
   return { allowed: false, leasedByOther, needsTakeover, reason };
+}
+
+export interface LlmBudgetPolicyInput {
+  tokensUsedToday: number;
+  estimatedTokens: number;
+  dailyTokenCap: number;
+  costMicrosToday: number;
+  estimatedCostMicros: number;
+  dailyCostCapMicros: number;
+}
+
+export interface LlmBudgetPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateLlmBudget(input: LlmBudgetPolicyInput): LlmBudgetPolicyDecision {
+  const {
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  } = input;
+  const values = [
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  ];
+  if (!values.every((v) => Number.isSafeInteger(v))) {
+    return { allowed: false, reason: "invalid_llm_budget_value" };
+  }
+  const allowed = llmBudgetWithinCaps(
+    tokensUsedToday,
+    estimatedTokens,
+    dailyTokenCap,
+    costMicrosToday,
+    estimatedCostMicros,
+    dailyCostCapMicros,
+  );
+  if (allowed) return { allowed: true };
+  if (tokensUsedToday < 0 || estimatedTokens < 0 || dailyTokenCap <= 0) {
+    return { allowed: false, reason: "invalid_token_cap" };
+  }
+  if (tokensUsedToday + estimatedTokens > dailyTokenCap) {
+    return { allowed: false, reason: "daily_token_cap_exceeded" };
+  }
+  if (costMicrosToday < 0 || estimatedCostMicros < 0 || dailyCostCapMicros <= 0) {
+    return { allowed: false, reason: "invalid_cost_cap" };
+  }
+  return { allowed: false, reason: "daily_cost_cap_exceeded" };
+}
+
+export interface QueuePressurePolicyInput {
+  lineRestricted: boolean;
+  reviewOverdue: number;
+  reviewOpen: number;
+  reviewBacklogLimit: number;
+  outboundWaiting: number;
+  outboundBacklogLimit: number;
+}
+
+export interface QueuePressurePolicyDecision {
+  paused: boolean;
+  reason?: string;
+}
+
+export function evaluateQueuePressure(input: QueuePressurePolicyInput): QueuePressurePolicyDecision {
+  const {
+    lineRestricted,
+    reviewOverdue,
+    reviewOpen,
+    reviewBacklogLimit,
+    outboundWaiting,
+    outboundBacklogLimit,
+  } = input;
+  const paused = queuePressurePaused(
+    lineRestricted,
+    reviewOverdue,
+    reviewOpen,
+    reviewBacklogLimit,
+    outboundWaiting,
+    outboundBacklogLimit,
+  );
+  if (!paused) return { paused: false };
+  const reason = lineRestricted
+    ? "platform_line_restricted"
+    : reviewOverdue > 0
+      ? "platform_review_overdue"
+      : reviewOpen >= reviewBacklogLimit
+        ? "platform_review_backlog_limit"
+        : "platform_outbound_backlog_limit";
+  return { paused: true, reason };
+}
+
+export interface ContactHygienePolicyInput {
+  isStopped: boolean;
+  isBanned: boolean;
+  isKnownMinor: boolean;
+  lockdown: boolean;
+  isCold: boolean;
+  isQuietHours: boolean;
+  daysSinceCold: number;
+  coldTouches30d: number;
+  unansweredCold: number;
+  opTouchesToday: number;
+}
+
+export interface ContactHygienePolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateContactHygiene(
+  input: ContactHygienePolicyInput,
+): ContactHygienePolicyDecision {
+  const safetyOk = contactSafetyEligible(
+    input.isStopped,
+    input.isBanned,
+    input.isKnownMinor,
+    input.lockdown,
+  );
+  if (!safetyOk) {
+    const reason = input.isKnownMinor
+      ? "contact_known_minor"
+      : input.isStopped
+        ? "contact_stopped"
+        : input.isBanned
+          ? "contact_banned"
+          : "campaign_lockdown";
+    return { allowed: false, reason };
+  }
+  const cooldownOk = contactCooldownAllowed(
+    input.isCold,
+    input.isQuietHours,
+    input.daysSinceCold,
+    input.coldTouches30d,
+    input.unansweredCold,
+    input.opTouchesToday,
+  );
+  if (cooldownOk) return { allowed: true };
+  if (input.isCold) {
+    if (input.isQuietHours) return { allowed: false, reason: "quiet_hours_cold_blocked" };
+    if (input.daysSinceCold < coldCooldownDays) {
+      return { allowed: false, reason: "cold_cooldown_window_active" };
+    }
+    if (input.coldTouches30d >= maxColdTouches30d || input.coldTouches30d < 0) {
+      return { allowed: false, reason: "cold_30d_cap_reached" };
+    }
+    if (input.unansweredCold >= maxUnansweredCold || input.unansweredCold < 0) {
+      return { allowed: false, reason: "cold_unanswered_streak_cap" };
+    }
+  }
+  return {
+    allowed: false,
+    reason:
+      input.opTouchesToday >= maxOpTouchesPerDay || input.opTouchesToday < 0
+        ? "operational_daily_touch_cap_reached"
+        : "contact_cooldown_blocked",
+  };
+}
+
+export function createMarketingLeakGuard(
+  env: Record<string, string | undefined> = process.env,
+  extraOptions: LeakOptions = {},
+): LeakGuard {
+  const labelKey = env.LEAK_LABEL_KEY;
+  if (labelKey && new TextEncoder().encode(labelKey).length >= 32) {
+    setLeakLabelKey(labelKey);
+  }
+  const brandDomains = appKeys.flatMap((key) => {
+    const domain = brandFor(key).domain;
+    return [domain, `https://${domain}`];
+  });
+  const mergedAllow = [...new Set([...brandDomains, ...(extraOptions.allow ?? [])])];
+  return new LeakGuard({
+    contacts: true,
+    canaryShapes: true,
+    ...extraOptions,
+    allow: mergedAllow,
+  });
+}
+
+const E164_STRICT = /^\+[1-9]\d{6,14}$/;
+const NANP_10 = /^[2-9]\d{2}[2-9]\d{6}$/;
+
+export function normalizeE164Phone(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("+")) {
+    const compacted = `+${trimmed.slice(1).replace(/[\s().-]+/g, "")}`;
+    return E164_STRICT.test(compacted) ? compacted : null;
+  }
+  const digits = trimmed.replace(/\D+/g, "");
+  if (digits.length === 10 && NANP_10.test(digits)) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith("1") && NANP_10.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
+
+export function keyedContactHash(
+  kind: "phone" | "email" | "handle",
+  raw: string,
+  env: Record<string, string | undefined> = process.env,
+): string | null {
+  let normalized: string | null;
+  if (kind === "phone") {
+    normalized = normalizeE164Phone(raw);
+  } else if (kind === "email") {
+    const clean = raw.trim().toLowerCase();
+    normalized = clean.includes("@") && !/\s/.test(clean) ? clean : null;
+  } else {
+    const clean = raw.trim().toLowerCase().replace(/^@+/, "");
+    normalized = clean.length > 0 ? clean : null;
+  }
+  if (!normalized) return null;
+  const key =
+    env.PLATFORM_HASH_KEY ||
+    env.MARKETING_CONTACT_HASH_KEY ||
+    "marketing-dev-hash-key";
+  return createHmac("sha256", key).update(`${kind}:${normalized}`).digest("hex");
+}
+
+const GLOBAL_OPT_OUT_KEYS = new Set([
+  "STOP",
+  "STOP ALL",
+  "STOPALL",
+  "UNSUBSCRIBE",
+  "CANCEL",
+  "END",
+  "QUIT",
+  "REVOKE",
+  "OPTOUT",
+  "OPT OUT",
+]);
+
+export function isGlobalOptOutText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  const key = keywordKey(trimmed);
+  if (GLOBAL_OPT_OUT_KEYS.has(key) || /^S+T+O+P+$/.test(key)) return true;
+  if (optOutPhrase(trimmed)) return true;
+  const parsed = parseOptOut(trimmed);
+  return parsed.match !== "none" && parsed.scope === "all";
+}
+
+export const MAX_PLATFORM_REPORT_RISK = 24;
+export const MIN_INTAKE_QUALITY_SCORE = 70;
+
+type GeneratedPolicyExtensions = {
+  canAuthorizeApolloCredits?: (
+    creditsUsedToday: number,
+    requestedCredits: number,
+    dailyCreditCap: number,
+    creditsUsedMonth: number,
+    monthlyCreditCap: number,
+    billingArmed: boolean,
+    lockdown: boolean,
+    isSuppressed: boolean,
+    isKnownMinor: boolean,
+  ) => boolean;
+  canDispatchPlatformTouch?: (
+    sentToday: number,
+    effectiveDailyCap: number,
+    reportRiskScore: number,
+    hasUnsolicitedUrl: boolean,
+    requiresLinkFree: boolean,
+    contactSafe: boolean,
+    cooldownAllowed: boolean,
+    channelSuspended: boolean,
+  ) => boolean;
+  canPromoteOutOfNetworkCandidate?: (
+    statedAge: number,
+    qualityScore: number,
+    valueDelivered: boolean,
+    explicitPositiveSignal: boolean,
+    contactSafe: boolean,
+    queuePaused: boolean,
+    priorInviteCount: number,
+  ) => boolean;
+};
+
+const generatedExt = generatedMarketingPolicy as unknown as GeneratedPolicyExtensions;
+
+const tzHourFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function getTzHourFormatter(timezone: string): Intl.DateTimeFormat {
+  let fmt = tzHourFormatterCache.get(timezone);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      hour: "numeric",
+      hourCycle: "h23",
+    });
+    tzHourFormatterCache.set(timezone, fmt);
+  }
+  return fmt;
+}
+
+export function isLocalQuietHours(
+  city: string | null | undefined,
+  nowMs: number,
+): boolean {
+  const pack = getCityPack(city ?? "nyc") ?? getCityPack("nyc");
+  const timezone = pack?.timezone ?? "America/New_York";
+  const startHour = pack?.legal.quietHoursLocal.startHour ?? 21;
+  const endHour = pack?.legal.quietHoursLocal.endHour ?? 9;
+  let localHour = 12;
+  try {
+    const raw = getTzHourFormatter(timezone).format(new Date(nowMs));
+    const parsed = Number.parseInt(raw, 10);
+    if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 23) {
+      localHour = parsed;
+    }
+  } catch {
+    localHour = new Date(nowMs).getUTCHours();
+  }
+  if (startHour === endHour) return false;
+  if (startHour > endHour) {
+    return localHour >= startHour || localHour < endHour;
+  }
+  return localHour >= startHour && localHour < endHour;
+}
+
+export interface ApolloCreditsPolicyInput {
+  creditsUsedToday: number;
+  requestedCredits: number;
+  dailyCreditCap: number;
+  creditsUsedMonth: number;
+  monthlyCreditCap: number;
+  billingArmed: boolean;
+  lockdown: boolean;
+  isSuppressed: boolean;
+  isKnownMinor: boolean;
+}
+
+export interface ApolloCreditsPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateApolloCredits(
+  input: ApolloCreditsPolicyInput,
+): ApolloCreditsPolicyDecision {
+  const nums = [
+    input.creditsUsedToday,
+    input.requestedCredits,
+    input.dailyCreditCap,
+    input.creditsUsedMonth,
+    input.monthlyCreditCap,
+  ];
+  if (!nums.every((v) => Number.isSafeInteger(v))) {
+    return { allowed: false, reason: "invalid_apollo_credit_value" };
+  }
+  const allowed = generatedExt.canAuthorizeApolloCredits
+    ? generatedExt.canAuthorizeApolloCredits(
+        input.creditsUsedToday,
+        input.requestedCredits,
+        input.dailyCreditCap,
+        input.creditsUsedMonth,
+        input.monthlyCreditCap,
+        input.billingArmed,
+        input.lockdown,
+        input.isSuppressed,
+        input.isKnownMinor,
+      )
+    : input.requestedCredits >= 0 &&
+      input.creditsUsedToday >= 0 &&
+      input.creditsUsedMonth >= 0 &&
+      input.dailyCreditCap >= 0 &&
+      input.monthlyCreditCap >= 0 &&
+      !input.lockdown &&
+      !input.isSuppressed &&
+      !input.isKnownMinor &&
+      (input.requestedCredits === 0 ||
+        (input.billingArmed &&
+          input.creditsUsedToday + input.requestedCredits <= input.dailyCreditCap &&
+          input.creditsUsedMonth + input.requestedCredits <= input.monthlyCreditCap));
+
+  if (allowed) return { allowed: true };
+  if (input.isKnownMinor) return { allowed: false, reason: "apollo_known_minor_blocked" };
+  if (input.isSuppressed) return { allowed: false, reason: "apollo_contact_suppressed" };
+  if (input.lockdown) return { allowed: false, reason: "campaign_lockdown" };
+  if (input.requestedCredits > 0 && !input.billingArmed) {
+    return { allowed: false, reason: "apollo_billing_not_armed" };
+  }
+  if (input.creditsUsedToday + input.requestedCredits > input.dailyCreditCap) {
+    return { allowed: false, reason: "apollo_daily_credit_cap_exceeded" };
+  }
+  if (input.creditsUsedMonth + input.requestedCredits > input.monthlyCreditCap) {
+    return { allowed: false, reason: "apollo_monthly_credit_cap_exceeded" };
+  }
+  return { allowed: false, reason: "apollo_credit_policy_blocked" };
+}
+
+export interface PlatformTouchPolicyInput {
+  sentToday: number;
+  effectiveDailyCap: number;
+  reportRiskScore: number;
+  hasUnsolicitedUrl: boolean;
+  requiresLinkFree: boolean;
+  contactSafe: boolean;
+  cooldownAllowed: boolean;
+  channelSuspended: boolean;
+}
+
+export interface PlatformTouchPolicyDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluatePlatformTouchPolicy(
+  input: PlatformTouchPolicyInput,
+): PlatformTouchPolicyDecision {
+  if (
+    !Number.isSafeInteger(input.sentToday) ||
+    !Number.isSafeInteger(input.effectiveDailyCap) ||
+    !Number.isSafeInteger(input.reportRiskScore)
+  ) {
+    return { allowed: false, reason: "invalid_platform_touch_metric" };
+  }
+  const allowed = generatedExt.canDispatchPlatformTouch
+    ? generatedExt.canDispatchPlatformTouch(
+        input.sentToday,
+        input.effectiveDailyCap,
+        input.reportRiskScore,
+        input.hasUnsolicitedUrl,
+        input.requiresLinkFree,
+        input.contactSafe,
+        input.cooldownAllowed,
+        input.channelSuspended,
+      )
+    : !input.channelSuspended &&
+      input.contactSafe &&
+      input.cooldownAllowed &&
+      input.sentToday >= 0 &&
+      input.effectiveDailyCap > 0 &&
+      input.sentToday < input.effectiveDailyCap &&
+      input.reportRiskScore >= 0 &&
+      input.reportRiskScore <= MAX_PLATFORM_REPORT_RISK &&
+      (!input.requiresLinkFree || !input.hasUnsolicitedUrl);
+
+  if (allowed) return { allowed: true };
+  if (input.channelSuspended) return { allowed: false, reason: "platform_channel_suspended" };
+  if (!input.contactSafe) return { allowed: false, reason: "contact_safety_blocked" };
+  if (!input.cooldownAllowed) return { allowed: false, reason: "contact_cooldown_blocked" };
+  if (input.requiresLinkFree && input.hasUnsolicitedUrl) {
+    return { allowed: false, reason: "unsolicited_url_blocked_on_platform" };
+  }
+  if (input.reportRiskScore > MAX_PLATFORM_REPORT_RISK || input.reportRiskScore < 0) {
+    return { allowed: false, reason: "report_risk_threshold_exceeded" };
+  }
+  return { allowed: false, reason: "platform_daily_cap_reached" };
+}
+
+export interface OutOfNetworkPromotionInput {
+  statedAge: number;
+  qualityScore: number;
+  valueDelivered: boolean;
+  explicitPositiveSignal: boolean;
+  contactSafe: boolean;
+  queuePaused: boolean;
+  priorInviteCount: number;
+}
+
+export interface OutOfNetworkPromotionDecision {
+  allowed: boolean;
+  reason?: string;
+}
+
+export function evaluateOutOfNetworkPromotion(
+  input: OutOfNetworkPromotionInput,
+): OutOfNetworkPromotionDecision {
+  if (
+    !Number.isSafeInteger(input.statedAge) ||
+    !Number.isSafeInteger(input.qualityScore) ||
+    !Number.isSafeInteger(input.priorInviteCount)
+  ) {
+    return { allowed: false, reason: "invalid_intake_metric" };
+  }
+  const allowed = generatedExt.canPromoteOutOfNetworkCandidate
+    ? generatedExt.canPromoteOutOfNetworkCandidate(
+        input.statedAge,
+        input.qualityScore,
+        input.valueDelivered,
+        input.explicitPositiveSignal,
+        input.contactSafe,
+        input.queuePaused,
+        input.priorInviteCount,
+      )
+    : adultParticipantAge(input.statedAge) &&
+      input.qualityScore >= MIN_INTAKE_QUALITY_SCORE &&
+      input.qualityScore <= 100 &&
+      input.valueDelivered &&
+      input.explicitPositiveSignal &&
+      input.contactSafe &&
+      !input.queuePaused &&
+      input.priorInviteCount === 0;
+
+  if (allowed) return { allowed: true };
+  if (!adultParticipantAge(input.statedAge)) return { allowed: false, reason: "candidate_underage_or_unknown" };
+  if (!input.contactSafe) return { allowed: false, reason: "candidate_contact_fence_blocked" };
+  if (input.queuePaused) return { allowed: false, reason: "platform_queue_pressure_paused" };
+  if (input.priorInviteCount !== 0) return { allowed: false, reason: "candidate_already_invited" };
+  if (!input.valueDelivered) return { allowed: false, reason: "value_not_yet_delivered" };
+  if (!input.explicitPositiveSignal) return { allowed: false, reason: "missing_explicit_positive_signal" };
+  return { allowed: false, reason: "intake_quality_below_floor" };
 }

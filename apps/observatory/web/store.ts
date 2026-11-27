@@ -8,13 +8,14 @@ import {
   type Subject, switchMode, toggleHelp, togglePick as toggleNavPick,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { allowedByRole, scopedGrants } from "../../../packages/core/src/generated/staffPermissions.ts";
+import { ALL_SEED_VENUES, CITIES, CITY_IDS, findNeighborhood, getCity, listCities } from "../../../packages/core/src/cities.ts";
 import { CITY_TZ, fromLocal, localParts } from "../../../packages/core/src/time.ts";
-import { APP_IDS } from "../../../packages/core/src/types.ts";
-import { NEIGHBORHOOD, type Borough } from "@thenetwork/network/geo";
+import { APP_IDS, isCity, type City } from "../../../packages/core/src/types.ts";
+import { NEIGHBORHOOD, SF_NEIGHBORHOOD } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
-  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, OpportunityDetail, ParticipantStatus,
+  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, ObsVenue, OpportunityDetail, ParticipantStatus,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
@@ -31,7 +32,7 @@ export type MemberFilter = "all" | "active" | "watch" | "hold" | "minor" | "not_
 export type StateGroup = "review" | "open" | "met" | "closed";
 export type DrawerTab = "review" | "feed" | "pipeline" | "requests" | "engine" | "safety" | "metrics" | "lab" | "config" | "game";
 export const DRAWER_TABS: DrawerTab[] = ["review", "feed", "pipeline", "requests", "engine", "safety", "metrics", "lab", "config", "game"];
-export interface Filters { range: RangeKey; borough: "all" | Borough; members: MemberFilter; origin: string; stateGroup: "all" | StateGroup }
+export interface Filters { range: RangeKey; borough: string; members: MemberFilter; origin: string; stateGroup: "all" | StateGroup }
 export type FilterKey = keyof Filters;
 
 export type Opp = ObsOpportunity;
@@ -57,7 +58,92 @@ export interface UIState {
 }
 
 export const EDGE_TYPES = ["knows", "invited_by", "vouched_for", "introduced", "met", "enjoyed", "would_interact_again", "avoid", "blocked"] as const;
-export const BOROUGHS: Borough[] = ["Manhattan", "Brooklyn", "Queens", "Bronx", "Staten Island"];
+export const LAUNCH_CITY_IDS: readonly City[] = CITY_IDS;
+export function zonesForCity(city: City | "all" = "all"): string[] {
+  const specs = city === "all" ? listCities() : [getCity(city)].filter((x): x is NonNullable<typeof x> => !!x);
+  return [...new Set(specs.flatMap(s => s.zones.map(z => z.name)))];
+}
+export const BOROUGHS: string[] = zonesForCity("all");
+
+function legacyNycZone(area: string): string | undefined {
+  const n = NEIGHBORHOOD.get(area);
+  if (!n) return undefined;
+  if (n.borough === "Manhattan") return n.lat >= 40.735 ? "Midtown & Flatiron" : "Downtown & Villages";
+  if (n.borough === "Brooklyn") return n.lat >= 40.7 ? "North Brooklyn" : "Brownstone Brooklyn";
+  return n.borough;
+}
+
+function sfLegacyNeighborhood(area: string): { lat: number; lng: number } | undefined {
+  const exact = SF_NEIGHBORHOOD.get(area);
+  if (exact) return exact;
+  for (const part of area.split(" / ")) {
+    const hit = SF_NEIGHBORHOOD.get(part.trim());
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+export function zoneOfArea(area?: string, city?: City): string | undefined {
+  if (!area) return undefined;
+  if (city && isCity(city)) {
+    const spec = getCity(city);
+    const hit = findNeighborhood(city, area);
+    if (hit && spec) return spec.zones.find(z => z.id === hit.zone)?.name ?? hit.zone;
+    if (city === "nyc") return legacyNycZone(area);
+    return undefined;
+  }
+  for (const spec of listCities()) {
+    const hit = findNeighborhood(spec.id, area);
+    if (hit) return spec.zones.find(z => z.id === hit.zone)?.name ?? hit.zone;
+  }
+  return legacyNycZone(area);
+}
+
+export function areaLatLng(city?: City, area?: string): { lat: number; lng: number } {
+  const resolvedCity: City = city && isCity(city) ? city : "nyc";
+  if (area) {
+    if (resolvedCity === "nyc") {
+      const legacy = NEIGHBORHOOD.get(area);
+      if (legacy) return { lat: legacy.lat, lng: legacy.lng };
+      const hit = findNeighborhood("nyc", area);
+      if (hit) return { lat: hit.lat, lng: hit.lng };
+    } else if (resolvedCity === "sf") {
+      const legacySf = sfLegacyNeighborhood(area);
+      if (legacySf) return { lat: legacySf.lat, lng: legacySf.lng };
+      const hit = findNeighborhood("sf", area);
+      if (hit) return { lat: hit.lat, lng: hit.lng };
+    } else {
+      const hit = findNeighborhood(resolvedCity, area);
+      if (hit) return { lat: hit.lat, lng: hit.lng };
+    }
+    if (!city) {
+      for (const spec of listCities()) {
+        const anyHit = findNeighborhood(spec.id, area);
+        if (anyHit) return { lat: anyHit.lat, lng: anyHit.lng };
+      }
+      const legacy = NEIGHBORHOOD.get(area) ?? sfLegacyNeighborhood(area);
+      if (legacy) return { lat: legacy.lat, lng: legacy.lng };
+    }
+  }
+  const spec = getCity(resolvedCity) ?? CITIES.nyc;
+  return { lat: spec.center.lat, lng: spec.center.lng };
+}
+
+export function memberGeoPoint(memberId: string, city?: City, area?: string): { lat: number; lng: number } {
+  const c = areaLatLng(city, area);
+  let h = 2166136261;
+  for (let i = 0; i < memberId.length; i++) { h ^= memberId.charCodeAt(i); h = Math.imul(h, 16777619); }
+  const a = ((h >>> 0) % 3600) / 3600 * Math.PI * 2;
+  const r = 0.0025 + (((h >>> 12) % 1000) / 1000) * 0.006;
+  return { lat: c.lat + Math.sin(a) * r, lng: c.lng + Math.cos(a) * r * 1.3 };
+}
+
+export function isKnownNeighborhood(area: string): boolean {
+  if (NEIGHBORHOOD.has(area) || SF_NEIGHBORHOOD.has(area)) return true;
+  return listCities().some(spec => !!findNeighborhood(spec.id, area));
+}
+
+export const ALL_CITY_VENUES = ALL_SEED_VENUES;
 export const RANGES: [RangeKey, string][] = [["today", "Today"], ["7d", "7d"], ["30d", "30d"], ["all", "All"]];
 export const MEMBER_FILTERS: [MemberFilter, string][] = [["all", "All"], ["active", "Active"], ["watch", "Watch"], ["hold", "Hold"], ["minor", "Under 18"], ["not_joined", "Not joined"]];
 /** Origin labels. Mirrors ORIGIN_LABEL in src/projector.ts until src/types.ts exports one shared map. */
@@ -95,10 +181,13 @@ import { DAY, HOUR } from "../../../packages/core/src/clock.ts";
 export { DAY, HOUR };
 export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
 
-/** Start of the NYC calendar day that contains t, using the offset at midnight rather than at t. */
-export function nycDayStart(t: number): number {
-  const { year, month, day } = localParts(t, CITY_TZ.nyc);
-  return fromLocal(year, month, day, 0, CITY_TZ.nyc);
+export function cityDayStart(t: number, city: City = "nyc"): number {
+  const tz = getCity(city)?.tz ?? CITY_TZ[city] ?? CITY_TZ.nyc;
+  const { year, month, day } = localParts(t, tz);
+  return fromLocal(year, month, day, 0, tz);
+}
+export function nycDayStart(t: number, city: City = "nyc"): number {
+  return cityDayStart(t, city);
 }
 const NAV_TAB: Record<DrawerTab, NavTab> = {
   review: "ReviewTab", feed: "FeedTab", pipeline: "PipelineTab", requests: "RequestsTab", engine: "EngineTab",
@@ -230,6 +319,8 @@ class ObsStore {
   truth?: Record<string, MemberTruth>;
   network?: NetworkInfo;
   requests: ObsRequest[] = [];
+  venuesList: ObsVenue[] = [];
+  selectedCity: City | "all" = "all";
   /** The signed-in staff member (GET /api/me). Undefined until it answers. */
   me?: Me;
   /** This viewer's active PII reveals (wall-clock expiry). */
@@ -397,6 +488,7 @@ class ObsStore {
       });
       if (next === this.sync) throw new Error("Invalid state for the selected view");
       this.loadReveals();
+      void this.loadVenues(generation);
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
       this.sync = next;
@@ -467,7 +559,7 @@ class ObsStore {
     if (!f) return true;
     if (f.kind === "member") return this.members.has(f.id);
     if (f.kind === "opportunity") return this.opps.has(f.id);
-    return NEIGHBORHOOD.has(f.id) || [...this.members.values()].some(m => m.area === f.id);
+    return isKnownNeighborhood(f.id) || [...this.members.values()].some(m => m.area === f.id);
   }
 
   private applyDelta(d: ObsDelta) {
@@ -648,6 +740,39 @@ class ObsStore {
   runDiff(a: string, b: string) { return this.fetch<RunDiff>(`/api/runs/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`); }
   lab() { return this.fetch<{ enabled: boolean; running: number; runs: LabRun[] }>("/api/lab"); }
   appsHealth() { return this.fetch<{ mode: Mode; apps: AppHealth[] }>("/api/apps/health"); }
+  venues(city?: City) { return this.fetch<{ city: string; venues: ObsVenue[] }>(city ? `/api/venues?city=${encodeURIComponent(city)}` : "/api/venues"); }
+  private async loadVenues(generation: number) {
+    const v = await this.venues();
+    if (generation !== this.sync.generation) return;
+    if (v.data?.venues) { this.venuesList = v.data.venues; this.notify(); }
+  }
+  setCity(city: City | "all") {
+    this.selectedCity = city;
+    if (city !== "all" && this.ui.filters.borough !== "all" && !zonesForCity(city).includes(this.ui.filters.borough)) {
+      this.setFilters({ borough: "all" });
+      return;
+    }
+    this.notify();
+  }
+  activeCity(): City {
+    if (this.selectedCity !== "all") return this.selectedCity;
+    const counts = new Map<City, number>();
+    for (const m of this.members.values()) if (isCity(m.city)) counts.set(m.city, (counts.get(m.city) ?? 0) + 1);
+    let best: City = "nyc", bestN = 0;
+    for (const [c, n] of counts) if (n > bestN) { best = c; bestN = n; }
+    return best;
+  }
+  activeTz(): string {
+    const c = this.activeCity();
+    return getCity(c)?.tz ?? CITY_TZ[c] ?? CITY_TZ.nyc;
+  }
+  zones(): string[] {
+    if (this.selectedCity !== "all") return zonesForCity(this.selectedCity);
+    const present = new Set<City>();
+    for (const m of this.members.values()) if (isCity(m.city)) present.add(m.city);
+    if (present.size === 1) return zonesForCity([...present][0]!);
+    return BOROUGHS;
+  }
   findPerson(memberId: string, app = this.app) { return this.fetch<{ personId: string }>(`/api/person/lookup?app=${encodeURIComponent(app)}&member=${encodeURIComponent(memberId)}`); }
   person(id: string) { return this.fetch<PersonSummary>(`/api/person/${encodeURIComponent(id)}`); }
   openPersonApp(id: string, app: string, reason: string) { return this.fetch<PersonAppPanel>(`/api/person/${encodeURIComponent(id)}/open`, { app, reason }); }
@@ -957,14 +1082,18 @@ class ObsStore {
   }
 
   now() { return this.clock?.now ?? 0; }
-  borough(area?: string): Borough | undefined { return area ? NEIGHBORHOOD.get(area)?.borough : undefined; }
+  borough(area?: string, city?: City): string | undefined { return zoneOfArea(area, city); }
   rangeStart(): number {
     const now = this.now(), r = this.ui.filters.range;
-    return r === "today" ? nycDayStart(now) : r === "7d" ? now - 7 * DAY : r === "30d" ? now - 30 * DAY : -Infinity;
+    return r === "today" ? cityDayStart(now, this.activeCity()) : r === "7d" ? now - 7 * DAY : r === "30d" ? now - 30 * DAY : -Infinity;
   }
   inRange(t: number) { return t >= this.rangeStart(); }
   rangeLabel() { return RANGES.find(r => r[0] === this.ui.filters.range)?.[1] ?? ""; }
-  inBorough(m: ObsMember) { const b = this.ui.filters.borough; return b === "all" || this.borough(m.area) === b; }
+  inBorough(m: ObsMember) {
+    if (this.selectedCity !== "all" && m.city && m.city !== this.selectedCity) return false;
+    const b = this.ui.filters.borough;
+    return b === "all" || this.borough(m.area, m.city) === b;
+  }
   matchMemberFilter(m: ObsMember) {
     switch (this.ui.filters.members) {
       case "active": return isMemberActive(m);
@@ -985,6 +1114,7 @@ class ObsStore {
     }
     if (!skip.origin && f.origin !== "all" && originOf(o) !== f.origin) return false;
     if (!skip.stateGroup && f.stateGroup !== "all" && stateGroupOf(o.state) !== f.stateGroup) return false;
+    if (this.selectedCity !== "all" && o.city && o.city !== this.selectedCity) return false;
     if ((!skip.borough && f.borough !== "all") || (!skip.members && f.members !== "all")) {
       const ms = o.participants.map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
       if (!skip.borough && f.borough !== "all" && !ms.some(m => this.inBorough(m))) return false;
@@ -995,9 +1125,9 @@ class ObsStore {
   matchFeed(x: ObsFeedItem) {
     const f = this.ui.filters;
     if (!this.inRange(x.t)) return false;
-    if (f.borough !== "all" || f.members !== "all") {
+    if (this.selectedCity !== "all" || f.borough !== "all" || f.members !== "all") {
       const ms = (x.members ?? []).map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
-      if (f.borough !== "all" && !ms.some(m => this.inBorough(m))) return false;
+      if ((this.selectedCity !== "all" || f.borough !== "all") && !ms.some(m => this.inBorough(m))) return false;
       if (f.members !== "all" && !ms.some(m => this.matchMemberFilter(m))) return false;
     }
     if (f.origin !== "all") {

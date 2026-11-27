@@ -1,8 +1,17 @@
 // Every member-facing message the Network sends, in one reviewed place (PRD 12.4 voice: observant,
 // concise, non-needy; one question at a time; an easy no; never another member's contact details
 // or private facts; opt-out language on first contact). Probes never name anyone.
-import type { Category } from "@thenetwork/core";
+import {
+  cityTimezone, cityTzLabel, clampSms, cleanPhrase, formatAnchorOrQuorumCancel, formatBackupVenuePivot, formatCrowdExpectation,
+  formatTopOneVenueSuggestion, SMS_MAX_CHARS, styleViolations, type Category, type CityId, type StyleViolationOptions,
+  type TopOneVenueSuggestionOptions,
+} from "@thenetwork/core";
 import type { MinorNotice } from "../../core/src/generated/textEnrollment.ts";
+
+export {
+  SMS_MAX_CHARS, styleViolations, formatTopOneVenueSuggestion, formatCrowdExpectation, formatBackupVenuePivot,
+  formatAnchorOrQuorumCancel, type StyleViolationOptions, type TopOneVenueSuggestionOptions,
+};
 
 const ACTIVITY: Record<Category, string> = {
   social: "meeting someone new for a coffee or a walk",
@@ -41,12 +50,24 @@ const minorScope = (notice: MinorNotice, singlePlayer: string): string => ({
 const REPORT_SAFETY_HINT = " If you're ever in danger, call 911 first.";
 
 /** Every member-facing text for one app. No text asks a member to reply "cancel" (a bare CANCEL is STOP). */
-export function copyFor(b: CopyBrand) {
+export function copyFor(b: CopyBrand, defaultCity?: CityId) {
+  const tzLabel = (city?: CityId) => cityTzLabel(city ?? defaultCity);
+  const cancelDateLabel = (city?: CityId) => (city ?? defaultCity) ? cityTzLabel(city ?? defaultCity) : "local";
+  const resolveTzLabel = (cityOrLabel?: CityId | string) => {
+    if (!cityOrLabel) return defaultCity ? cityTzLabel(defaultCity) : "local time";
+    if (cityTimezone(cityOrLabel)) return cityTzLabel(cityOrLabel as CityId);
+    return cityOrLabel;
+  };
   return {
   welcome: (first: string, inviter?: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI)${inviter ? `; ${inviter} invited you` : ""}. Now and then I'll suggest a person or plan that seems worth your time, and you can always ask me for something. Reply STOP anytime to opt out. To start: what would you like more of in your life right now?`,
-  welcomeMinor: (first: string, notice: MinorNotice) =>
-    `Hi ${first}, I'm ${b.agent} (an AI). ${minorScope(notice, MINOR_SINGLE_PLAYER_WELCOME)} Reply STOP anytime to opt out. What are you into?`,
+  welcomeMinor: (first: string, notice: MinorNotice) => {
+    const scope = minorScope(notice, MINOR_SINGLE_PLAYER_WELCOME);
+    if (notice === "MinorSlopNotice" || notice === "MinorPeonNotice") {
+      return `Hi ${first}, I'm ${b.agent} (an AI) — ${scope} If you want local all-ages ideas, tell me a hobby or neighborhood, or reply STOP anytime to opt out.`;
+    }
+    return `Hi ${first}, I'm ${b.agent} (an AI). ${scope} Reply STOP anytime to opt out. What are you into?`;
+  },
   /** First contact when the member record has no valid age (6.3): ask once, before anything else. */
   welcomeAskAge: (first: string) =>
     `Hi ${first}, I'm ${b.agent} (an AI). Reply STOP anytime to opt out. One thing before we start: what's your birthday (month, day and year)?`,
@@ -68,7 +89,7 @@ export function copyFor(b: CopyBrand) {
   plansBuddyProbe: (venue: string, when: string, area: string | undefined, times?: string) =>
     `Quick check, no names yet: someone ${area ? `near ${area}` : "nearby"} is also looking for plans${times ? "" : ` ${when}`}. Would you be up for going to ${venue} together?${tail(times)}`,
   /** The one re-engagement after 30 days of silence (F28). */
-  reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these?",
+  reengage: "It's been a while, so I've kept quiet. Something came up that looks like a real fit for you. Want me to keep sending these, or reply PAUSE anytime?",
   requestConfirm: (why: string, when: string, times?: string) => times
     ? `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it? I could do ${times}; tell me which works, or no.`
     : `Closest match I found so far: someone nearby, and ${why}. Want me to check if they're up for it ${when}?`,
@@ -93,17 +114,34 @@ export function copyFor(b: CopyBrand) {
   booked: (others: string[], why: string, venue: string, when: string, offer = false) =>
     `${others.length === 1 ? `You're both in: meet ${others[0]}` : `You're all in: ${others.join(", ")}`}, ${when} at ${venue}. ${why}. Reply if your plans change.${offer ? ` ${OFFER}` : ""}`,
   bookedThanks: "Great, see you there.",
-  bookingStartToCancel: "Which meeting should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
-  whichBookingToCancel: "I found more than one upcoming meeting. Which one should I cancel? Use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its New York date and 24-hour time.",
+  bookingStartToCancel: `Which meeting should I cancel? Tell me the day and time, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+  bookingStartToCancelFor: (city?: CityId) =>
+    `Which meeting should I cancel? Tell me the day and time, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
+  whichBookingToCancel: `I found more than one upcoming meeting. Which one should I cancel? Tell me which one, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${cancelDateLabel()} date and 24-hour time.`,
+  whichBookingToCancelFor: (city?: CityId) =>
+    `I found more than one upcoming meeting. Which one should I cancel? Tell me which one, or use “Please cancel my meeting on YYYY-MM-DD at HH:MM” with its ${tzLabel(city)} date and 24-hour time.`,
   noBookingToCancel: "I couldn't find a matching upcoming meeting.",
   whichBookingToReschedule: "More than one booking has that start. Which meeting did you mean?",
-  rescheduleFormat: "Use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed New York starts in 24-hour time.",
+  rescheduleFormat: `Tell me which day and time you'd like to move it to (for example, “reschedule to Thursday 7pm”), or use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${cancelDateLabel()} starts in 24-hour time.`,
+  rescheduleFormatFor: (city?: CityId) =>
+    `Tell me which day and time you'd like to move it to (for example, “reschedule to Thursday 7pm”), or use RESCHEDULE YYYY-MM-DD HH:MM TO YYYY-MM-DD HH:MM with the old and proposed ${tzLabel(city)} starts in 24-hour time.`,
   rescheduleUnavailable: "I couldn't apply that time change.",
   reschedulePending: "The time change needs everyone's acceptance.",
   rescheduleDeclined: "Thanks. I closed that time change request.",
-  rescheduleOffer: (original: string, proposed: string, ref: string) =>
-    `Could your meeting move from ${original} to ${proposed}, New York time? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref}.`,
-  rescheduleUpdated: (proposed: string) => `Everyone agreed. Your meeting is now ${proposed}, New York time, at the same place.`,
+  rescheduleRequested: (proposed: string, cityOrTzLabel?: CityId | string) =>
+    `Got it — I've asked the others about moving to ${proposed} (${resolveTzLabel(cityOrTzLabel)}). Your original booking stays unless everyone agrees.`,
+  rescheduleOffer: (original: string, proposed: string, ref: string, cityOrTzLabel?: CityId | string) =>
+    `Could your meeting move from ${original} to ${proposed} (${resolveTzLabel(cityOrTzLabel)})? The original booking stays until everyone agrees. Reply RESCHEDULE YES ${ref} or RESCHEDULE NO ${ref} (or just YES / NO if this is your only open change).`,
+  rescheduleUpdated: (proposed: string, cityOrTzLabel?: CityId | string) =>
+    `Everyone agreed. Your meeting is now ${proposed} (${resolveTzLabel(cityOrTzLabel)}), at the same place.`,
+  arrivalRelayed: (summary?: string) => summary ? `Got it — I've updated them (${summary}).` : "Got it — I've passed that along.",
+  arrivalPreBriefNoted: (summary?: string) => summary
+    ? `Got it — noted (${summary}). I'll keep everyone posted as meetup time gets closer.`
+    : "Got it — noted. I'll keep everyone posted as meetup time gets closer.",
+  venueSwapProposed: (venue: string, area?: string) =>
+    `No problem — how about ${venue}${area ? ` in ${area}` : ""} instead? Still works for you?`,
+  confirmBeforeCommit: (when: string, venue: string) =>
+    `Quick check before I lock this in: are you 100% able to make ${when} at ${venue}? Reply YES to confirm.`,
   /** A probe reply that was neither a clear yes nor a clear no (a condition, a maybe): asked once more. */
   probeClarify: "Just to check: is that a yes or a no? Either is fine.",
   probeTimeClarify: "Which of the offered times work for you? Reply with the letters or the times.",
@@ -113,7 +151,7 @@ export function copyFor(b: CopyBrand) {
   /** Opt-in weekly check-in (founder decision 4d). */
   weeklyOptIn: "Done. Once a week I'll ask what your week looks like. Reply WEEKLY OFF anytime to stop.",
   weeklyOff: "Done, no more weekly check-ins.",
-  weeklyCheckin: "What's your week like? A couple of evenings or times you're free is plenty.",
+  weeklyCheckin: "What's your week like? A couple of evenings or times you're free is plenty, or reply PAUSE anytime.",
   /** A request in a category this app does not cover (slop is dating only, peon is work only). */
   requestOutOfScope: "That's not something I can help with here, so I won't look for it. Ask me anytime about something else.",
   /** A member on watch asked for an introduction: nothing starts until a person has looked. */
@@ -139,7 +177,7 @@ export function copyFor(b: CopyBrand) {
   dropNotice: (_first: string, keep: boolean) => keep
     ? `Quick update: one person can't make it now, sorry. The rest of you are still on.`
     : `Quick update: this one is off now, sorry about that. I'll look for another time.`,
-  feedbackAsk: (others: string) => `How did it go with ${others}?`,
+  feedbackAsk: (others: string) => `How did it go with ${others} — would you want to see them again?`,
   feedbackThanks: "Thanks, that's really helpful.",
   growthAsk: `Glad that went well. If you know someone who'd enjoy ${b.name}, reply with their first name and I'll send you an invite link to pass on.`,
   /** A member names a friend to invite where no invite link can be sent: nothing is promised. */
@@ -218,37 +256,190 @@ export function copyFor(b: CopyBrand) {
   /** "leave <app>": this app only; the member's data in it is deleted. */
   leftApp: `Done. You've left ${b.name} and I deleted what you shared here. Other apps you use with this number are not affected.`,
   notInApp: `You're not in ${b.name}, so there is nothing to leave and nothing changed. Other apps you use with this number are not affected.`,
+  topOneVenueSuggestion: (venue: string, area: string, when: string, opts?: TopOneVenueSuggestionOptions) =>
+    formatTopOneVenueSuggestion(venue, area, when, opts),
+  crowdExpectation: (mode: "network_curated" | "external_open", opts?: { interest?: string; platforms?: string; sparseAnchor?: boolean; cityName?: string }) =>
+    formatCrowdExpectation(mode, { ...opts, brandName: b.name }),
+  backupVenuePivot: (primaryVenue: string, backupVenue: string, reason: "full" | "closed", opts?: { address?: string; landmark?: string }) =>
+    formatBackupVenuePivot(primaryVenue, backupVenue, reason, opts),
+  anchorOrQuorumCancel: (reason: "anchor_drop" | "low_quorum" | "co_anchor_promoted", opts?: { activity?: string; when?: string; venue?: string }) =>
+    formatAnchorOrQuorumCancel(reason, opts),
+  silentPartnerVenueSwap: (when: string, venue: string, opts?: { area?: string; note?: string }) =>
+    formatSilentPartnerVenueSwap(when, venue, opts),
+  preArrivalBrief: (when: string, venue: string, opts?: { partner?: string; address?: string; landmark?: string; counterTab?: boolean }) =>
+    formatPreArrivalBrief(when, venue, opts),
+  partialGroupTwoPersonPivot: (when: string, venue: string, opts?: { activity?: string }) =>
+    formatPartialGroupTwoPersonPivot(when, venue, opts),
+  mediumDensityChoice: (activity: string, when: string, opts?: { venue?: string; networkCount?: number; platforms?: string }) =>
+    formatMediumDensityChoice(activity, when, opts),
+  weatherPivot: (activity: string, opts?: { originalVenue?: string; indoorBackup?: string; address?: string; when?: string }) =>
+    formatWeatherPivot(activity, opts),
+  externalFlakeRecovery: (opts?: { activity?: string; venue?: string }) =>
+    formatExternalFlakeRecovery(opts),
+  crossDomainBridge: (target: "dating" | "work" | "friends") =>
+    formatCrossDomainBridge(target, { brandName: b.name }),
   };
 }
 export type Copy = ReturnType<typeof copyFor>;
 /** The Network's copy (ntwrk). Other apps: copyFor(brandOf(app)). */
 export const copy: Copy = copyFor(NTWRK_BRAND);
 
+export function formatSilentPartnerVenueSwap(
+  when: string,
+  venue: string,
+  opts: { area?: string; note?: string } = {}
+): string {
+  const w = cleanPhrase(when);
+  const v = cleanPhrase(venue);
+  const details = [opts.area ? cleanPhrase(opts.area) : "", opts.note ? cleanPhrase(opts.note) : ""].filter(Boolean);
+  const detailBit = details.length ? ` (${details.join(", ")})` : "";
+  return clampSms(
+    `Quick tweak for ${w}: let's do ${v}${detailBit} instead. Still works for you?`,
+    `Quick tweak for ${w}: let's do ${v} instead. Still works for you?`
+  );
+}
+
+export function formatPreArrivalBrief(
+  when: string,
+  venue: string,
+  opts: { partner?: string; address?: string; landmark?: string; counterTab?: boolean } = {}
+): string {
+  const w = cleanPhrase(when);
+  const v = cleanPhrase(venue);
+  const who = opts.partner ? ` with ${cleanPhrase(opts.partner)}` : "";
+  const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
+  const landmark = opts.landmark ? ` Easy spot to meet: ${cleanPhrase(opts.landmark)}.` : "";
+  const tab = opts.counterTab !== false ? " Everyone handles their own tab at the counter." : "";
+  return clampSms(
+    `Heads up for ${w}${who} at ${v}${addr}.${landmark}${tab} Text me here if you're running late, or anytime if anything feels off.`,
+    `Heads up for ${w}${who} at ${v}.${landmark} Text me if you're running late, or anytime if anything feels off.`
+  );
+}
+
+export function formatPartialGroupTwoPersonPivot(
+  when: string,
+  venue: string,
+  opts: { activity?: string } = {}
+): string {
+  const w = cleanPhrase(when);
+  const v = cleanPhrase(venue);
+  const act = opts.activity ? ` for ${cleanPhrase(opts.activity)}` : "";
+  return clampSms(
+    `Quick update: a couple of people can't make ${w}${act}, so it would just be two of you at ${v}. Want to keep it as a 1:1, or should I find another time for a group?`,
+    `Quick update: it's down to two of you for ${w} at ${v}. Want to keep it as a 1:1, or reschedule for a group?`
+  );
+}
+
+export function formatMediumDensityChoice(
+  activity: string,
+  when: string,
+  opts: { venue?: string; networkCount?: number; platforms?: string } = {}
+): string {
+  const act = cleanPhrase(activity);
+  const w = cleanPhrase(when);
+  const count = opts.networkCount ?? 3;
+  const place = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
+  const platforms = cleanPhrase(opts.platforms || "Luma/Meetup");
+  return clampSms(
+    `For ${act} ${w}${place}, we have ${count} vetted members ready. Want to keep it as a cozy ${count}-person hangout, or open a few screened ${platforms} spots?`,
+    `We have ${count} vetted members for ${act} ${w}. Keep it small, or open a few screened local spots?`
+  );
+}
+
+export function formatWeatherPivot(
+  activity: string,
+  opts: { originalVenue?: string; indoorBackup?: string; address?: string; when?: string } = {}
+): string {
+  const act = cleanPhrase(activity);
+  const when = opts.when ? ` ${cleanPhrase(opts.when)}` : "";
+  if (opts.indoorBackup) {
+    const orig = opts.originalVenue ? ` for ${cleanPhrase(opts.originalVenue)}` : "";
+    const backup = cleanPhrase(opts.indoorBackup);
+    const addr = opts.address ? ` (${cleanPhrase(opts.address)})` : "";
+    return clampSms(
+      `Weather looks rough${orig}, so we're moving ${act}${when} indoors to ${backup}${addr} at the same time. Still in?`,
+      `Weather looks rough, so we're moving ${act} indoors to ${backup}. Still in?`
+    );
+  }
+  return clampSms(
+    `Rain is rolling in for ${act}${when}, so let's postpone today's session rather than getting soaked. Want me to look for next weekend?`,
+    `Rain is rolling in for ${act}, so let's postpone today. Want me to look for next weekend?`
+  );
+}
+
+export function formatExternalFlakeRecovery(opts: { activity?: string; venue?: string } = {}): string {
+  const act = opts.activity ? ` for ${cleanPhrase(opts.activity)}` : "";
+  const at = opts.venue ? ` at ${cleanPhrase(opts.venue)}` : "";
+  return clampSms(
+    `Ugh, looks like tonight's external RSVPs${act}${at} flaked — really sorry about that. Feel free to grab a snack or head out whenever you want; I'll prioritize a curated in-network match for you next.`,
+    "Looks like tonight's external RSVPs flaked — really sorry about that. Head out whenever you want; I'll prioritize a curated match next."
+  );
+}
+
+export function formatCrossDomainBridge(
+  target: "dating" | "work" | "friends",
+  opts: { brandName?: string } = {}
+): string {
+  const brand = cleanPhrase(opts.brandName || "the Network");
+  if (target === "dating") {
+    return clampSms(
+      `Glad the friend hang went well. I keep friend meetups strictly platonic, and nothing carries over unless you ask. Want me to opt you into dating intros on ${brand} separately?`,
+      "I keep friend hangs strictly platonic. Want me to opt you into separate dating intros?"
+    );
+  }
+  if (target === "work") {
+    return clampSms(
+      `Glad that went well. Work intros stay completely separate from social and dating here, with nothing shared across lanes. Want me to opt you into work intros on ${brand}?`,
+      "Work intros stay completely separate here. Want me to opt you into work intros?"
+    );
+  }
+  return clampSms(
+    `Happy to help you expand your friend circle too. Friend intros stay separate and strictly platonic on ${brand}. Want me to look for a low-key friend hangout?`,
+    "Friend intros stay separate and platonic. Want me to look for a low-key friend hangout?"
+  );
+}
+
 const OFFER = "For future plans, reply CALENDAR to allow free/busy from an authorized calendar, or WEEKLY for a short weekly check-in.";
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 
-/** "Thursday 7pm"-style phrasing in New York time. */
-export function whenPhrase(t: number): string {
-  return new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "long", hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "");
+const CITY_TZ_LABEL: Record<string, string> = {
+  nyc: "New York time",
+  sf: "San Francisco time",
+  la: "Los Angeles time",
+  chicago: "Chicago time",
+  miami: "Miami time",
+  "America/New_York": "New York time",
+  "America/Los_Angeles": "Pacific time",
+  "America/Chicago": "Central time",
+};
+
+export function timezoneLabel(cityOrTz?: CityId | string): string {
+  if (!cityOrTz) return "local time";
+  const direct = CITY_TZ_LABEL[cityOrTz];
+  if (direct) return direct;
+  const tz = cityTimezone(cityOrTz);
+  if (tz && CITY_TZ_LABEL[tz]) return CITY_TZ_LABEL[tz]!;
+  return "local time";
 }
 
-/** Copy style rules as code (PRD 12.4); the tests run every template through them. */
-export function styleViolations(text: string, opts: { firstContact?: boolean } = {}): string[] {
-  const v: string[] = [];
-  if (text.length > 360) v.push("too_long");
-  if ((text.match(/\?/g) ?? []).length > 1) v.push("more_than_one_question");
-  if (/\+?\d{3}[-.\s]\d{3}[-.\s]\d{4}|@\w+\.\w+/.test(text)) v.push("contact_details");
-  if (/!{2,}|you won't believe|act now|last chance/i.test(text)) v.push("pushy");
-  if (opts.firstContact && !/STOP/.test(text)) v.push("missing_opt_out");
-  // A bare CANCEL is a STOP word (platform consent.ts): no text may ask a member to reply "cancel" (platform plan 4.3).
-  if (/\b(?:reply|text|say|send|type)\s+["'“]?cancel\b/i.test(text)) v.push("asks_cancel");
-  // Built phrases that read wrong: a skill label after "they" ("they works", "they ha a truck",
-  // "they say they ML engineer") and a verb after "asked me for" ("asked me for meet people").
-  if (/\bthey (?:say they )?(?:plays|has|does|works|teaches|gives|cooks|throws|shoots|sings|edits|loves|ha|doe|[A-Z]{2,}|[a-z]+ (?:engineer|designer|player))\b|\b(?:asked me for|someone for) (?:meet|make|find|get|play|join|go|try|start|be|learn)\b/.test(text)) v.push("grammar");
-  // A raw taxonomy tag ("climate_tech") never reaches a member.
-  if (/\b[a-z]+_[a-z_]+\b/.test(text)) v.push("raw_tag");
-  return v;
+const WHEN_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function whenFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = WHEN_FORMATTERS.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", hour: "numeric", minute: "2-digit" });
+    WHEN_FORMATTERS.set(tz, fmt);
+  }
+  return fmt;
+}
+
+/** "Thursday 7pm"-style phrasing in a city's timezone (or explicit IANA timezone; defaults to America/New_York). */
+export function whenPhrase(t: number, cityOrTz?: CityId): string {
+  const timeZone = cityOrTz
+    ? (cityTimezone(cityOrTz) ?? (cityOrTz === "UTC" || cityOrTz.includes("/") ? cityOrTz : "America/New_York"))
+    : "America/New_York";
+  return whenFormatter(timeZone).format(t).replace(":00", "");
 }
 
 /**

@@ -14,7 +14,7 @@
 //     standing-gap penalty. A pair is judged by its worse side.
 // Seeded and deterministic (Rng forks only). Work is linear in members: no step compares all pairs.
 import type { AppId, Category, City, Facet, Intent, Member, MemberId, Presence } from "@thenetwork/core";
-import { DAY, Rng, canBeMatched, hash32 } from "@thenetwork/core";
+import { CITY_IDS, DAY, Rng, canBeMatched, getCity, hash32 } from "@thenetwork/core";
 import type { EngineInput } from "@thenetwork/engine/src/types.ts";
 import { NEIGHBORHOODS as FRIENDS_NEIGHBORHOODS } from "@thenetwork/engine/src/packs/friends/geo.ts";
 import { FRIENDS_SLOTS, FT, VERIFY_PASS } from "@thenetwork/engine/src/packs/friends/info.ts";
@@ -248,7 +248,21 @@ export function statedIdentityGroup(lane: PlantedLane, d: DatingStatement | unde
 }
 const DATE_ACTIVITIES = ["coffee", "drinks", "walk", "museum", "dinner", "live_music", "comedy", "climbing", "cooking_class", "hike"];
 const DATE_PLANS = [...DATE_ACTIVITIES.map(a => `activity:${a}`), ...DATE_SLOTS.map(s => `free:${s}`)];
-const DATE_ZIPS = { nyc: ZIPS.filter(z => z.market === "nyc"), sf: ZIPS.filter(z => z.market === "sf") };
+const marketAreas = (city: City): readonly string[] => {
+  const fromVocab = (NEIGHBORHOODS as Partial<Record<City, readonly string[]>>)[city];
+  if (fromVocab && fromVocab.length > 0) return fromVocab;
+  const fromCore = getCity(city)?.neighborhoods.map(n => n.name);
+  return fromCore && fromCore.length > 0 ? fromCore : ["Downtown"];
+};
+
+const DATE_ZIPS: Record<City, { zip: string; market: City }[]> = Object.fromEntries(
+  CITY_IDS.map(city => {
+    const found = ZIPS.filter(z => z.market === city);
+    if (found.length > 0) return [city, found];
+    const spec = getCity(city);
+    return [city, [{ zip: spec?.anchorZip ?? "10003", market: city }]];
+  })
+) as Record<City, { zip: string; market: City }[]>;
 const LANE_OBJECTIVE: Record<PlantedLane, Record<PlantedSide, string>> = {
   Friend: { Peer: "meet a few new friends who share my interests", Offering: "", Seeking: "" },
   Date: { Peer: "meet someone to date", Offering: "", Seeking: "" },
@@ -416,7 +430,7 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
   });
   const marketOf = new Map(seats.map(s => [s.id, s.market]));
   const ageOf = new Map(seats.map(s => [s.id, s.age]));
-  const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(NEIGHBORHOODS[marketOf.get(ids[0]!)!]));
+  const circleArea = latent.circles.map((ids, c) => root.fork("area", c).pick(marketAreas(marketOf.get(ids[0]!)!)));
 
   const topicDraw = tagDraw(topics.length, world === "zipf");
   const circleTopics = new Map<number, readonly number[]>();
@@ -482,8 +496,9 @@ export function plantedEngineInput(o: PlantedWorldOptions): { input: EngineInput
     const offers = (app === "slop" ? planIdx : offerIdx).map(k => ({ skill: skills[k]!, level }));
     const seeks = (app === "slop" ? planIdx : seekIdx).map(k => ({ skill: skills[k]!, level }));
 
-    const area = flat ? NEIGHBORHOODS[seat.market][0]!
-      : world !== "graded" && mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(NEIGHBORHOODS[seat.market]);
+    const areas = marketAreas(seat.market);
+    const area = flat ? areas[0]!
+      : world !== "graded" && mark.circle >= 0 && r.bool(0.7) ? circleArea[mark.circle]! : r.pick(areas);
     const joinedAt = now - (newcomer ? r.int(0, 13) : r.int(14, 400)) * DAY;
     const categories = [...new Set(lanes.map(l => LANE_CATEGORY[l]))].filter(c => adult || c !== "romance");
     // Some cohorts are actively seeking an introduction this week. Keep the other cohorts on normal participation.

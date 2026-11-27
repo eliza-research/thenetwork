@@ -3,9 +3,9 @@
 // (snapshot.ts) shows only the stated side, filtered by profile richness, plus the verification
 // results and safety cues the Network itself observed. See docs/results/2026-10-08-friends-pack.md.
 import { requireSimulationCount } from "../../input.ts";
-import type { MemberId } from "@thenetwork/core";
+import type { City, MemberId } from "@thenetwork/core";
 import { ACTIVITIES, activityAllAges, type ActivityType } from "@thenetwork/engine/src/packs/network/activities.ts";
-import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
+import { FRIENDS_EXCLUDED_ACTIVITIES, FRIENDS_SLOTS, NEIGHBORHOODS, cityNeighborhoods, hoodForCity, type FriendsSlot, type Neighborhood } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { Rng, canBeMatched, clamp01, earliestDayKeyOf, fromLocal, hash32 } from "@thenetwork/core";
 import { birthKeyForAgeOn } from "../../generator.ts";
 import { FIRST_NAMES, LAST_NAMES } from "../../taxonomy.ts";
@@ -32,6 +32,8 @@ export type GroupPref = "one_to_one" | "group" | "either";
 export type AdversaryKind = "romance_seeker" | "mlm" | "bot" | "harasser" | "age_liar";
 export const ADVERSARY_KINDS: readonly AdversaryKind[] = ["romance_seeker", "mlm", "bot", "harasser", "age_liar"];
 export type VerifyResult = "passed" | "failed" | "pending";
+export type FriendsSpendTier = "free" | "low" | "moderate" | "high" | "unconstrained";
+export type FriendsHumor = "dry_ironic" | "absurdist" | "warm_earnest" | "nerdy_wordplay" | "roast_banter";
 
 export interface FriendsHidden {
   trueAge: number;
@@ -67,6 +69,12 @@ export interface FriendsHidden {
   canary: string;
   /** Planted circle and standing (only with FriendsGenOptions.planted). */
   planted?: PlantedMark;
+  economicCapital?: number;
+  spendComfortTier?: FriendsSpendTier;
+  humorRegister?: FriendsHumor;
+  depthPreference?: number;
+  extractionPropensity?: number;
+  dunbarOpenSlots?: { inner5: boolean; sympathy15: boolean; affinity50: boolean };
 }
 
 export interface FriendsStated {
@@ -99,10 +107,11 @@ function drawFriendGender(seed: number | string, i: number, statedOpenness: bool
   return { ...(stated ? { gender } : {}), ...(openGender ? { openGender } : {}) };
 }
 
-export interface FriendsPersona { id: MemberId; name: string; hidden: FriendsHidden; stated: FriendsStated }
+export interface FriendsPersona { id: MemberId; name: string; city?: City; hidden: FriendsHidden; stated: FriendsStated }
 
 export interface FriendsGenOptions {
   seed: number | string;
+  city?: City;
   /** Personas (default 400). */
   n?: number;
   /** Share of 13-17 year olds who join (default 0.04); share of them who claim 18+ (default 0.4). */
@@ -156,8 +165,11 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
   const poserShare = o.adultPoserShare ?? FRIENDS_DEFAULTS.adultPoserShare;
   const adv = { ...FRIENDS_DEFAULTS.adversaryShares, ...(o.adversaryShares ?? {}) };
   const mix = { ...FRIENDS_DEFAULTS.richnessMix, ...(o.richnessMix ?? {}) };
+  const city: City = o.city ?? "nyc";
+  const cityHoods = city === "nyc" ? NEIGHBORHOODS : cityNeighborhoods(city);
+  const workHubs = city === "nyc" ? WORK_HUBS : cityHoods.slice(0, Math.min(4, cityHoods.length)).map(h => h.id);
   const root = new Rng(hash32("friends-personas", o.seed));
-  const hoods = NEIGHBORHOODS.map(h => [h, h.weight] as const);
+  const hoods = cityHoods.map(h => [h, h.weight] as const);
   // Two passes: the planted layer needs every member's eligibility first. Each member draws from
   // its own fork in the same order, so the personas are the same either way.
   const drafts = [...Array(n).keys()].map(i => {
@@ -180,7 +192,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
   });
   const latent = o.planted
     ? plantLatent({ topicsPerCircle: 3, interestsPerMember: [2, 4], ...o.planted },
-      drafts.map(d => ({ id: d.id, market: "nyc", eligible: !d.isMinor && !d.adversary && !d.poser })), ACTIVITY_IDS, o.seed)
+      drafts.map(d => ({ id: d.id, market: city, eligible: !d.isMinor && !d.adversary && !d.poser })), ACTIVITY_IDS, o.seed)
     : undefined;
   const out: FriendsPersona[] = [];
   for (const { i, r, br, id, name, isMinor, trueAge, trueBirthKey, poser, adversary } of drafts) {
@@ -191,8 +203,8 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const lifeStage = isMinor ? "student" : lifeStageFor(trueAge, r);
     const homeH: Neighborhood = r.weighted(hoods);
     const often: string[] = [];
-    if (lifeStage !== "retired" && r.bool(0.55)) often.push(r.pick(WORK_HUBS));
-    if (r.bool(0.35)) { const same = NEIGHBORHOODS.filter(x => x.zone === homeH.zone && x.id !== homeH.id); if (same.length) often.push(r.pick(same).id); }
+    if (lifeStage !== "retired" && r.bool(0.55) && workHubs.length) often.push(r.pick(workHubs));
+    if (r.bool(0.35)) { const same = cityHoods.filter(x => x.zone === homeH.zone && x.id !== homeH.id); if (same.length) often.push(r.pick(same).id); }
     const oftenU = [...new Set(often.filter(x => x !== homeH.id))];
     // Activities: 2-3 favourite families lift every activity in them; loves = like >= 0.65 (2-6 of them).
     const pool = poolFor(claimedAge);
@@ -230,6 +242,31 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     // Adversaries: bots and promoters want reach; romance seekers and harassers look like anyone.
     if (adversary === "bot" || adversary === "mlm") { hidden.appetite = 0.95; hidden.replyProb = 0.97; }
     if (adversary === "romance_seeker") hidden.appetite = 0.9;
+    const fr = root.fork("friends-strata-v2", i);
+    if (isMinor) {
+      hidden.economicCapital = 0;
+      hidden.spendComfortTier = "free";
+      hidden.extractionPropensity = adversary ? 0.5 : 0.02;
+      hidden.dunbarOpenSlots = { inner5: false, sympathy15: false, affinity50: false };
+    } else {
+      const econBase = lifeStage === "student" ? 0.22 : lifeStage === "early_career" ? 0.42 : lifeStage === "established" ? 0.62 : 0.48;
+      const econ = clamp01(econBase + fr.normal(0, 0.22));
+      hidden.economicCapital = Math.round(econ * 1000) / 1000;
+      hidden.spendComfortTier = econ < 0.22 ? "free" : econ < 0.42 ? "low" : econ < 0.68 ? "moderate" : econ < 0.86 ? "high" : "unconstrained";
+      hidden.humorRegister = fr.weighted<FriendsHumor>([
+        ["dry_ironic", 0.24], ["warm_earnest", 0.28], ["nerdy_wordplay", 0.18], ["absurdist", 0.16], ["roast_banter", 0.14],
+      ]);
+      hidden.depthPreference = Math.round(clamp01(0.45 + 0.2 * (0.5 - energy) + fr.normal(0, 0.18)) * 1000) / 1000;
+      hidden.extractionPropensity = adversary === "mlm" || adversary === "bot" ? 0.92
+        : adversary === "romance_seeker" || adversary === "harasser" ? 0.76
+        : !adversary && hidden.honesty < 0.78 && fr.bool(0.30) ? fr.range(0.26, 0.42)
+        : fr.range(0.02, 0.16);
+      hidden.dunbarOpenSlots = {
+        inner5: newToCity || loneliness >= 0.45 || fr.bool(0.35),
+        sympathy15: newToCity || loneliness >= 0.28 || appetite >= 0.55,
+        affinity50: appetite >= 0.35 || energy >= 0.30,
+      };
+    }
     // Stated side: true loves (85% each), one aspirational activity (40%), noisy energy, free slots, tolerance.
     const sr = new Rng(hash32("friends-stated", o.seed, i));
     const stated = loves.filter(() => sr.bool(0.85));
@@ -241,7 +278,7 @@ export function generateFriendsPersonas(o: FriendsGenOptions): FriendsPersona[] 
     const usuallyFree = SLOTS.filter((_, k) => (slotFree[k]! >= 0.5 ? sr.bool(0.9) : sr.bool(0.08)));
     const verify = verification(sr, hidden, claimedAge);
     out.push({
-      id, name, hidden,
+      id, name, ...(city !== "nyc" ? { city } : {}), hidden,
       stated: {
         claimedAge, birthKey: statedBirthKey, birthExact: o.teenBirthDates !== false || claimedAge > teenFriendMaxAge, home: homeH.id, often: oftenU, lifeStage: poser ? "student" : lifeStage, activities: [...new Set(stated)], energy: energyBucket(clamp01(energy + sr.normal(0, 0.15))),
         groupPref, usuallyFree, maxTravel: statedTol, newToCity, verify, ...drawFriendGender(o.seed, i, o.statedOpenness === true),
@@ -263,7 +300,7 @@ function verification(r: Rng, h: FriendsHidden, claimedAge: number): FriendsStat
   return { liveness, age };
 }
 
-export const hoodOf = (id: string) => byId.get(id)!;
+export const hoodOf = (id: string, city: City = "nyc") => byId.get(id) ?? hoodForCity(city, id)!;
 /** Real members: true adults who are not adversaries (per-member metrics use these). */
 export const isReal = (p: FriendsPersona) => !p.hidden.isMinor && !p.hidden.adversary && !p.hidden.poser;
 

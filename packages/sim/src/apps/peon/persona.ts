@@ -43,6 +43,10 @@ export interface CandidateTruth {
   canary: string;
   /** Planted circle and standing (only with PeonGenOptions.planted). */
   planted?: PlantedMark;
+  craftDepth?: number;
+  workPacePref?: number;
+  overclaimGap?: number;
+  spamApplyPropensity?: number;
 }
 export interface CandidateStated {
   families: string[]; seniority: number;
@@ -87,11 +91,15 @@ export interface Job {
     /** Applications the employer reviews per week. */
     reviewCap: number;
     real: boolean;
+    workPace?: number;
+    mentorshipCulture?: number;
   };
 }
 
 export interface PeonGenOptions {
   seed: number; perCity?: number; jobsPerCity?: number; minorShare?: number; fakeShare?: number; weeks?: number;
+  /** Optional markets to populate (defaults to ["nyc", "sf"] to preserve pinned baselines). */
+  cities?: readonly City[];
   /**
    * Planted circles and standing (planted.ts) for candidates: an adult candidate's job family is
    * the circle topic (the industry cluster) and seniority follows the planted standing. Off by
@@ -115,7 +123,24 @@ const AREA_BY_RACE: Record<City, Record<RaceGroup, Record<string, number>>> = {
     c: { san_francisco: 0.15, oakland: 0.2, east_bay: 0.2, peninsula: 0.1, south_bay: 0.35 },
     d: { san_francisco: 0.3, oakland: 0.1, east_bay: 0.1, peninsula: 0.2, south_bay: 0.3 },
   },
-  la: { a: {}, b: {}, c: {}, d: {} }, // the hiring world does not model LA yet
+  la: {
+    a: { westside: 0.35, central_la: 0.25, eastside: 0.20, dtla: 0.20 },
+    b: { westside: 0.20, central_la: 0.30, eastside: 0.20, dtla: 0.30 },
+    c: { westside: 0.15, central_la: 0.25, eastside: 0.35, dtla: 0.25 },
+    d: { westside: 0.30, central_la: 0.30, eastside: 0.15, dtla: 0.25 },
+  },
+  chicago: {
+    a: { loop_west_loop: 0.30, river_north: 0.25, wicker_logan: 0.20, lincoln_lakeview: 0.20, hyde_park: 0.05 },
+    b: { loop_west_loop: 0.20, river_north: 0.10, wicker_logan: 0.15, lincoln_lakeview: 0.10, hyde_park: 0.45 },
+    c: { loop_west_loop: 0.20, river_north: 0.10, wicker_logan: 0.40, lincoln_lakeview: 0.15, hyde_park: 0.15 },
+    d: { loop_west_loop: 0.35, river_north: 0.25, wicker_logan: 0.15, lincoln_lakeview: 0.15, hyde_park: 0.10 },
+  },
+  miami: {
+    a: { brickell_downtown: 0.30, wynwood_midtown: 0.20, coral_gables_grove: 0.25, miami_beach: 0.25 },
+    b: { brickell_downtown: 0.25, wynwood_midtown: 0.35, coral_gables_grove: 0.25, miami_beach: 0.15 },
+    c: { brickell_downtown: 0.30, wynwood_midtown: 0.20, coral_gables_grove: 0.35, miami_beach: 0.15 },
+    d: { brickell_downtown: 0.35, wynwood_midtown: 0.25, coral_gables_grove: 0.20, miami_beach: 0.20 },
+  },
 };
 const FIRST: Record<Sex, Record<RaceGroup, string[]>> = {
   f: { a: ["Emily", "Hannah", "Claire", "Megan"], b: ["Aaliyah", "Imani", "Keisha", "Nia"], c: ["Maria", "Lucia", "Valeria", "Ximena"], d: ["Mei", "Priya", "Yuna", "Linh"] },
@@ -137,7 +162,7 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
   requireSimulationCount(jobsPerCity, "Peon jobs per city", 0);
   const candidates: Candidate[] = [], companies: Company[] = [], jobs: Job[] = [];
   const sealed = new Map<MemberId, Sealed>();
-  const cities: City[] = ["nyc", "sf"];
+  const cities: readonly City[] = o.cities && o.cities.length > 0 ? o.cities : ["nyc", "sf"];
   // Planted: minor and fake flags come from a per-candidate fork, so eligibility is known before the
   // candidate loop. The default path keeps its shared stream unchanged.
   const flags = o.planted ? new Map(cities.flatMap(market => [...Array(perCity).keys()].map(i => {
@@ -188,16 +213,24 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
       const nice = rng.sample(fam.skills.filter(s => !must.some(m => m.skill === s)), rng.int(1, 2));
       const credRequired = fam.cred && rng.bool(fam.cred.jobs) && (fam.cred.id !== "cpa" || seniority >= 3) ? fam.cred.id : undefined;
       const gender = rng.pick(["f", "m"] as Sex[]), rg = weighted(rng, RACE_W);
+      let urgency = 2;
       jobs.push({
         id, company: co.id, market, family: fam.id, seniority,
         title: `${["", "Associate ", "", "Senior ", "Lead ", "Principal "][seniority]}${fam.title}`,
         payMin: hasRange ? Math.round(mid * 0.88) : undefined, payMax: hasRange ? Math.round(mid * 1.12) : undefined,
         mode, area, must, nice,
         openings: scam ? 3 : weighted(rng, [[1, 0.65], [2, 0.25], [3, 0.1]]),
-        urgency: rng.int(1, 3), sponsors: ["software_engineer", "data_analyst"].includes(fam.id) ? rng.bool(0.35) : rng.bool(0.05),
+        urgency: (urgency = rng.int(1, 3)), sponsors: ["software_engineer", "data_analyst"].includes(fam.id) ? rng.bool(0.35) : rng.bool(0.05),
         credRequired, postedWeek: rng.bool(0.5) ? 0 : rng.int(1, 5),
         manager: `${rng.pick(FIRST[gender][rg])} ${rng.pick(LAST[rg])}`,
-        hidden: { barShift: rng.normal(0, 0.25), appeal: rng.normal(0, 0.8) + (scam ? 1.2 : 0), reviewCap: 4 + 2 * rng.int(0, 2), real: !scam },
+        hidden: (() => {
+          const jr = new Rng(hash32(o.seed, "peon-job-v2", id));
+          return {
+            barShift: rng.normal(0, 0.25), appeal: rng.normal(0, 0.8) + (scam ? 1.2 : 0), reviewCap: 4 + 2 * rng.int(0, 2), real: !scam,
+            workPace: Math.max(0, Math.min(1, 0.45 + 0.1 * urgency + jr.normal(0, 0.18))),
+            mentorshipCulture: scam ? 0 : Math.max(0, Math.min(1, jr.range(0.25, 0.90))),
+          };
+        })(),
       });
     }
     // ---- candidates --------------------------------------------------------------------------
@@ -249,6 +282,15 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
       const gradYear = rng.bool(0.7) ? birthYear + 22 + rng.int(0, 2) : undefined;
       const gapMonths = (caregiver || disability ? rng.bool(0.45) : rng.bool(0.12)) ? rng.int(4, 30) : 0;
       const sname = FIRST[sex][race];
+      const cr2 = new Rng(hash32(o.seed, "peon-cand-v2", id));
+      const stKeys = Object.keys(stated);
+      const overclaimGap = stKeys.length
+        ? stKeys.reduce((s, k) => s + Math.max(0, (stated[k] ?? 0) - (skills[k] ?? 0)), 0) / stKeys.length
+        : 0;
+      const topTrue = Object.values(skills).sort((a, b) => b - a).slice(0, 3);
+      const craftDepth = isMinor ? 0 : fake ? 0.08 : Math.max(0, Math.min(1, (topTrue.reduce((a, b) => a + b, 0) / 15) * 0.8 + (demonstrated.length > 0 ? 0.15 : 0)));
+      const workPacePref = isMinor ? 0.2 : Math.max(0, Math.min(1, cr2.normal(0.55, 0.20)));
+      const spamApplyPropensity = isMinor ? 0 : fake ? 0.95 : Math.max(0, Math.min(1, overclaimGap * 0.32 + cr2.range(0, 0.14)));
       candidates.push({
         id, market, homeArea, joinWeek: rng.bool(0.6) ? 0 : rng.int(1, 6),
         truth: {
@@ -256,6 +298,7 @@ export function generatePeonPopulation(o: PeonGenOptions): PeonPopulation {
           intensity: rng.range(0.45, 1), replyProb: Math.min(0.98, Math.max(0.4, rng.normal(0.85, 0.1))),
           interviewSd: 0.35, retention: rng.normal(0, 0.5), fake, isMinor, trueAge: age,
           canary: `CANARY-${hash32(o.seed, id).toString(36)}`,
+          craftDepth, workPacePref, overclaimGap, spamApplyPropensity,
           ...(planted ? { planted } : {}),
         },
         stated: {

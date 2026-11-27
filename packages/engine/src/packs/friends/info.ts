@@ -1,8 +1,8 @@
-import type { Facet, MemberId } from "@thenetwork/core";
+import { getCity, type City, type Facet, type MemberId } from "@thenetwork/core";
 import type { StandingAvailability } from "../../attention.ts";
 import type { World } from "../../world.ts";
 import { friendOpennessUnanswered, type FriendOpenness, type FriendStatement, type StatedGender } from "../../../../core/src/generated/mutualOpenness.ts";
-import { FRIENDS_CITY, hood, type Neighborhood } from "./geo.ts";
+import { FRIENDS_CITY, hoodForCity, type Neighborhood } from "./geo.ts";
 
 export const FT = {
   maxTravel: "friends:max_travel:", free: "friends:free:", groupPref: "friends:group_pref:", energy: "friends:energy:",
@@ -16,7 +16,8 @@ export const SLOT_TIME: Record<FriendsSlot, { day: number; hour: number }> = {
   sat_am: { day: 6, hour: 10 }, sat_pm: { day: 6, hour: 14 }, sat_eve: { day: 6, hour: 19 }, sun_am: { day: 0, hour: 10 }, sun_pm: { day: 0, hour: 14 }, sun_eve: { day: 0, hour: 19 },
 };
 
-interface FriendsInfo {
+export interface FriendsInfo {
+  city?: City;
   home?: Neighborhood; often: Neighborhood[];
   tolerance: number;
   verified: boolean;
@@ -73,14 +74,15 @@ export function friendsInfo(w: World): Map<MemberId, FriendsInfo> {
     const mi = w.get(id)!;
     const fs = facets.get(id) ?? [];
     const ts = fs.flatMap(f => f.tags);
-    const pres = mi.presence.filter(p => p.city === FRIENDS_CITY);
+    const city: City = getCity(mi.m.homeCity) ? mi.m.homeCity : FRIENDS_CITY;
+    const pres = mi.presence.filter(p => p.city === city);
     const homeP = pres.find(p => p.type === "home");
-    const home = hood(homeP?.areas[0]);
-    const often = pres.flatMap(p => (p === homeP ? p.areas.slice(1) : p.areas)).map(hood).filter((x): x is Neighborhood => !!x);
+    const home = hoodForCity(city, homeP?.areas[0]);
+    const often = pres.flatMap(p => (p === homeP ? p.areas.slice(1) : p.areas)).map(a => hoodForCity(city, a)).filter((x): x is Neighborhood => !!x);
     const val = (pre: string) => ts.find(t => t.startsWith(pre))?.slice(pre.length);
     const tol = Number(val(FT.maxTravel));
     m.set(id, {
-      home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
+      city, home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
       verified: friendsStaffVerified(ts),
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
       groupPref: val(FT.groupPref), energy: val(FT.energy), lifeStage: val(FT.lifeStage),

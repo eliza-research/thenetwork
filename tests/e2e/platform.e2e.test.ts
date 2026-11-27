@@ -482,7 +482,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
         expect(slopProfiles(narrowed).get(member.id as any)?.maxMiles).toBe(25);
         expect(narrowed.facets.some(f => f.memberId === member.id && f.tags.includes("slop:max_miles:50"))).toBe(false);
         expect((await pilot.svc.runtimeFor("peon")!.unitOfWork(n => n.packInput(pilot.clock.now()))).facets.some(f => f.memberId === member.id)).toBe(false);
-        // A separate synthetic SF registry admits storage, but the real NYC-only engine still excludes SF home.
+        // A separate SF slop runtime admits storage and includes the SF member in its pack input.
         const sf = await startStack({ slopCity: "sf" });
         const sfDb = new SQL({ url: sf.url, max: 1 });
         try {
@@ -511,7 +511,7 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           expect(cell!.lat).not.toBe(37.8713);
           expect(cell!.lon).not.toBe(-121.5970);
           expect((await sfDb`select home_city from network.members where app_id='slop'`)[0].home_city).toBe("sf");
-          expect((await sf.svc.runtimeFor("slop")!.unitOfWork(n => n.packInput(sf.clock.now()))).members).toEqual([]);
+          expect((await sf.svc.runtimeFor("slop")!.unitOfWork(n => n.packInput(sf.clock.now()))).members.map(m => m.homeCity)).toEqual(["sf"]);
         } finally { await sfDb.close(); await sf.close(); }
 
       } finally { await db.close(); await pilot.close(); }

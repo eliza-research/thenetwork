@@ -1,5 +1,6 @@
 // friendsPack: friends.help (app id "friends"; formerly buddies.nyc), NYC first, as an AppPack.
 // docs/results/2026-10-08-friends-pack.md has the design, the simulator and the gate results.
+import { getCity } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "../../config.ts";
 import { cityBucketGeo } from "../../geo.ts";
 import type { AppPack, EligibilityPolicy, GeneratorSpec, GeoModel } from "../../pack.ts";
@@ -9,31 +10,25 @@ import { networkConstraints } from "../network/ontology.ts";
 import { objectivesFor, OBJECTIVES } from "../network/taxonomy.ts";
 import { FRIENDS_ACTIVITY, FRIENDS_ASK_QUESTIONS, FRIENDS_KIND_PHRASE, FRIENDS_SAFE_FALLBACK, friendsKindBits, friendsProbeText } from "./copy.ts";
 import { FRIENDS_GENERATORS } from "./generators.ts";
-import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutes, withinTransitTolerance } from "./geo.ts";
+import { FRIENDS_CITY, FRIENDS_EXCLUDED_ACTIVITIES, transitMinutesInCity, withinTransitTolerance } from "./geo.ts";
 import { friendsInfo } from "./info.ts";
 import { FRIENDS_CANDIDATE_POST_RULES, FRIENDS_CANDIDATE_PRE_RULES, friendsMemberRules, friendsPairRules } from "./rules.ts";
 import { friendsVectors } from "./vectors.ts";
 
 export const FRIENDS_PACK_VERSION = "friends-pack-0.1.0";
 
-/**
- * NYC neighborhoods and transit minutes. Markets: NYC only. Overlap is the city-bucket overlap held
- * to NYC. The pair rule: two homes so far apart that no venue fits both stated tolerances (the
- * estimated trip between the homes exceeds the sum of the two tolerances) never pair. Symmetric.
- */
 export const friendsGeo: GeoModel = {
-  markets: cfg => cfg.cities.filter(c => c === FRIENDS_CITY),
+  markets: cfg => cfg.cities.filter(c => !!getCity(c)),
   location: (w, id, start, end) => cityBucketGeo.location(w, id, start, end),
-  overlap: (w, ids, start, end) => {
-    const o = cityBucketGeo.overlap(w, ids, start, end, FRIENDS_CITY);
-    return o && o.city === FRIENDS_CITY ? o : null;
-  },
+  overlap: (w, ids, start, end) => cityBucketGeo.overlap(w, ids, start, end),
   sharesArea: (w, ids, market, window) => cityBucketGeo.sharesArea(w, ids, market, window),
   pairReason: (w, a, b) => {
     const info = friendsInfo(w);
     const ia = info.get(a), ib = info.get(b);
     if (!ia?.home || !ib?.home) return null;
-    return withinTransitTolerance(transitMinutes(ia.home, ib.home), ia.tolerance, ib.tolerance) ? null : "beyond_transit_tolerance";
+    if (ia.city && ib.city && ia.city !== ib.city) return null;
+    const city = ia.city ?? ib.city ?? FRIENDS_CITY;
+    return withinTransitTolerance(transitMinutesInCity(city, ia.home, ib.home), ia.tolerance, ib.tolerance) ? null : "beyond_transit_tolerance";
   },
 };
 

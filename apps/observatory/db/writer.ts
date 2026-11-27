@@ -2,7 +2,7 @@
 // dataset files, or from a whole simulated world (members, graph, every message, opportunity,
 // participation, outcome, feedback, engine run and event). Real-world mode reads it back.
 import type { SQL } from "../../../packages/core/src/runtime/postgres.ts";
-import type { MemberId } from "@thenetwork/core";
+import { isCity, type City, type MemberId, type WorkIntroChannel } from "@thenetwork/core";
 import { consoleRows } from "@thenetwork/network";
 import { eventOf, membersOf } from "../src/events.ts";
 import { DATA_DIR, readJsonl, type EdgeRecord, type FacetRecord, type IntentRecord, type MemberRecord, type PresenceRecord } from "../../../scripts/synthetic/common.ts";
@@ -15,16 +15,25 @@ export interface NetworkRows {
   opportunities: Row[]; participations: Row[]; review_items: Row[]; messages: Row[]; feedback: Row[]; events: Row[]; matching_runs: Row[];
   /** packages/network/db/network-state.sql: member requests and the Network's stored state. */
   requests: Row[]; network_state: Row[];
+  /** Migration 0098 app-scoped venue, arrival, and work-intro tables (optional for legacy callers). */
+  venue_visits?: Row[]; venue_rejections?: Row[]; meetup_arrivals?: Row[]; work_intros?: Row[];
   /** The app the rows belong to (default ntwrk): writeRows sets app.app_id, which fills every app_id column. */
   app?: AppId;
 }
-const TABLES: Exclude<keyof NetworkRows, "app">[] = [
+const TABLES: Exclude<keyof NetworkRows, "app" | "venue_visits" | "venue_rejections" | "meetup_arrivals" | "work_intros">[] = [
   "members", "channel_identities", "facets", "intents", "presence", "edges", "opportunities", "participations",
   "review_items", "messages", "feedback", "events", "matching_runs", "requests", "network_state",
 ];
+const EXTRA_TABLES = ["venue_visits", "venue_rejections", "meetup_arrivals", "work_intros"] as const;
 
-const AREA_CODES = ["415", "628", "510", "212", "646", "917", "718", "347", "332", "929"];
+const AREA_CODES = ["415", "628", "212", "646", "917", "310", "213", "312", "773", "305", "786"];
 const date = (ms: number | undefined) => (ms === undefined || ms === null ? null : new Date(ms));
+function dbWorkIntroChannel(ch: WorkIntroChannel | undefined): string | null {
+  if (ch === "WarmEmail") return "warm_email";
+  if (ch === "ScheduledVideo") return "scheduled_video";
+  if (ch === "RelayShare") return "relay_share";
+  return null;
+}
 /** A Postgres array literal for bulk inserts. */
 export function pgArray(xs: string[]): string {
   return `{${xs.map(x => `"${String(x).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
@@ -121,6 +130,7 @@ export function rowsFromGame(g: GameSource): NetworkRows {
       id: o.id, kind: o.kind, state: o.state, source: o.source, generator: o.generator, category: o.category ?? null, city: o.city,
       objective: o.objective, score: o.score, components: o.components ?? null, explanations: Object.fromEntries(Object.entries(o.explanations).filter(([id]) => kept(id))), exploration: o.exploration,
       window_start: null, window_end: null, meeting_at: date(o.meetingAt), reason: o.reason ?? null, run_id: o.runId ?? null,
+      venue_id: o.venue?.id ?? null, backup_venue_id: o.backupVenue?.id ?? null, work_intro_channel: dbWorkIntroChannel(o.workIntroChannel),
       created_at: date(o.createdAt), updated_at: date(o.updatedAt),
     });
     for (const id of o.participants) if (kept(id)) r.participations.push({ opportunity_id: o.id, member_id: id, role: "participant", status: o.status[id] ?? "pending", booked_told: told.has(`${o.id}|${id}`), enjoyment: o.enjoyment[id] ?? null, invited_at: null, responded_at: null });
@@ -160,11 +170,35 @@ export function rowsFromGame(g: GameSource): NetworkRows {
     if (ev && kept(...membersOf(ev))) r.events.push(ev as unknown as Row);
   }
   for (const run of s.runs) r.matching_runs.push({ id: run.id, at: date(run.at), city: run.city ?? null, engine_version: run.engineVersion, proposals: run.proposals, wall_ms: run.wallMs, summary: run });
-  // The consent Network's stored state and its request rows, as its PgStore writes them.
+  // The consent Network's stored state and its request rows, written per actual city network (<app>:<city>).
   if (g.consent) {
     const state = g.consent.exportState();
     for (const q of consoleRows(state).requests) if (kept(q.member_id as string)) r.requests.push(q);
-    r.network_state.push({ id: networkId(g.app, "nyc"), version: state.version, state, saved_at: date(state.savedAt) });
+    const memberCity = new Map<string, City>();
+    for (const m of s.members.values()) if (!gone.has(m.id) && isCity(m.city)) memberCity.set(m.id, m.city);
+    const activeCities = [...new Set(memberCity.values())];
+    const selected = g.selectedCity();
+    const fallbackCity: City = selected !== "all" ? selected : "nyc";
+    const cities: City[] = activeCities.length ? activeCities : [fallbackCity];
+    if (cities.length === 1) {
+      r.network_state.push({ id: networkId(g.app, cities[0]!), version: state.version, state, saved_at: date(state.savedAt) });
+    } else {
+      const primary = cities[0]!;
+      const raw = state as unknown as Record<string, any>;
+      for (const city of cities) {
+        const owns = (id: unknown) => (typeof id === "string" ? (memberCity.get(id) ?? primary) === city : city === primary);
+        const sliced = {
+          ...raw,
+          members: Array.isArray(raw.members) ? raw.members.filter((m: any) => owns(m?.id)) : raw.members,
+          trust: Array.isArray(raw.trust) ? raw.trust.filter((t: any) => owns(t?.id)) : raw.trust,
+          cases: Array.isArray(raw.cases) ? raw.cases.filter((c: any) => owns(c?.memberId)) : raw.cases,
+          deferred: Array.isArray(raw.deferred) ? raw.deferred.filter((d: any) => owns(d?.memberId)) : raw.deferred,
+          counters: city === primary ? raw.counters : {},
+          gateReasons: city === primary ? raw.gateReasons : {},
+        };
+        r.network_state.push({ id: networkId(g.app, city), version: state.version, state: sliced, saved_at: date(state.savedAt) });
+      }
+    }
   }
   r.app = g.app;
   return r;
@@ -181,7 +215,7 @@ export async function writeRows(sql: SQL, rows: NetworkRows, opts: { truncate?: 
     await tx.unsafe("set local search_path to network");
     // Every app_id column defaults to network.current_app_id() (migration 0004), which reads this.
     await tx.unsafe(`set local app.app_id = '${app}'`);
-    if (opts.truncate) await tx.unsafe(`truncate ${TABLES.map(t => `network.${t}`).join(", ")} restart identity cascade`);
+    if (opts.truncate) await tx.unsafe(`truncate ${[...TABLES, ...EXTRA_TABLES].map(t => `network.${t}`).join(", ")} restart identity cascade`);
     // Members first without invite lineage (it references other members), then the lineage.
     await insert(tx, "members", rows.members.map(m => ({ ...m, invited_by: null })));
     const lineage = rows.members.filter(m => m.invited_by);
@@ -195,6 +229,10 @@ export async function writeRows(sql: SQL, rows: NetworkRows, opts: { truncate?: 
       let list = rows[t];
       if (t === "edges") list = dedupe(list, e => `${e.from_id}|${e.to_id}|${e.type}`);
       counts[t] = await insert(tx, t, list);
+    }
+    for (const t of EXTRA_TABLES) {
+      const list = rows[t];
+      if (list?.length) counts[t] = await insert(tx, t, list);
     }
     counts.members = rows.members.length;
   });

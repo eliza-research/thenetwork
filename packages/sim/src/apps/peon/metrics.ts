@@ -60,6 +60,13 @@ export interface PeonMetrics {
   levels: { backedPairs: number; gapOverOne: number };
   market: MarketMeasures;
   impact: ImpactTable;
+  matchQuality: {
+    meanSeniorityGap: number;
+    seniorityMismatchRate: number;
+    demonstratedCraftShare: number;
+    overclaimedIntroRate: number;
+    paceAlignmentMean: number;
+  };
 }
 
 const median = (xs: number[]) => { if (!xs.length) return NaN; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
@@ -101,6 +108,20 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
     return backed ? [Math.abs(j.seniority - c.stated.seniority)] : [];
   });
   const flagged = new Set(r.audits.flat().map(f => f.company));
+  let senGapSum = 0, senMismatch = 0, demoCraft = 0, overclaimed = 0;
+  for (const f of delivered) {
+    const c = oracle.cand.get(f.cand), j = oracle.job.get(f.job);
+    if (!c || !j) continue;
+    const sg = Math.abs(c.truth.seniority - j.seniority);
+    senGapSum += sg;
+    if (sg >= 2) senMismatch++;
+    if (j.must.some(m => c.stated.demonstrated.includes(m.skill))) demoCraft++;
+    if (c.truth.fake || (c.truth.overclaimGap ?? 0) >= 1.5) overclaimed++;
+  }
+  const paceAlignSum = hires.reduce((s, h) => {
+    const c = oracle.cand.get(h.cand), j = oracle.job.get(h.job);
+    return s + (c && j ? 1 - Math.abs((c.truth.workPacePref ?? 0.55) - (j.hidden.workPace ?? 0.55)) : 0);
+  }, 0);
   return {
     intros: flows.length, probesDelivered: delivered.length, dropped,
     replyRate: div(replied.length, delivered.length), applyRate: div(applied.length, replied.length),
@@ -143,6 +164,13 @@ export function peonMetrics(r: PeonRunResult, o: { requestsApplied?: number } = 
     levels: { backedPairs: levelGaps.length, gapOverOne: levelGaps.filter(gap => gap > 1).length },
     market: marketMeasures(r.markets),
     impact: impactTable(r, real.map(c => c.id)),
+    matchQuality: {
+      meanSeniorityGap: div(senGapSum, delivered.length),
+      seniorityMismatchRate: div(senMismatch, delivered.length),
+      demonstratedCraftShare: div(demoCraft, delivered.length),
+      overclaimedIntroRate: div(overclaimed, delivered.length),
+      paceAlignmentMean: div(paceAlignSum, hires.length),
+    },
   };
 }
 

@@ -3,7 +3,7 @@
 // wraps every critical state transition in Postgres sql.begin(...) + SELECT ... FOR UPDATE,
 // and implements full Memory + Pg CRUD across all 17 marketing.* tables.
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { warmupDailyCap } from "../../../packages/core/src/generated/marketingDevice.ts";
 import { isOssDevBounty } from "../../../packages/core/src/generated/marketingPolicy.ts";
@@ -37,6 +37,9 @@ import type {
   AgentStatus,
   AntiFraudClaim,
   AntiFraudClaimStatus,
+  ApolloCreditLedgerEntry,
+  ApolloCreditUsageSummary,
+  ApolloOperationKind,
   AppId,
   AttributionEvent,
   BanditArm,
@@ -47,15 +50,30 @@ import type {
   BudgetEntry,
   BudgetEntryType,
   Campaign,
+  CanonicalOutreachPlatform,
   ChannelAccount,
+  CityLaunchStage,
+  CityPackOverride,
   Clock,
+  ContactSuppressionRecord,
+  ContactTouchpoint,
+  ContactTouchpointStats,
+  ContactTouchSurface,
+  DailyLlmUsage,
+  DesireLaneId,
   DeviceNode,
   DevicePlatform,
   DeviceStatus,
   DeviceWarmupStage,
+  EnrichmentCacheEntry,
   HumanPartner,
   HumanRole,
   ImplementationTier,
+  IntakeCandidateRecord,
+  IntakeCandidateStatus,
+  IntakeScoreBreakdown,
+  LlmTrajectoryRecord,
+  LlmTrajectoryStatus,
   MarketingAgent,
   MarketingTask,
   OutreachChannel,
@@ -64,6 +82,8 @@ import type {
   PayoutRail,
   PersonaId,
   PhoneLineType,
+  PlatformInteractionOutcome,
+  PlatformInteractionRecord,
   ProofKind,
   ProofSubmission,
   ProofVerdict,
@@ -119,6 +139,7 @@ export interface CreateCampaignInput {
   name: string;
   city?: string;
   appId: AppId;
+  desireLane?: DesireLaneId | null;
   riskZone?: RiskZone;
   riskDial?: RiskDial;
   monthlyBudgetCents?: number;
@@ -132,6 +153,7 @@ export interface CreateCampaignInput {
 export interface UpdateCampaignInput {
   name?: string;
   city?: string;
+  desireLane?: DesireLaneId | null;
   riskZone?: RiskZone;
   riskDial?: RiskDial;
   monthlyBudgetCents?: number;
@@ -233,6 +255,9 @@ export interface UpsertChannelAccountInput {
 export interface UpsertHumanInput {
   id?: string;
   handleOrEmailHmac: string;
+  phoneHash?: string | null;
+  phoneE164?: string | null;
+  contactEmail?: string | null;
   displayLabel: string;
   channel: OutreachChannel;
   role: HumanRole;
@@ -252,6 +277,7 @@ export interface CreateTaskInput {
   tier: ImplementationTier;
   taskKind: TaskKind;
   city?: string;
+  desireLane?: DesireLaneId | null;
   title: string;
   briefText: string;
   vendorChannel: VendorChannel;
@@ -313,13 +339,14 @@ export interface CreateOutreachInput {
   campaignId: string;
   agentId: string;
   humanId: string;
+  phoneHash?: string | null;
   channelAccountId?: string | null;
   channel: OutreachChannel;
   tier: ImplementationTier;
   subject?: string | null;
   bodySummary: string;
   leakCheckPass: boolean;
-  desiredStatus?: "queued" | "sent" | "delivered";
+  desiredStatus?: "queued" | "sent" | "delivered" | "blocked_stop" | "blocked_policy";
   externalRef?: string | null;
   dailyOutreachCap?: number;
 }
@@ -328,6 +355,8 @@ export interface CreateAttributionEventInput {
   id?: string;
   campaignId: string;
   taskId?: string | null;
+  armId?: string | null;
+  desireLane?: DesireLaneId | null;
   qrBatchCode?: string | null;
   eventKind: AttributionEvent["eventKind"];
   city?: string;
@@ -383,11 +412,13 @@ export interface UpsertBanditArmInput {
   armKey: string;
   label: string;
   track: string;
+  desireLane?: DesireLaneId | null;
   alpha?: number;
   beta?: number;
   weight?: number;
   spendCents?: number;
   signups?: number;
+  verifiedOutcomes?: number;
   stopEvents?: number;
   totalContacts?: number;
   status?: BanditArmStatus;
@@ -395,11 +426,13 @@ export interface UpsertBanditArmInput {
 
 export interface UpdateBanditArmInput {
   label?: string;
+  desireLane?: DesireLaneId | null;
   alpha?: number;
   beta?: number;
   weight?: number;
   spendCents?: number;
   signups?: number;
+  verifiedOutcomes?: number;
   stopEvents?: number;
   totalContacts?: number;
   status?: BanditArmStatus;
@@ -409,6 +442,7 @@ export interface CreateBdDealInput {
   id?: string;
   campaignId: string;
   city?: string;
+  desireLane?: DesireLaneId | null;
   venueName: string;
   vertical: AppId;
   contactEmail?: string | null;
@@ -422,6 +456,7 @@ export interface CreateBdDealInput {
 }
 
 export interface UpdateBdDealInput {
+  desireLane?: DesireLaneId | null;
   venueName?: string;
   vertical?: AppId;
   contactEmail?: string | null;
@@ -462,6 +497,7 @@ export interface CreateVipProspectInput {
   id?: string;
   campaignId: string;
   city?: string;
+  desireLane?: DesireLaneId | null;
   name: string;
   archetype: string;
   organization?: string | null;
@@ -474,6 +510,7 @@ export interface CreateVipProspectInput {
 }
 
 export interface UpdateVipProspectInput {
+  desireLane?: DesireLaneId | null;
   archetype?: string;
   organization?: string | null;
   sourceUrl?: string | null;
@@ -487,6 +524,7 @@ export interface CreateVideoAssetInput {
   id?: string;
   campaignId: string;
   agentId?: string | null;
+  desireLane?: DesireLaneId | null;
   title: string;
   hook: string;
   script: string;
@@ -501,6 +539,7 @@ export interface CreateVideoAssetInput {
 
 export interface UpdateVideoAssetInput {
   agentId?: string | null;
+  desireLane?: DesireLaneId | null;
   title?: string;
   hook?: string;
   script?: string;
@@ -511,6 +550,49 @@ export interface UpdateVideoAssetInput {
   retention3sPct?: number;
   signups?: number;
   ftcDisclosed?: boolean;
+}
+
+export interface ReserveAgentTurnResult {
+  reserved: boolean;
+  agent: MarketingAgent;
+  reason?: string;
+}
+
+export type RecordLlmTrajectoryStatus =
+  | LlmTrajectoryStatus
+  | "cache_hit"
+  | "deterministic_skip"
+  | "budget_denied";
+
+export interface RecordLlmTrajectoryInput {
+  id?: string;
+  agentId?: string | null;
+  campaignId?: string | null;
+  provider: string;
+  model: string;
+  promptHash: string;
+  inputTokens: number;
+  outputTokens: number;
+  cached?: boolean;
+  costMicros: number;
+  latencyMs?: number;
+  status: RecordLlmTrajectoryStatus;
+  failoverChain?: string | null;
+  leakBlocked?: boolean;
+}
+
+export interface CampaignStopStats {
+  contactedHumans: number;
+  stoppedHumans: number;
+  stopRateBps: number;
+}
+
+export interface BanditArmBatchUpdate {
+  id: string;
+  alpha: number;
+  beta: number;
+  weight: number;
+  status: BanditArmStatus;
 }
 
 export interface CreateAntiFraudClaimInput {
@@ -613,6 +695,7 @@ export interface MarketingOverview {
 export interface MarketingStore {
   readonly clock: Clock;
   close(): Promise<void>;
+  getSql(): SQL | null;
 
   createCampaign(input: CreateCampaignInput): Promise<Campaign>;
   getCampaign(id: string): Promise<Campaign | null>;
@@ -657,6 +740,8 @@ export interface MarketingStore {
   upsertHuman(input: UpsertHumanInput): Promise<HumanPartner>;
   getHuman(id: string): Promise<HumanPartner | null>;
   getHumanByHmac(handleOrEmailHmac: string): Promise<HumanPartner | null>;
+  getHumanPhoneHash?(id: string): Promise<string | null>;
+  isPhoneHashSuppressed?(phoneHash: string): Promise<boolean>;
   listHumans(
     filter?: { city?: string; role?: HumanRole; stopped?: boolean } & PaginationFilter,
   ): Promise<HumanPartner[]>;
@@ -787,8 +872,127 @@ export interface MarketingStore {
   getLifetimePersonBonusCents(personKey: string): Promise<number>;
   hasMediaHash(mediaHash: string, excludeTaskId?: string): Promise<boolean>;
 
+  // Pass-3 Contract 4 methods
+  reserveAgentTurn(agentId: string, nowIso: string): Promise<ReserveAgentTurnResult>;
+  recordLlmTrajectory(input: RecordLlmTrajectoryInput): Promise<LlmTrajectoryRecord>;
+  listLlmTrajectories(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    limit?: number;
+  }): Promise<LlmTrajectoryRecord[]>;
+  getDailyLlmUsage(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    dayIso?: string;
+  }): Promise<DailyLlmUsage>;
+  isContactSuppressed(contactHash: string): Promise<ContactSuppressionRecord | null>;
+  listContactSuppressions(limit?: number): Promise<ContactSuppressionRecord[]>;
+  recordContactSuppression(input: {
+    contactHash: string;
+    reason: string;
+    sourceChannel: string;
+    isMinor?: boolean;
+  }): Promise<ContactSuppressionRecord>;
+  getContactTouchpointStats(contactHash: string, nowMs: number): Promise<ContactTouchpointStats>;
+  recordContactTouchpoint(input: {
+    contactHash: string;
+    campaignId?: string | null;
+    surface: ContactTouchSurface;
+    isCold: boolean;
+    answered?: boolean;
+  }): Promise<void>;
+  getCampaignStopStats(campaignId: string): Promise<CampaignStopStats>;
+  quarantineClaimsBatch(
+    ids: readonly string[],
+    clusterId: string,
+    reason: string,
+  ): Promise<number>;
+  updateBanditArmsBatch(updates: readonly BanditArmBatchUpdate[]): Promise<BanditArm[]>;
+  upsertCityPack(
+    code: string,
+    stage: CityLaunchStage,
+    config: Record<string, unknown>,
+  ): Promise<CityPackOverride>;
+  listCityPacksOverrides(): Promise<CityPackOverride[]>;
+
+  // Pass-4 Apollo enrichment cache, credit ledger, 10-platform interactions, and quality intake
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null>;
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry>;
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number>;
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry>;
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary>;
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord>;
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]>;
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord>;
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null>;
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null>;
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]>;
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord>;
+
   resetDailyCounters(): Promise<void>;
   getOverview(campaignId?: string): Promise<MarketingOverview>;
+}
+
+const MAX_MEMORY_APPEND_ITEMS = 5_000;
+
+const VERIFIED_OUTCOME_EVENT_KINDS: ReadonlySet<AttributionEvent["eventKind"]> = new Set([
+  "signup_verified_adult",
+  "first_match_accepted",
+  "irl_meeting_confirmed",
+  "second_meetup_retained",
+  "intro_or_hire_unlocked",
+  "t3_match_verified",
+]);
+
+function trimMapFifo<K, V>(map: Map<K, V>, max: number): void {
+  while (map.size > max) {
+    const oldest = map.keys().next().value;
+    if (oldest === undefined) break;
+    map.delete(oldest);
+  }
+}
+
+function normalizeTrajectoryStatus(
+  status: RecordLlmTrajectoryStatus,
+): { status: LlmTrajectoryStatus; cached: boolean } {
+  if (status === "cache_hit" || status === "deterministic_skip" || status === "cached") {
+    return { status: "cached", cached: true };
+  }
+  if (status === "budget_denied" || status === "budget_blocked") {
+    return { status: "budget_blocked", cached: false };
+  }
+  return { status, cached: false };
 }
 
 const HIRED_OR_LATER_STATUSES: ReadonlySet<TaskStatus> = new Set([
@@ -950,6 +1154,89 @@ function isPgUniqueViolation(err: unknown): boolean {
   return code === "23505";
 }
 
+export function normalizeMarketingPhoneE164(phone: string | null | undefined): string | null {
+  if (typeof phone !== "string") return null;
+  const trimmed = phone.trim();
+  if (trimmed.length === 0 || trimmed.length > 40) return null;
+  if (/[^0-9+().\-\s]/.test(trimmed)) return null;
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (hasPlus) {
+    if (digits.length < 10 || digits.length > 15) return null;
+    return `+${digits}`;
+  }
+  if (digits.length === 10 && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits)) {
+    return `+1${digits}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1") && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
+
+export function computeMarketingPhoneHash(
+  phoneOrE164: string,
+  hashKey: string | undefined = process.env.PLATFORM_HASH_KEY,
+): string | null {
+  const key = hashKey?.trim();
+  if (!key) return null;
+  const normalized = normalizeMarketingPhoneE164(phoneOrE164);
+  if (!normalized) return null;
+  return createHmac("sha256", key).update(normalized).digest("hex");
+}
+
+function resolveHumanPhoneHash(
+  input: Pick<UpsertHumanInput, "phoneHash" | "phoneE164" | "handleOrEmailHmac">,
+  hashKey?: string,
+): string | null {
+  const explicit = typeof input.phoneHash === "string" ? input.phoneHash.trim() : "";
+  if (explicit.length > 0) return explicit;
+  const effectiveKey = hashKey ?? process.env.PLATFORM_HASH_KEY;
+  if (input.phoneE164) {
+    const hashed = computeMarketingPhoneHash(input.phoneE164, effectiveKey);
+    if (hashed) return hashed;
+  }
+  const fromContactKey = computeMarketingPhoneHash(input.handleOrEmailHmac, effectiveKey);
+  if (fromContactKey) return fromContactKey;
+  return null;
+}
+
+export async function isGloballySuppressedPhoneHash(
+  sql: SQL,
+  phoneHash: string | null | undefined,
+): Promise<boolean> {
+  const hash = typeof phoneHash === "string" ? phoneHash.trim() : "";
+  if (!hash) return false;
+
+  const fnCheck = firstRow(await sql`
+    select exists (
+      select 1
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'platform'
+        and p.proname = 'is_suppressed_phone_hash'
+        and p.pronargs = 1
+        and has_function_privilege(p.oid, 'EXECUTE')
+    ) as has_fn
+  `);
+  if (asBool(fnCheck?.has_fn)) {
+    const res = firstRow(await sql`
+      select platform.is_suppressed_phone_hash(${hash}) as suppressed
+    `);
+    return asBool(res?.suppressed);
+  }
+
+  const fallback = firstRow(await sql`
+    select exists (
+      select 1
+      from marketing.humans
+      where phone_hash = ${hash}
+        and (stopped or banned)
+    ) as suppressed
+  `);
+  return asBool(fallback?.suppressed);
+}
+
 // ============================================================================
 // MemoryMarketingStore
 // ============================================================================
@@ -957,12 +1244,16 @@ function isPgUniqueViolation(err: unknown): boolean {
 export class MemoryMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
+  private readonly externalSuppressedPhoneHashes = new Set<string>();
+  private readonly isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
 
   private readonly campaigns = new Map<string, Campaign>();
   private readonly agents = new Map<string, MarketingAgent>();
   private readonly devices = new Map<string, DeviceNode>();
   private readonly channels = new Map<string, ChannelAccount>();
   private readonly humans = new Map<string, HumanPartner>();
+  private readonly humanPhoneHashes = new Map<string, string>();
   private readonly tasks = new Map<string, MarketingTask>();
   private readonly proofs = new Map<string, ProofSubmission>();
   private readonly outreach = new Map<string, OutreachMessage>();
@@ -976,14 +1267,42 @@ export class MemoryMarketingStore implements MarketingStore {
   private readonly vipProspects = new Map<string, VipProspect>();
   private readonly videoAssets = new Map<string, VideoAsset>();
   private readonly antifraudClaims = new Map<string, AntiFraudClaim>();
+  private readonly llmTrajectories: LlmTrajectoryRecord[] = [];
+  private readonly contactSuppressions = new Map<string, ContactSuppressionRecord>();
+  private readonly contactTouchpoints: ContactTouchpoint[] = [];
+  private readonly cityPackOverrides = new Map<string, CityPackOverride>();
+  private readonly enrichmentCache = new Map<string, EnrichmentCacheEntry>();
+  private readonly apolloCreditLedger: ApolloCreditLedgerEntry[] = [];
+  private readonly apolloCreditByKey = new Map<string, ApolloCreditLedgerEntry>();
+  private readonly platformInteractions: PlatformInteractionRecord[] = [];
+  private readonly intakeCandidates = new Map<string, IntakeCandidateRecord>();
+  private readonly intakeByContactHash = new Map<string, string>();
 
-  constructor(opts: { clock?: Clock; idGen?: () => string } = {}) {
+  constructor(
+    opts: {
+      clock?: Clock;
+      idGen?: () => string;
+      hashKey?: string;
+      isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
+    } = {},
+  ) {
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
+    this.isExternalPhoneHashSuppressed = opts.isExternalPhoneHashSuppressed;
+  }
+
+  suppressExternalPhoneHash(phoneHash: string): void {
+    const trimmed = phoneHash.trim();
+    if (trimmed) this.externalSuppressedPhoneHashes.add(trimmed);
   }
 
   close(): Promise<void> {
     return Promise.resolve();
+  }
+
+  getSql(): SQL | null {
+    return null;
   }
 
   createCampaign(input: CreateCampaignInput): Promise<Campaign> {
@@ -999,6 +1318,7 @@ export class MemoryMarketingStore implements MarketingStore {
       name: input.name,
       city: input.city ?? "nyc",
       appId: input.appId,
+      desireLane: input.desireLane ?? null,
       riskZone: input.riskZone ?? "zone_2_amber",
       riskDial: input.riskDial ?? "conservative",
       monthlyBudgetCents: input.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS,
@@ -1066,6 +1386,7 @@ export class MemoryMarketingStore implements MarketingStore {
       ...existing,
       name: patch.name !== undefined ? patch.name : existing.name,
       city: patch.city !== undefined ? patch.city : existing.city,
+      desireLane: patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null),
       riskZone: patch.riskZone !== undefined ? patch.riskZone : existing.riskZone,
       riskDial: patch.riskDial !== undefined ? patch.riskDial : existing.riskDial,
       monthlyBudgetCents: nextMonthly,
@@ -1170,13 +1491,15 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve({ ...next });
   }
 
-  consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
+  async consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
     const agent = this.agents.get(input.agentId);
-    if (!agent) return Promise.reject(new Error(`Agent not found: ${input.agentId}`));
+    if (!agent) throw new Error(`Agent not found: ${input.agentId}`);
     const campaign = input.campaignId ? this.campaigns.get(input.campaignId) ?? null : null;
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
     const lockdown = Boolean(input.lockdown || campaign?.riskDial === "lockdown");
     const decision = evaluateAgentTurnPolicy({
       agent,
@@ -1186,7 +1509,7 @@ export class MemoryMarketingStore implements MarketingStore {
     });
 
     if (!decision.allowed) {
-      return Promise.resolve({ allowed: false, agent: { ...agent }, reason: decision.reason });
+      return { allowed: false, agent: { ...agent }, reason: decision.reason };
     }
 
     const updated: MarketingAgent = {
@@ -1195,7 +1518,7 @@ export class MemoryMarketingStore implements MarketingStore {
       updatedAt: isoNow(this.clock),
     };
     this.agents.set(updated.id, updated);
-    return Promise.resolve({ allowed: true, agent: { ...updated } });
+    return { allowed: true, agent: { ...updated } };
   }
 
   recordAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
@@ -1391,12 +1714,14 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(count);
   }
 
-  recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
+  async recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
     const device = this.devices.get(input.deviceId);
-    if (!device) return Promise.reject(new Error(`Device not found: ${input.deviceId}`));
+    if (!device) throw new Error(`Device not found: ${input.deviceId}`);
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
     const nowMs = this.clock.now();
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
 
     const decision = evaluateDeviceActionPolicy({
       device,
@@ -1492,6 +1817,10 @@ export class MemoryMarketingStore implements MarketingStore {
     const human: HumanPartner = {
       id: existing?.id ?? input.id ?? this.idGen(),
       handleOrEmailHmac: input.handleOrEmailHmac,
+      contactEmail:
+        input.contactEmail !== undefined
+          ? input.contactEmail
+          : (existing?.contactEmail ?? null),
       displayLabel: input.displayLabel,
       channel: input.channel,
       role: input.role,
@@ -1513,6 +1842,10 @@ export class MemoryMarketingStore implements MarketingStore {
       createdAt: existing?.createdAt ?? isoNow(this.clock),
     };
     this.humans.set(human.id, human);
+    const resolvedPhoneHash = resolveHumanPhoneHash(input, this.hashKey);
+    if (resolvedPhoneHash) {
+      this.humanPhoneHashes.set(human.id, resolvedPhoneHash);
+    }
     return Promise.resolve({ ...human });
   }
 
@@ -1526,6 +1859,25 @@ export class MemoryMarketingStore implements MarketingStore {
       if (h.handleOrEmailHmac === handleOrEmailHmac) return Promise.resolve({ ...h });
     }
     return Promise.resolve(null);
+  }
+
+  getHumanPhoneHash(id: string): Promise<string | null> {
+    return Promise.resolve(this.humanPhoneHashes.get(id) ?? null);
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    const hash = phoneHash.trim();
+    if (!hash) return false;
+    if (this.externalSuppressedPhoneHashes.has(hash)) return true;
+    if (this.isExternalPhoneHashSuppressed && (await this.isExternalPhoneHashSuppressed(hash))) {
+      return true;
+    }
+    for (const [id, storedHash] of this.humanPhoneHashes.entries()) {
+      if (storedHash !== hash) continue;
+      const h = this.humans.get(id);
+      if (h && (h.stopped || h.banned)) return true;
+    }
+    return false;
   }
 
   listHumans(
@@ -1628,6 +1980,7 @@ export class MemoryMarketingStore implements MarketingStore {
       tier: input.tier,
       taskKind: input.taskKind,
       city: input.city ?? campaign.city,
+      desireLane: input.desireLane ?? campaign.desireLane ?? null,
       title: input.title,
       briefText: input.briefText,
       vendorChannel: input.vendorChannel,
@@ -1901,18 +2254,21 @@ export class MemoryMarketingStore implements MarketingStore {
     });
   }
 
-  createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
+  async createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
     const campaign = this.campaigns.get(input.campaignId);
-    if (!campaign) return Promise.reject(new Error(`Campaign not found: ${input.campaignId}`));
+    if (!campaign) throw new Error(`Campaign not found: ${input.campaignId}`);
     const human = this.humans.get(input.humanId);
-    if (!human) return Promise.reject(new Error(`Human not found: ${input.humanId}`));
+    if (!human) throw new Error(`Human not found: ${input.humanId}`);
     const account = input.channelAccountId ? this.channels.get(input.channelAccountId) ?? null : null;
+
+    const phoneHash = input.phoneHash?.trim() || this.humanPhoneHashes.get(human.id) || null;
+    const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
     const sentToday = account ? account.sentToday : human.dailySendsToday;
     const dailyOutreachCap =
       input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
     const decision = evaluateOutreachPolicy({
-      human,
+      human: globallySuppressed ? { ...human, stopped: true } : human,
       lockdown: campaign.riskDial === "lockdown",
       leakCheckPass: input.leakCheckPass,
       sentToday,
@@ -1939,6 +2295,7 @@ export class MemoryMarketingStore implements MarketingStore {
       createdAt: now,
     };
     this.outreach.set(msg.id, msg);
+    trimMapFifo(this.outreach, MAX_MEMORY_APPEND_ITEMS);
 
     if (status === "sent" || status === "delivered") {
       this.humans.set(human.id, {
@@ -1951,7 +2308,7 @@ export class MemoryMarketingStore implements MarketingStore {
       }
     }
 
-    return Promise.resolve({ ...msg });
+    return { ...msg };
   }
 
   listOutreachMessages(
@@ -1972,23 +2329,25 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(paginateArray(list, filter));
   }
 
-  updateOutreachStatus(
+  async updateOutreachStatus(
     id: string,
     status: OutreachStatus,
     externalRef?: string | null,
     dailyOutreachCap?: number,
   ): Promise<OutreachMessage> {
     const existing = this.outreach.get(id);
-    if (!existing) return Promise.reject(new Error(`Outreach message not found: ${id}`));
+    if (!existing) throw new Error(`Outreach message not found: ${id}`);
 
     if (status === "sent" || status === "delivered") {
       const campaign = this.campaigns.get(existing.campaignId);
       const human = this.humans.get(existing.humanId);
       if (!campaign || !human) {
-        return Promise.reject(new Error("Missing campaign or human for outreach send"));
+        throw new Error("Missing campaign or human for outreach send");
       }
+      const phoneHash = this.humanPhoneHashes.get(human.id) ?? null;
+      const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: campaign.riskDial === "lockdown",
         leakCheckPass: existing.leakCheckPass,
         dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,
@@ -1999,7 +2358,7 @@ export class MemoryMarketingStore implements MarketingStore {
           status: decision.blockedStatus ?? "blocked_policy",
         };
         this.outreach.set(id, blocked);
-        return Promise.resolve({ ...blocked });
+        return { ...blocked };
       }
       if (existing.status !== "sent" && existing.status !== "delivered") {
         this.humans.set(human.id, {
@@ -2016,25 +2375,43 @@ export class MemoryMarketingStore implements MarketingStore {
       externalRef: externalRef !== undefined ? externalRef : existing.externalRef,
     };
     this.outreach.set(id, updated);
-    return Promise.resolve({ ...updated });
+    return { ...updated };
   }
 
   recordAttributionEvent(input: CreateAttributionEventInput): Promise<AttributionEvent> {
     const campaign = this.campaigns.get(input.campaignId);
     if (!campaign) return Promise.reject(new Error(`Campaign not found: ${input.campaignId}`));
+    const now = isoNow(this.clock);
+    const count = input.count ?? 1;
     const event: AttributionEvent = {
       id: input.id ?? this.idGen(),
       campaignId: input.campaignId,
       taskId: input.taskId ?? null,
+      armId: input.armId ?? null,
+      desireLane: input.desireLane ?? campaign.desireLane ?? null,
       qrBatchCode: input.qrBatchCode ?? null,
       eventKind: input.eventKind,
       city: input.city ?? campaign.city,
       appId: input.appId,
-      count: input.count ?? 1,
+      count,
       metadata: { ...(input.metadata ?? {}) },
-      createdAt: isoNow(this.clock),
+      createdAt: now,
     };
     this.attribution.set(event.id, event);
+    trimMapFifo(this.attribution, MAX_MEMORY_APPEND_ITEMS);
+
+    if (input.armId && VERIFIED_OUTCOME_EVENT_KINDS.has(input.eventKind)) {
+      const arm = this.banditArms.get(input.armId);
+      if (arm) {
+        this.banditArms.set(arm.id, {
+          ...arm,
+          signups:
+            input.eventKind === "signup_verified_adult" ? arm.signups + count : arm.signups,
+          verifiedOutcomes: (arm.verifiedOutcomes ?? 0) + count,
+          updatedAt: now,
+        });
+      }
+    }
     return Promise.resolve({ ...event, metadata: { ...event.metadata } });
   }
 
@@ -2218,11 +2595,14 @@ export class MemoryMarketingStore implements MarketingStore {
       armKey: input.armKey,
       label: input.label,
       track: input.track,
+      desireLane:
+        input.desireLane !== undefined ? input.desireLane : (existing?.desireLane ?? null),
       alpha: input.alpha ?? existing?.alpha ?? 1,
       beta: input.beta ?? existing?.beta ?? 1,
       weight: input.weight ?? existing?.weight ?? 0,
       spendCents: input.spendCents ?? existing?.spendCents ?? 0,
       signups: input.signups ?? existing?.signups ?? 0,
+      verifiedOutcomes: input.verifiedOutcomes ?? existing?.verifiedOutcomes ?? 0,
       stopEvents: input.stopEvents ?? existing?.stopEvents ?? 0,
       totalContacts: input.totalContacts ?? existing?.totalContacts ?? 0,
       status: input.status ?? existing?.status ?? "active",
@@ -2255,11 +2635,14 @@ export class MemoryMarketingStore implements MarketingStore {
     const next: BanditArm = {
       ...existing,
       label: patch.label ?? existing.label,
+      desireLane:
+        patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null),
       alpha: patch.alpha ?? existing.alpha,
       beta: patch.beta ?? existing.beta,
       weight: patch.weight ?? existing.weight,
       spendCents: patch.spendCents ?? existing.spendCents,
       signups: patch.signups ?? existing.signups,
+      verifiedOutcomes: patch.verifiedOutcomes ?? existing.verifiedOutcomes ?? 0,
       stopEvents: patch.stopEvents ?? existing.stopEvents,
       totalContacts: patch.totalContacts ?? existing.totalContacts,
       status: patch.status ?? existing.status,
@@ -2277,6 +2660,7 @@ export class MemoryMarketingStore implements MarketingStore {
       id: input.id ?? this.idGen(),
       campaignId: input.campaignId,
       city: input.city ?? campaign.city,
+      desireLane: input.desireLane ?? campaign.desireLane ?? null,
       venueName: input.venueName,
       vertical: input.vertical,
       contactEmail: input.contactEmail ?? null,
@@ -2316,6 +2700,8 @@ export class MemoryMarketingStore implements MarketingStore {
     if (!existing) return Promise.reject(new Error(`BD deal not found: ${id}`));
     const next: BdDeal = {
       ...existing,
+      desireLane:
+        patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null),
       venueName: patch.venueName ?? existing.venueName,
       vertical: patch.vertical ?? existing.vertical,
       contactEmail: patch.contactEmail !== undefined ? patch.contactEmail : existing.contactEmail,
@@ -2413,6 +2799,7 @@ export class MemoryMarketingStore implements MarketingStore {
       id: input.id ?? this.idGen(),
       campaignId: input.campaignId,
       city: input.city ?? campaign.city,
+      desireLane: input.desireLane ?? campaign.desireLane ?? null,
       name: input.name,
       archetype: input.archetype,
       organization: input.organization ?? null,
@@ -2457,6 +2844,8 @@ export class MemoryMarketingStore implements MarketingStore {
     if (!existing) return Promise.reject(new Error(`VIP prospect not found: ${id}`));
     const next: VipProspect = {
       ...existing,
+      desireLane:
+        patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null),
       archetype: patch.archetype ?? existing.archetype,
       organization: patch.organization !== undefined ? patch.organization : existing.organization,
       sourceUrl: patch.sourceUrl !== undefined ? patch.sourceUrl : existing.sourceUrl,
@@ -2471,7 +2860,8 @@ export class MemoryMarketingStore implements MarketingStore {
   }
 
   createVideoAsset(input: CreateVideoAssetInput): Promise<VideoAsset> {
-    if (!this.campaigns.has(input.campaignId)) {
+    const campaign = this.campaigns.get(input.campaignId);
+    if (!campaign) {
       return Promise.reject(new Error(`Campaign not found: ${input.campaignId}`));
     }
     const now = isoNow(this.clock);
@@ -2479,6 +2869,7 @@ export class MemoryMarketingStore implements MarketingStore {
       id: input.id ?? this.idGen(),
       campaignId: input.campaignId,
       agentId: input.agentId ?? null,
+      desireLane: input.desireLane ?? campaign.desireLane ?? null,
       title: input.title,
       hook: input.hook,
       script: input.script,
@@ -2519,6 +2910,8 @@ export class MemoryMarketingStore implements MarketingStore {
     const next: VideoAsset = {
       ...existing,
       agentId: patch.agentId !== undefined ? patch.agentId : existing.agentId,
+      desireLane:
+        patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null),
       title: patch.title ?? existing.title,
       hook: patch.hook ?? existing.hook,
       script: patch.script ?? existing.script,
@@ -2708,6 +3101,560 @@ export class MemoryMarketingStore implements MarketingStore {
       ),
     );
   }
+
+  // ---- Pass-3 Contract 4 (Memory) ----
+
+  reserveAgentTurn(agentId: string, nowIso: string): Promise<ReserveAgentTurnResult> {
+    const existing = this.agents.get(agentId);
+    if (!existing) return Promise.reject(new Error(`Agent not found: ${agentId}`));
+    const parsedMs = Date.parse(nowIso);
+    const nowMs = Number.isFinite(parsedMs) ? parsedMs : this.clock.now();
+    const effectiveIso = new Date(nowMs).toISOString();
+    const dayRolled = existing.updatedAt.slice(0, 10) < effectiveIso.slice(0, 10);
+    const candidate: MarketingAgent = dayRolled
+      ? {
+          ...existing,
+          turnsUsedToday: 0,
+          status:
+            existing.status === "rate_limited" || existing.status === "cooldown"
+              ? "idle"
+              : existing.status,
+          cooldownUntil:
+            existing.status === "rate_limited" || existing.status === "cooldown"
+              ? null
+              : existing.cooldownUntil,
+        }
+      : existing;
+
+    const decision = evaluateAgentTurnPolicy({
+      agent: candidate,
+      nowMs,
+      targetStopped: false,
+      lockdown: false,
+    });
+    if (!decision.allowed) {
+      if (dayRolled) this.agents.set(agentId, { ...candidate, updatedAt: effectiveIso });
+      return Promise.resolve({ reserved: false, agent: { ...candidate }, reason: decision.reason });
+    }
+    const updated: MarketingAgent = {
+      ...candidate,
+      turnsUsedToday: candidate.turnsUsedToday + 1,
+      updatedAt: effectiveIso,
+    };
+    this.agents.set(agentId, updated);
+    return Promise.resolve({ reserved: true, agent: { ...updated } });
+  }
+
+  recordLlmTrajectory(input: RecordLlmTrajectoryInput): Promise<LlmTrajectoryRecord> {
+    const normalized = normalizeTrajectoryStatus(input.status);
+    const record: LlmTrajectoryRecord = {
+      id: input.id ?? this.idGen(),
+      agentId: input.agentId ?? null,
+      campaignId: input.campaignId ?? null,
+      provider: input.provider,
+      model: input.model,
+      promptHash: input.promptHash,
+      inputTokens: Math.max(0, Math.round(input.inputTokens)),
+      outputTokens: Math.max(0, Math.round(input.outputTokens)),
+      cached: Boolean(input.cached || normalized.cached),
+      costMicros: Math.max(0, Math.round(input.costMicros)),
+      latencyMs: Math.max(0, Math.round(input.latencyMs ?? 0)),
+      status: normalized.status,
+      failoverChain: input.failoverChain ?? null,
+      leakBlocked: Boolean(input.leakBlocked || normalized.status === "leak_blocked"),
+      createdAt: isoNow(this.clock),
+    };
+    this.llmTrajectories.push(record);
+    if (this.llmTrajectories.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.llmTrajectories.splice(0, this.llmTrajectories.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  listLlmTrajectories(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    limit?: number;
+  }): Promise<LlmTrajectoryRecord[]> {
+    const limit =
+      filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit > 0
+        ? Math.min(MAX_LIST_LIMIT, Math.round(filter.limit))
+        : DEFAULT_LIST_LIMIT;
+    const filtered = this.llmTrajectories
+      .filter((t) => !filter?.agentId || t.agentId === filter.agentId)
+      .filter((t) => !filter?.campaignId || t.campaignId === filter.campaignId)
+      .slice()
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, limit)
+      .map((t) => ({ ...t }));
+    return Promise.resolve(filtered);
+  }
+
+  getDailyLlmUsage(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    dayIso?: string;
+  }): Promise<DailyLlmUsage> {
+    const day = (filter?.dayIso ?? isoNow(this.clock)).slice(0, 10);
+    let calls = 0;
+    let cachedCalls = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costMicros = 0;
+    let leakBlockedCalls = 0;
+    let budgetBlockedCalls = 0;
+    for (const t of this.llmTrajectories) {
+      if (t.createdAt.slice(0, 10) !== day) continue;
+      if (filter?.agentId && t.agentId !== filter.agentId) continue;
+      if (filter?.campaignId && t.campaignId !== filter.campaignId) continue;
+      calls += 1;
+      if (t.cached) cachedCalls += 1;
+      inputTokens += t.inputTokens;
+      outputTokens += t.outputTokens;
+      costMicros += t.costMicros;
+      if (t.leakBlocked || t.status === "leak_blocked") leakBlockedCalls += 1;
+      if (t.status === "budget_blocked") budgetBlockedCalls += 1;
+    }
+    return Promise.resolve({
+      day,
+      calls,
+      cachedCalls,
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      costMicros,
+      leakBlockedCalls,
+      budgetBlockedCalls,
+    });
+  }
+
+  isContactSuppressed(contactHash: string): Promise<ContactSuppressionRecord | null> {
+    const found = this.contactSuppressions.get(contactHash);
+    return Promise.resolve(found ? { ...found } : null);
+  }
+
+  listContactSuppressions(limit = DEFAULT_LIST_LIMIT): Promise<ContactSuppressionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(limit)));
+    return Promise.resolve(
+      [...this.contactSuppressions.values()]
+        .sort((a, b) => b.suppressedAt.localeCompare(a.suppressedAt))
+        .slice(0, safeLimit)
+        .map((r) => ({ ...r })),
+    );
+  }
+
+  recordContactSuppression(input: {
+    contactHash: string;
+    reason: string;
+    sourceChannel: string;
+    isMinor?: boolean;
+  }): Promise<ContactSuppressionRecord> {
+    const existing = this.contactSuppressions.get(input.contactHash);
+    const record: ContactSuppressionRecord = {
+      contactHash: input.contactHash,
+      reason: input.reason,
+      sourceChannel: input.sourceChannel,
+      isMinor: Boolean(existing?.isMinor || input.isMinor),
+      suppressedAt: existing?.suppressedAt ?? isoNow(this.clock),
+    };
+    this.contactSuppressions.set(record.contactHash, record);
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === record.contactHash) {
+        this.enrichmentCache.delete(key);
+      }
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  getContactTouchpointStats(contactHash: string, nowMs: number): Promise<ContactTouchpointStats> {
+    const matching = this.contactTouchpoints
+      .filter((tp) => tp.contactHash === contactHash)
+      .sort((a, b) => b.touchedAt.localeCompare(a.touchedAt));
+    const cutoff30d = nowMs - 30 * 86_400_000;
+    const dayStartMs = Date.parse(new Date(nowMs).toISOString().slice(0, 10) + "T00:00:00.000Z");
+
+    let lastColdMs: number | null = null;
+    let coldTouches30d = 0;
+    let unansweredColdStreak = 0;
+    let streakBroken = false;
+    let opTouchesToday = 0;
+
+    for (const tp of matching) {
+      const ts = Date.parse(tp.touchedAt);
+      if (!Number.isFinite(ts)) continue;
+      if (tp.isCold) {
+        if (lastColdMs === null) lastColdMs = ts;
+        if (ts >= cutoff30d && ts <= nowMs) coldTouches30d += 1;
+        if (!streakBroken) {
+          if (tp.replied) streakBroken = true;
+          else unansweredColdStreak += 1;
+        }
+      } else if (ts >= dayStartMs && ts <= nowMs) {
+        opTouchesToday += 1;
+      }
+    }
+
+    const daysSinceLastCold =
+      lastColdMs === null ? 999 : Math.max(0, Math.floor((nowMs - lastColdMs) / 86_400_000));
+
+    return Promise.resolve({
+      contactHash,
+      daysSinceLastCold,
+      coldTouches30d,
+      unansweredColdStreak,
+      opTouchesToday,
+      lastTouchedAt: matching[0]?.touchedAt ?? null,
+    });
+  }
+
+  recordContactTouchpoint(input: {
+    contactHash: string;
+    campaignId?: string | null;
+    surface: ContactTouchSurface;
+    isCold: boolean;
+    answered?: boolean;
+  }): Promise<void> {
+    this.contactTouchpoints.push({
+      id: this.idGen(),
+      contactHash: input.contactHash,
+      campaignId: input.campaignId ?? null,
+      surface: input.surface,
+      isCold: input.isCold,
+      replied: Boolean(input.answered),
+      touchedAt: isoNow(this.clock),
+    });
+    if (this.contactTouchpoints.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.contactTouchpoints.splice(0, this.contactTouchpoints.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve();
+  }
+
+  getCampaignStopStats(campaignId: string): Promise<CampaignStopStats> {
+    const contacted = new Set<string>();
+    const stopped = new Set<string>();
+    for (const msg of this.outreach.values()) {
+      if (msg.campaignId !== campaignId) continue;
+      contacted.add(msg.humanId);
+      const human = this.humans.get(msg.humanId);
+      if (msg.status === "blocked_stop" || human?.stopped) {
+        stopped.add(msg.humanId);
+      }
+    }
+    const contactedHumans = contacted.size;
+    const stoppedHumans = stopped.size;
+    const stopRateBps =
+      contactedHumans > 0 ? Math.round((stoppedHumans * 10_000) / contactedHumans) : 0;
+    return Promise.resolve({ contactedHumans, stoppedHumans, stopRateBps });
+  }
+
+  quarantineClaimsBatch(
+    ids: readonly string[],
+    clusterId: string,
+    reason: string,
+  ): Promise<number> {
+    let updated = 0;
+    for (const id of ids) {
+      const existing = this.antifraudClaims.get(id);
+      if (!existing) continue;
+      this.antifraudClaims.set(id, {
+        ...existing,
+        clusterId,
+        status: "quarantined",
+        reason,
+      });
+      updated += 1;
+    }
+    return Promise.resolve(updated);
+  }
+
+  updateBanditArmsBatch(updates: readonly BanditArmBatchUpdate[]): Promise<BanditArm[]> {
+    const now = isoNow(this.clock);
+    const updatedArms: BanditArm[] = [];
+    for (const patch of updates) {
+      const existing = this.banditArms.get(patch.id);
+      if (!existing) continue;
+      const next: BanditArm = {
+        ...existing,
+        alpha: patch.alpha,
+        beta: patch.beta,
+        weight: patch.weight,
+        status: patch.status,
+        updatedAt: now,
+      };
+      this.banditArms.set(patch.id, next);
+      updatedArms.push({ ...next });
+    }
+    return Promise.resolve(updatedArms);
+  }
+
+  upsertCityPack(
+    code: string,
+    stage: CityLaunchStage,
+    config: Record<string, unknown>,
+  ): Promise<CityPackOverride> {
+    const normalized = code.trim().toLowerCase();
+    const record: CityPackOverride = {
+      code: normalized,
+      stage,
+      config: { ...config },
+      updatedAt: isoNow(this.clock),
+    };
+    this.cityPackOverrides.set(normalized, record);
+    return Promise.resolve({ ...record, config: { ...record.config } });
+  }
+
+  listCityPacksOverrides(): Promise<CityPackOverride[]> {
+    return Promise.resolve(
+      [...this.cityPackOverrides.values()]
+        .sort((a, b) => a.code.localeCompare(b.code))
+        .map((c) => ({ ...c, config: { ...c.config } })),
+    );
+  }
+
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const existing = this.enrichmentCache.get(cacheKey);
+    if (!existing) return Promise.resolve(null);
+    const expiresMs = Date.parse(existing.expiresAt);
+    if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
+      this.enrichmentCache.delete(cacheKey);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ ...existing, payload: { ...existing.payload } });
+  }
+
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const stored: EnrichmentCacheEntry = {
+      ...entry,
+      payload: { ...entry.payload },
+    };
+    this.enrichmentCache.set(stored.cacheKey, stored);
+    trimMapFifo(this.enrichmentCache, MAX_MEMORY_APPEND_ITEMS);
+    return Promise.resolve({ ...stored, payload: { ...stored.payload } });
+  }
+
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    let removed = 0;
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === contactHash) {
+        this.enrichmentCache.delete(key);
+        removed += 1;
+      }
+    }
+    return Promise.resolve(removed);
+  }
+
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const existing = this.apolloCreditByKey.get(input.idempotencyKey);
+    if (existing) return Promise.resolve({ ...existing });
+    const entry: ApolloCreditLedgerEntry = {
+      id: String(this.apolloCreditLedger.length + 1),
+      campaignId: input.campaignId ?? null,
+      operation: input.operation,
+      credits: Math.max(0, Math.round(input.credits)),
+      costCents: Math.max(0, Math.round(input.costCents)),
+      cacheHit: Boolean(input.cacheHit),
+      dryRun: Boolean(input.dryRun),
+      idempotencyKey: input.idempotencyKey,
+      createdAt: isoNow(this.clock),
+    };
+    this.apolloCreditLedger.push(entry);
+    this.apolloCreditByKey.set(entry.idempotencyKey, entry);
+    if (this.apolloCreditLedger.length > MAX_MEMORY_APPEND_ITEMS) {
+      const dropped = this.apolloCreditLedger.shift();
+      if (dropped) this.apolloCreditByKey.delete(dropped.idempotencyKey);
+    }
+    return Promise.resolve({ ...entry });
+  }
+
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const dayPrefix = new Date(nowMs).toISOString().slice(0, 10);
+    const monthPrefix = dayPrefix.slice(0, 7);
+    let creditsUsedToday = 0;
+    let creditsUsedMonth = 0;
+    let searchCallsToday = 0;
+    let cacheHitsToday = 0;
+    let totalCallsToday = 0;
+
+    for (const row of this.apolloCreditLedger) {
+      const rowMonth = row.createdAt.slice(0, 7);
+      const rowDay = row.createdAt.slice(0, 10);
+      if (rowMonth === monthPrefix) {
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedMonth += row.credits;
+        }
+      }
+      if (rowDay === dayPrefix) {
+        totalCallsToday += 1;
+        if (row.cacheHit) cacheHitsToday += 1;
+        if (row.operation === "people_search" && !row.cacheHit) {
+          searchCallsToday += 1;
+        }
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedToday += row.credits;
+        }
+      }
+    }
+
+    return Promise.resolve({
+      day: dayPrefix,
+      month: monthPrefix,
+      creditsUsedToday,
+      creditsUsedMonth,
+      searchCallsToday,
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    });
+  }
+
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const record: PlatformInteractionRecord = {
+      id: this.idGen(),
+      campaignId: input.campaignId ?? null,
+      platform: input.platform,
+      channelAccountId: input.channelAccountId ?? null,
+      contactHash: input.contactHash,
+      direction: input.direction,
+      interactionKind: input.interactionKind,
+      reportRiskScore: Math.max(0, Math.min(100, Math.round(input.reportRiskScore))),
+      outcome: input.outcome,
+      createdAt: isoNow(this.clock),
+    };
+    this.platformInteractions.push(record);
+    if (this.platformInteractions.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.platformInteractions.splice(0, this.platformInteractions.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const matching = this.platformInteractions
+      .filter((r) => !filter?.campaignId || r.campaignId === filter.campaignId)
+      .filter((r) => !filter?.platform || r.platform === filter.platform)
+      .filter((r) => !filter?.channelAccountId || r.channelAccountId === filter.channelAccountId)
+      .filter((r) => !filter?.contactHash || r.contactHash === filter.contactHash)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, safeLimit)
+      .map((r) => ({ ...r }));
+    return Promise.resolve(matching);
+  }
+
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const now = isoNow(this.clock);
+    const existingId = this.intakeByContactHash.get(input.contactHash);
+    const existing = existingId ? this.intakeCandidates.get(existingId) : undefined;
+    const minAge = minAgeReading(existing?.statedAge, input.statedAge);
+    const record: IntakeCandidateRecord = {
+      id: existing?.id ?? input.id ?? this.idGen(),
+      campaignId: input.campaignId ?? existing?.campaignId ?? null,
+      city: input.city,
+      targetAppId: input.targetAppId,
+      desireLane: input.desireLane ?? existing?.desireLane ?? null,
+      sourcePlatform: input.sourcePlatform,
+      contactHash: input.contactHash,
+      statedAge: minAge,
+      qualityScore: Math.max(0, Math.min(100, Math.round(input.qualityScore))),
+      scoreBreakdown: { ...input.scoreBreakdown },
+      valueDelivered: Boolean(existing?.valueDelivered || input.valueDelivered),
+      explicitPositiveSignal: Boolean(existing?.explicitPositiveSignal || input.explicitPositiveSignal),
+      inviteAttempts: Math.max(existing?.inviteAttempts ?? 0, input.inviteAttempts),
+      status: input.status,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.intakeCandidates.set(record.id, record);
+    this.intakeByContactHash.set(record.contactHash, record.id);
+    return Promise.resolve({ ...record, scoreBreakdown: { ...record.scoreBreakdown } });
+  }
+
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const found = this.intakeCandidates.get(id);
+    return Promise.resolve(
+      found ? { ...found, scoreBreakdown: { ...found.scoreBreakdown } } : null,
+    );
+  }
+
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const id = this.intakeByContactHash.get(contactHash);
+    if (!id) return Promise.resolve(null);
+    return this.getIntakeCandidate(id);
+  }
+
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    return Promise.resolve(
+      [...this.intakeCandidates.values()]
+        .filter((c) => !filter?.campaignId || c.campaignId === filter.campaignId)
+        .filter((c) => !filter?.city || c.city === filter.city)
+        .filter((c) => !filter?.status || c.status === filter.status)
+        .sort((a, b) => b.qualityScore - a.qualityScore || b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, safeLimit)
+        .map((c) => ({ ...c, scoreBreakdown: { ...c.scoreBreakdown } })),
+    );
+  }
+
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = this.intakeCandidates.get(id);
+    if (!existing) return Promise.reject(new Error(`Intake candidate not found: ${id}`));
+    const next: IntakeCandidateRecord = {
+      ...existing,
+      qualityScore:
+        patch.qualityScore !== undefined
+          ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+          : existing.qualityScore,
+      scoreBreakdown: patch.scoreBreakdown ? { ...patch.scoreBreakdown } : existing.scoreBreakdown,
+      valueDelivered:
+        patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered,
+      explicitPositiveSignal:
+        patch.explicitPositiveSignal !== undefined
+          ? Boolean(patch.explicitPositiveSignal)
+          : existing.explicitPositiveSignal,
+      inviteAttempts:
+        patch.inviteAttempts !== undefined
+          ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+          : existing.inviteAttempts,
+      status: patch.status ?? existing.status,
+      statedAge:
+        patch.statedAge !== undefined
+          ? minAgeReading(existing.statedAge, patch.statedAge)
+          : existing.statedAge,
+      updatedAt: isoNow(this.clock),
+    };
+    this.intakeCandidates.set(id, next);
+    return Promise.resolve({ ...next, scoreBreakdown: { ...next.scoreBreakdown } });
+  }
 }
 
 // ============================================================================
@@ -2819,6 +3766,15 @@ function attributionKindFromDb(dbType: string): AttributionEvent["eventKind"] {
   }
   if (dbType === "video_view_snapshot" || dbType === "video_view") return "video_view";
   if (dbType === "signup_started") return "signup_started";
+  if (
+    dbType === "first_match_accepted" ||
+    dbType === "irl_meeting_confirmed" ||
+    dbType === "second_meetup_retained" ||
+    dbType === "intro_or_hire_unlocked" ||
+    dbType === "t3_match_verified"
+  ) {
+    return dbType;
+  }
   return "qr_scan";
 }
 
@@ -2835,19 +3791,25 @@ export class PgMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly owned: boolean;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
 
   constructor(
     db: string | SQL,
-    opts: { clock?: Clock; idGen?: () => string } = {},
+    opts: { clock?: Clock; idGen?: () => string; hashKey?: string } = {},
   ) {
     this.owned = typeof db === "string";
-    this.sql = typeof db === "string" ? new SQL({ url: db, max: 4 }) : db;
+    this.sql = typeof db === "string" ? new SQL({ url: db, max: 12 }) : db;
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
   }
 
   async close(): Promise<void> {
     if (this.owned) await (this.sql as unknown as { close(): Promise<void> }).close();
+  }
+
+  getSql(): SQL | null {
+    return this.sql;
   }
 
   /** Apply apps/marketing/db/schema.sql (idempotent). */
@@ -2889,6 +3851,7 @@ export class PgMarketingStore implements MarketingStore {
       name: asStr(r.name),
       city: asStr(r.city, "nyc"),
       appId: asStr(r.app_id, "all") as AppId,
+      desireLane: asOptStr(r.desire_lane),
       riskZone: asStr(r.risk_zone, "zone_2_amber") as RiskZone,
       riskDial: (riskDialRaw === "normal" ? "balanced" : riskDialRaw) as RiskDial,
       monthlyBudgetCents: asNum(r.monthly_budget_cents),
@@ -2989,6 +3952,7 @@ export class PgMarketingStore implements MarketingStore {
     return {
       id: asStr(r.id),
       handleOrEmailHmac: asStr(r.contact_key),
+      contactEmail: asOptStr(r.contact_email),
       displayLabel: asStr(r.display_name),
       channel: (typeof meta["channel"] === "string"
         ? meta["channel"]
@@ -3015,6 +3979,7 @@ export class PgMarketingStore implements MarketingStore {
       tier: asNum(r.tier, 1) as ImplementationTier,
       taskKind: (rawKind === "discovery" ? "digital_outreach" : rawKind) as TaskKind,
       city: asStr(r.city, "nyc"),
+      desireLane: asOptStr(r.desire_lane),
       title: asStr(r.title),
       briefText: asStr(r.brief_text),
       vendorChannel: (rawVendor === "print_local" ? "print_api" : rawVendor) as VendorChannel,
@@ -3093,6 +4058,8 @@ export class PgMarketingStore implements MarketingStore {
       id: asStr(r.id),
       campaignId: asStr(r.campaign_id),
       taskId: asOptStr(r.task_id),
+      armId: asOptStr(r.arm_id),
+      desireLane: asOptStr(r.desire_lane),
       qrBatchCode: qrNull ? null : asOptStr(r.qr_batch_code),
       eventKind: attributionKindFromDb(asStr(r.event_type, "qr_scan")),
       city: asStr(r.city, "nyc"),
@@ -3140,11 +4107,13 @@ export class PgMarketingStore implements MarketingStore {
       armKey: asStr(r.arm_key),
       label: asStr(r.label),
       track: asStr(r.track),
+      desireLane: asOptStr(r.desire_lane),
       alpha: asNum(r.alpha, 1),
       beta: asNum(r.beta, 1),
       weight: asNum(r.weight, 0),
       spendCents: asNum(r.spend_cents),
       signups: asNum(r.signups),
+      verifiedOutcomes: asNum(r.verified_outcomes),
       stopEvents: asNum(r.stop_events),
       totalContacts: asNum(r.total_contacts),
       status: asStr(r.status, "active") as BanditArmStatus,
@@ -3157,6 +4126,7 @@ export class PgMarketingStore implements MarketingStore {
       id: asStr(r.id),
       campaignId: asStr(r.campaign_id),
       city: asStr(r.city, "nyc"),
+      desireLane: asOptStr(r.desire_lane),
       venueName: asStr(r.venue_name),
       vertical: asStr(r.vertical, "all") as AppId,
       contactEmail: asOptStr(r.contact_email),
@@ -3194,6 +4164,7 @@ export class PgMarketingStore implements MarketingStore {
       id: asStr(r.id),
       campaignId: asStr(r.campaign_id),
       city: asStr(r.city, "nyc"),
+      desireLane: asOptStr(r.desire_lane),
       name: asStr(r.name),
       archetype: asStr(r.archetype),
       organization: asOptStr(r.organization),
@@ -3213,6 +4184,7 @@ export class PgMarketingStore implements MarketingStore {
       id: asStr(r.id),
       campaignId: asStr(r.campaign_id),
       agentId: asOptStr(r.agent_id),
+      desireLane: asOptStr(r.desire_lane),
       title: asStr(r.title),
       hook: asStr(r.hook),
       script: asStr(r.script),
@@ -3246,16 +4218,56 @@ export class PgMarketingStore implements MarketingStore {
     };
   }
 
+  private mapLlmTrajectory(r: Row): LlmTrajectoryRecord {
+    return {
+      id: asStr(r.id),
+      agentId: asOptStr(r.agent_id),
+      campaignId: asOptStr(r.campaign_id),
+      provider: asStr(r.provider),
+      model: asStr(r.model),
+      promptHash: asStr(r.prompt_hash),
+      inputTokens: asNum(r.input_tokens),
+      outputTokens: asNum(r.output_tokens),
+      cached: asBool(r.cached),
+      costMicros: asNum(r.cost_micros),
+      latencyMs: asNum(r.latency_ms),
+      status: asStr(r.status, "ok") as LlmTrajectoryStatus,
+      failoverChain: asOptStr(r.failover_chain),
+      leakBlocked: asBool(r.leak_blocked),
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapContactSuppression(r: Row): ContactSuppressionRecord {
+    return {
+      contactHash: asStr(r.contact_hash),
+      reason: asStr(r.reason),
+      sourceChannel: asStr(r.source_channel, "marketing"),
+      isMinor: asBool(r.is_minor),
+      suppressedAt: toIso(r.suppressed_at),
+    };
+  }
+
+  private mapCityPackOverride(r: Row): CityPackOverride {
+    return {
+      code: asStr(r.code),
+      stage: asStr(r.stage, "scout") as CityLaunchStage,
+      config: toJsonObj(r.config),
+      updatedAt: toIso(r.updated_at),
+    };
+  }
+
   async createCampaign(input: CreateCampaignInput): Promise<Campaign> {
     const id = input.id ?? this.idGen();
     const now = new Date(this.clock.now());
     const rows = await this.sql`
       insert into marketing.campaigns (
-        id, slug, name, city, app_id, risk_zone, risk_dial,
+        id, slug, name, city, app_id, desire_lane, risk_zone, risk_dial,
         monthly_budget_cents, daily_cap_cents, max_task_cents,
         billing_armed, slop_cash_enabled, status, created_at, updated_at
       ) values (
         ${id}, ${input.slug}, ${input.name}, ${input.city ?? "nyc"}, ${input.appId},
+        ${input.desireLane ?? null},
         ${input.riskZone ?? "zone_2_amber"}, ${input.riskDial ?? "conservative"},
         ${input.monthlyBudgetCents ?? DEFAULT_MONTHLY_BUDGET_CENTS},
         ${input.dailyCapCents ?? DEFAULT_DAILY_CAP_CENTS},
@@ -3351,6 +4363,7 @@ export class PgMarketingStore implements MarketingStore {
         update marketing.campaigns set
           name = ${patch.name ?? existing.name},
           city = ${patch.city ?? existing.city},
+          desire_lane = ${patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null)},
           risk_zone = ${patch.riskZone ?? existing.riskZone},
           risk_dial = ${patch.riskDial ?? existing.riskDial},
           monthly_budget_cents = ${nextMonthly},
@@ -3494,9 +4507,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -3726,9 +4743,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -3828,17 +4849,18 @@ export class PgMarketingStore implements MarketingStore {
     const unstop = input.unstop === true;
     const incomingStopped = unstop ? false : Boolean(input.stopped);
     const incomingBanned = Boolean(input.banned);
+    const phoneHash = resolveHumanPhoneHash(input, this.hashKey);
     const meta = JSON.stringify({ channel: input.channel });
 
     // C-04: Atomic SQL ON CONFLICT preserves youngest age reading and STOP/ban fence.
     const rows = await this.sql`
       insert into marketing.humans (
-        id, contact_key, display_name, role, source_channel, city,
+        id, contact_key, contact_email, display_name, role, source_channel, city, phone_hash,
         age_years, age_verified, stopped, stop_reason, banned,
         daily_sends_today, last_contacted_at, metadata, created_at, updated_at
       ) values (
-        ${id}, ${input.handleOrEmailHmac}, ${input.displayLabel},
-        ${input.role}, ${input.channel}, ${input.city ?? "nyc"},
+        ${id}, ${input.handleOrEmailHmac}, ${input.contactEmail ?? null}, ${input.displayLabel},
+        ${input.role}, ${input.channel}, ${input.city ?? "nyc"}, ${phoneHash},
         ${incomingAge}, ${isAdultReading(incomingAge)},
         ${incomingStopped}, ${unstop ? null : (input.stopReason ?? null)}, ${incomingBanned},
         ${input.dailySendsToday ?? 0},
@@ -3846,9 +4868,11 @@ export class PgMarketingStore implements MarketingStore {
         ${meta}::text::jsonb, ${now}, ${now}
       )
       on conflict (contact_key) do update set
+        contact_email = coalesce(excluded.contact_email, marketing.humans.contact_email),
         display_name = excluded.display_name,
         role = excluded.role,
         city = excluded.city,
+        phone_hash = coalesce(excluded.phone_hash, marketing.humans.phone_hash),
         age_years = case
           when marketing.humans.age_years is null then excluded.age_years
           when excluded.age_years is null then marketing.humans.age_years
@@ -3887,6 +4911,16 @@ export class PgMarketingStore implements MarketingStore {
     const rows = await this.sql`select * from marketing.humans where contact_key = ${handleOrEmailHmac}`;
     const r = firstRow(rows);
     return r ? this.mapHuman(r) : null;
+  }
+
+  async getHumanPhoneHash(id: string): Promise<string | null> {
+    const rows = await this.sql`select phone_hash from marketing.humans where id = ${id}`;
+    const r = firstRow(rows);
+    return r ? asOptStr(r.phone_hash) : null;
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    return isGloballySuppressedPhoneHash(this.sql, phoneHash);
   }
 
   async listHumans(
@@ -4015,12 +5049,13 @@ export class PgMarketingStore implements MarketingStore {
     const id = input.id ?? this.idGen();
     const rows = await this.sql`
       insert into marketing.tasks (
-        id, campaign_id, human_id, tier, task_kind, app_id, city, title, brief_text,
+        id, campaign_id, human_id, tier, task_kind, app_id, city, desire_lane, title, brief_text,
         vendor_channel, worker_age_years, amount_cents, qr_batch_code, short_url,
         payout_rail, proof_verified, status, metadata, created_at, updated_at
       ) values (
         ${id}, ${input.campaignId}, ${input.assigneeHumanId ?? null}, ${input.tier},
         ${input.taskKind}, ${campaign.appId}, ${input.city ?? campaign.city},
+        ${input.desireLane ?? campaign.desireLane ?? null},
         ${input.title}, ${input.briefText}, ${input.vendorChannel},
         ${effectiveAge}, ${input.amountCents ?? 0}, ${input.qrBatchCode ?? null},
         ${input.dubShortUrl ?? null}, ${payoutRail}, false,
@@ -4498,8 +5533,12 @@ export class PgMarketingStore implements MarketingStore {
       const sentToday = account ? account.sentToday : human.dailySendsToday;
       const dailyOutreachCap =
         input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
+      const phoneHash = input.phoneHash?.trim() || asOptStr(hr.phone_hash);
+      const globallySuppressed = phoneHash
+        ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+        : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: asStr(cr.risk_dial) === "lockdown",
         leakCheckPass: input.leakCheckPass,
         sentToday,
@@ -4594,8 +5633,12 @@ export class PgMarketingStore implements MarketingStore {
         );
         if (!cr || !hr) throw new Error("Missing campaign or human for outreach send");
         const human = this.mapHuman(hr);
+        const phoneHash = asOptStr(hr.phone_hash);
+        const globallySuppressed = phoneHash
+          ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+          : false;
         const decision = evaluateOutreachPolicy({
-          human,
+          human: globallySuppressed ? { ...human, stopped: true } : human,
           lockdown: asStr(cr.risk_dial) === "lockdown",
           leakCheckPass: existing.leakCheckPass,
           dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,
@@ -4631,18 +5674,32 @@ export class PgMarketingStore implements MarketingStore {
     const now = new Date(this.clock.now());
     const count = input.count ?? 1;
     const meta = JSON.stringify(input.metadata ?? {});
-    const rows = await this.sql`
-      insert into marketing.attribution_events (
-        campaign_id, task_id, qr_batch_code, app_id, city, event_type,
-        count, is_adult_verified, metadata, occurred_at, created_at
-      ) values (
-        ${input.campaignId}, ${input.taskId ?? null},
-        ${input.qrBatchCode ?? null}, ${input.appId},
-        ${input.city ?? campaign.city}, ${input.eventKind},
-        ${count}, ${input.eventKind === "signup_verified_adult"}, ${meta}::text::jsonb, ${now}, ${now}
-      ) returning *
-    `;
-    return this.mapAttribution(firstRow(rows)!);
+    const isVerifiedOutcome = VERIFIED_OUTCOME_EVENT_KINDS.has(input.eventKind);
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`
+        insert into marketing.attribution_events (
+          campaign_id, task_id, arm_id, desire_lane, qr_batch_code, app_id, city, event_type,
+          count, is_adult_verified, metadata, occurred_at, created_at
+        ) values (
+          ${input.campaignId}, ${input.taskId ?? null}, ${input.armId ?? null},
+          ${input.desireLane ?? campaign.desireLane ?? null},
+          ${input.qrBatchCode ?? null}, ${input.appId},
+          ${input.city ?? campaign.city}, ${input.eventKind},
+          ${count}, ${isVerifiedOutcome}, ${meta}::text::jsonb, ${now}, ${now}
+        ) returning *
+      `;
+      if (input.armId && isVerifiedOutcome) {
+        const signupInc = input.eventKind === "signup_verified_adult" ? count : 0;
+        await tx`
+          update marketing.bandit_arms set
+            signups = signups + ${signupInc},
+            verified_outcomes = verified_outcomes + ${count},
+            updated_at = ${now}
+          where id = ${input.armId}
+        `;
+      }
+      return this.mapAttribution(firstRow(rows)!);
+    });
   }
 
   async listAttributionEvents(
@@ -4764,22 +5821,25 @@ export class PgMarketingStore implements MarketingStore {
     const now = new Date(this.clock.now());
     const rows = await this.sql`
       insert into marketing.bandit_arms (
-        id, campaign_id, arm_key, label, track, alpha, beta, weight,
-        spend_cents, signups, stop_events, total_contacts, status, updated_at
+        id, campaign_id, arm_key, label, track, desire_lane, alpha, beta, weight,
+        spend_cents, signups, verified_outcomes, stop_events, total_contacts, status, updated_at
       ) values (
         ${id}, ${input.campaignId}, ${input.armKey}, ${input.label}, ${input.track},
+        ${input.desireLane ?? null},
         ${input.alpha ?? 1}, ${input.beta ?? 1}, ${input.weight ?? 0},
-        ${input.spendCents ?? 0}, ${input.signups ?? 0}, ${input.stopEvents ?? 0},
-        ${input.totalContacts ?? 0}, ${input.status ?? "active"}, ${now}
+        ${input.spendCents ?? 0}, ${input.signups ?? 0}, ${input.verifiedOutcomes ?? 0},
+        ${input.stopEvents ?? 0}, ${input.totalContacts ?? 0}, ${input.status ?? "active"}, ${now}
       )
       on conflict (campaign_id, arm_key) do update set
         label = excluded.label,
         track = excluded.track,
+        desire_lane = coalesce(excluded.desire_lane, marketing.bandit_arms.desire_lane),
         alpha = excluded.alpha,
         beta = excluded.beta,
         weight = excluded.weight,
         spend_cents = excluded.spend_cents,
         signups = excluded.signups,
+        verified_outcomes = excluded.verified_outcomes,
         stop_events = excluded.stop_events,
         total_contacts = excluded.total_contacts,
         status = excluded.status,
@@ -4821,11 +5881,13 @@ export class PgMarketingStore implements MarketingStore {
       const rows = await tx`
         update marketing.bandit_arms set
           label = ${patch.label ?? existing.label},
+          desire_lane = ${patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null)},
           alpha = ${patch.alpha ?? existing.alpha},
           beta = ${patch.beta ?? existing.beta},
           weight = ${patch.weight ?? existing.weight},
           spend_cents = ${patch.spendCents ?? existing.spendCents},
           signups = ${patch.signups ?? existing.signups},
+          verified_outcomes = ${patch.verifiedOutcomes ?? existing.verifiedOutcomes ?? 0},
           stop_events = ${patch.stopEvents ?? existing.stopEvents},
           total_contacts = ${patch.totalContacts ?? existing.totalContacts},
           status = ${patch.status ?? existing.status},
@@ -4842,12 +5904,12 @@ export class PgMarketingStore implements MarketingStore {
     const now = new Date(this.clock.now());
     const rows = await this.sql`
       insert into marketing.bd_deals (
-        id, campaign_id, city, venue_name, vertical, contact_email, business_phone,
+        id, campaign_id, city, desire_lane, venue_name, vertical, contact_email, business_phone,
         stage, offered_cents, phone_callback_verified, contract_hash, qr_batch_id,
         notes, created_at, updated_at
       ) values (
-        ${id}, ${input.campaignId}, ${input.city ?? "nyc"}, ${input.venueName},
-        ${input.vertical}, ${input.contactEmail ?? null}, ${input.businessPhone ?? null},
+        ${id}, ${input.campaignId}, ${input.city ?? "nyc"}, ${input.desireLane ?? null},
+        ${input.venueName}, ${input.vertical}, ${input.contactEmail ?? null}, ${input.businessPhone ?? null},
         ${input.stage ?? "prospect"}, ${input.offeredCents ?? 0},
         ${input.phoneCallbackVerified ?? false}, ${input.contractHash ?? null},
         ${input.qrBatchId ?? null}, ${input.notes ?? null}, ${now}, ${now}
@@ -4887,6 +5949,7 @@ export class PgMarketingStore implements MarketingStore {
       const now = new Date(this.clock.now());
       const rows = await tx`
         update marketing.bd_deals set
+          desire_lane = ${patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null)},
           venue_name = ${patch.venueName ?? existing.venueName},
           vertical = ${patch.vertical ?? existing.vertical},
           contact_email = ${patch.contactEmail !== undefined ? patch.contactEmail : existing.contactEmail},
@@ -4981,12 +6044,12 @@ export class PgMarketingStore implements MarketingStore {
     const now = new Date(this.clock.now());
     const rows = await this.sql`
       insert into marketing.vip_prospects (
-        id, campaign_id, city, name, archetype, organization, public_source,
+        id, campaign_id, city, desire_lane, name, archetype, organization, public_source,
         source_url, prestige_score, contact_email, invite_draft, status,
         created_at, updated_at
       ) values (
-        ${id}, ${input.campaignId}, ${input.city ?? "nyc"}, ${input.name},
-        ${input.archetype}, ${input.organization ?? null}, ${input.publicSource},
+        ${id}, ${input.campaignId}, ${input.city ?? "nyc"}, ${input.desireLane ?? null},
+        ${input.name}, ${input.archetype}, ${input.organization ?? null}, ${input.publicSource},
         ${input.sourceUrl ?? null}, ${input.prestigeScore ?? 0},
         ${input.contactEmail ?? null}, ${input.inviteDraft ?? null},
         ${input.status ?? "discovered"}, ${now}, ${now}
@@ -5032,6 +6095,7 @@ export class PgMarketingStore implements MarketingStore {
       const now = new Date(this.clock.now());
       const rows = await tx`
         update marketing.vip_prospects set
+          desire_lane = ${patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null)},
           archetype = ${patch.archetype ?? existing.archetype},
           organization = ${patch.organization !== undefined ? patch.organization : existing.organization},
           source_url = ${patch.sourceUrl !== undefined ? patch.sourceUrl : existing.sourceUrl},
@@ -5052,12 +6116,12 @@ export class PgMarketingStore implements MarketingStore {
     const now = new Date(this.clock.now());
     const rows = await this.sql`
       insert into marketing.video_assets (
-        id, campaign_id, agent_id, title, hook, script, stage, video_url,
+        id, campaign_id, agent_id, desire_lane, title, hook, script, stage, video_url,
         platform, views, retention_3s_pct, signups, ftc_disclosed,
         created_at, updated_at
       ) values (
-        ${id}, ${input.campaignId}, ${input.agentId ?? null}, ${input.title},
-        ${input.hook}, ${input.script}, ${input.stage ?? "trend"},
+        ${id}, ${input.campaignId}, ${input.agentId ?? null}, ${input.desireLane ?? null},
+        ${input.title}, ${input.hook}, ${input.script}, ${input.stage ?? "trend"},
         ${input.videoUrl ?? null}, ${input.platform ?? null},
         ${input.views ?? 0}, ${input.retention3sPct ?? 0}, ${input.signups ?? 0},
         ${input.ftcDisclosed ?? false}, ${now}, ${now}
@@ -5098,6 +6162,7 @@ export class PgMarketingStore implements MarketingStore {
       const rows = await tx`
         update marketing.video_assets set
           agent_id = ${patch.agentId !== undefined ? patch.agentId : existing.agentId},
+          desire_lane = ${patch.desireLane !== undefined ? patch.desireLane : (existing.desireLane ?? null)},
           title = ${patch.title ?? existing.title},
           hook = ${patch.hook ?? existing.hook},
           script = ${patch.script ?? existing.script},
@@ -5500,5 +6565,720 @@ export class PgMarketingStore implements MarketingStore {
         settledCount: asNum(r.sk_settled),
       },
     };
+  }
+
+  // ---- Pass-3 Contract 4 (Postgres) ----
+
+  async reserveAgentTurn(agentId: string, nowIso: string): Promise<ReserveAgentTurnResult> {
+    const parsedMs = Date.parse(nowIso);
+    const nowMs = Number.isFinite(parsedMs) ? parsedMs : this.clock.now();
+    const nowDate = new Date(nowMs);
+    const dayStr = nowDate.toISOString().slice(0, 10);
+
+    return this.sql.begin(async (tx) => {
+      const rows = await tx`select * from marketing.agents where id = ${agentId} for update`;
+      const ar = firstRow(rows);
+      if (!ar) throw new Error(`Agent not found: ${agentId}`);
+      const rawAgent = this.mapAgent(ar);
+      const dayRolled = rawAgent.updatedAt.slice(0, 10) < dayStr;
+      const candidate: MarketingAgent = dayRolled
+        ? {
+            ...rawAgent,
+            turnsUsedToday: 0,
+            status:
+              rawAgent.status === "rate_limited" || rawAgent.status === "cooldown"
+                ? "idle"
+                : rawAgent.status,
+            cooldownUntil:
+              rawAgent.status === "rate_limited" || rawAgent.status === "cooldown"
+                ? null
+                : rawAgent.cooldownUntil,
+          }
+        : rawAgent;
+
+      const decision = evaluateAgentTurnPolicy({
+        agent: candidate,
+        nowMs,
+        targetStopped: false,
+        lockdown: false,
+      });
+
+      if (!decision.allowed) {
+        if (dayRolled) {
+          await tx`
+            update marketing.agents set
+              turns_used_today = 0,
+              status = ${candidate.status},
+              cooldown_until = ${candidate.cooldownUntil ? new Date(candidate.cooldownUntil) : null},
+              updated_at = ${nowDate}
+            where id = ${agentId}
+          `;
+        }
+        return { reserved: false, agent: candidate, reason: decision.reason };
+      }
+
+      const nextTurns = candidate.turnsUsedToday + 1;
+      const updatedRows = await tx`
+        update marketing.agents set
+          turns_used_today = ${nextTurns},
+          status = ${candidate.status},
+          cooldown_until = ${candidate.cooldownUntil ? new Date(candidate.cooldownUntil) : null},
+          updated_at = ${nowDate}
+        where id = ${agentId}
+          and (${dayRolled} or turns_used_today < daily_turn_cap)
+        returning *
+      `;
+      const updatedRow = firstRow(updatedRows);
+      if (!updatedRow) {
+        return { reserved: false, agent: candidate, reason: "daily_turn_cap_reached" };
+      }
+      return { reserved: true, agent: this.mapAgent(updatedRow) };
+    });
+  }
+
+  async recordLlmTrajectory(input: RecordLlmTrajectoryInput): Promise<LlmTrajectoryRecord> {
+    const id = input.id ?? this.idGen();
+    const now = new Date(this.clock.now());
+    const normalized = normalizeTrajectoryStatus(input.status);
+    const cached = Boolean(input.cached || normalized.cached);
+    const leakBlocked = Boolean(input.leakBlocked || normalized.status === "leak_blocked");
+    const rows = await this.sql`
+      insert into marketing.llm_trajectories (
+        id, agent_id, campaign_id, provider, model, prompt_hash,
+        input_tokens, output_tokens, cached, cost_micros, latency_ms,
+        status, failover_chain, leak_blocked, created_at
+      ) values (
+        ${id}, ${input.agentId ?? null}, ${input.campaignId ?? null},
+        ${input.provider}, ${input.model}, ${input.promptHash},
+        ${Math.max(0, Math.round(input.inputTokens))},
+        ${Math.max(0, Math.round(input.outputTokens))},
+        ${cached},
+        ${Math.max(0, Math.round(input.costMicros))},
+        ${Math.max(0, Math.round(input.latencyMs ?? 0))},
+        ${normalized.status}, ${input.failoverChain ?? null}, ${leakBlocked}, ${now}
+      ) returning *
+    `;
+    return this.mapLlmTrajectory(firstRow(rows)!);
+  }
+
+  async listLlmTrajectories(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    limit?: number;
+  }): Promise<LlmTrajectoryRecord[]> {
+    const limit =
+      filter?.limit !== undefined && Number.isFinite(filter.limit) && filter.limit > 0
+        ? Math.min(MAX_LIST_LIMIT, Math.round(filter.limit))
+        : DEFAULT_LIST_LIMIT;
+    const rows = await this.sql`
+      select * from marketing.llm_trajectories
+      where (${filter?.agentId ?? null}::text is null or agent_id = ${filter?.agentId ?? null})
+        and (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+      order by created_at desc
+      limit ${limit}
+    `;
+    return allRows(rows).map((r) => this.mapLlmTrajectory(r));
+  }
+
+  async getDailyLlmUsage(filter?: {
+    agentId?: string;
+    campaignId?: string;
+    dayIso?: string;
+  }): Promise<DailyLlmUsage> {
+    const day = (filter?.dayIso ?? isoNow(this.clock)).slice(0, 10);
+    const dayStart = new Date(`${day}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+    const rows = await this.sql`
+      select
+        count(*)::int as calls,
+        count(*) filter (where cached)::int as cached_calls,
+        coalesce(sum(input_tokens), 0)::int as input_tokens,
+        coalesce(sum(output_tokens), 0)::int as output_tokens,
+        coalesce(sum(cost_micros), 0)::bigint as cost_micros,
+        count(*) filter (where leak_blocked or status = 'leak_blocked')::int as leak_blocked_calls,
+        count(*) filter (where status = 'budget_blocked')::int as budget_blocked_calls
+      from marketing.llm_trajectories
+      where created_at >= ${dayStart}
+        and created_at < ${dayEnd}
+        and (${filter?.agentId ?? null}::text is null or agent_id = ${filter?.agentId ?? null})
+        and (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+    `;
+    const r = firstRow(rows);
+    const inputTokens = asNum(r?.input_tokens);
+    const outputTokens = asNum(r?.output_tokens);
+    return {
+      day,
+      calls: asNum(r?.calls),
+      cachedCalls: asNum(r?.cached_calls),
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      costMicros: asNum(r?.cost_micros),
+      leakBlockedCalls: asNum(r?.leak_blocked_calls),
+      budgetBlockedCalls: asNum(r?.budget_blocked_calls),
+    };
+  }
+
+  async isContactSuppressed(contactHash: string): Promise<ContactSuppressionRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.contact_suppression
+      where contact_hash = ${contactHash}
+      limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapContactSuppression(r) : null;
+  }
+
+  async listContactSuppressions(limit = DEFAULT_LIST_LIMIT): Promise<ContactSuppressionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(limit)));
+    const rows = await this.sql`
+      select * from marketing.contact_suppression
+      order by suppressed_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapContactSuppression(r));
+  }
+
+  async recordContactSuppression(input: {
+    contactHash: string;
+    reason: string;
+    sourceChannel: string;
+    isMinor?: boolean;
+  }): Promise<ContactSuppressionRecord> {
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.contact_suppression (
+        contact_hash, reason, source_channel, is_minor, suppressed_at
+      ) values (
+        ${input.contactHash}, ${input.reason}, ${input.sourceChannel},
+        ${Boolean(input.isMinor)}, ${now}
+      )
+      on conflict (contact_hash) do update set
+        reason = excluded.reason,
+        source_channel = excluded.source_channel,
+        is_minor = (marketing.contact_suppression.is_minor or excluded.is_minor)
+      returning *
+    `;
+    await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${input.contactHash}
+    `;
+    return this.mapContactSuppression(firstRow(rows)!);
+  }
+
+  async getContactTouchpointStats(
+    contactHash: string,
+    nowMs: number,
+  ): Promise<ContactTouchpointStats> {
+    const rows = await this.sql`
+      select is_cold, replied, touched_at
+      from marketing.contact_touchpoints
+      where contact_hash = ${contactHash}
+      order by touched_at desc
+      limit 100
+    `;
+    const list = allRows(rows);
+    const cutoff30d = nowMs - 30 * 86_400_000;
+    const dayStartMs = Date.parse(new Date(nowMs).toISOString().slice(0, 10) + "T00:00:00.000Z");
+
+    let lastColdMs: number | null = null;
+    let coldTouches30d = 0;
+    let unansweredColdStreak = 0;
+    let streakBroken = false;
+    let opTouchesToday = 0;
+
+    for (const row of list) {
+      const iso = toIso(row.touched_at);
+      const ts = Date.parse(iso);
+      if (!Number.isFinite(ts)) continue;
+      const isCold = asBool(row.is_cold);
+      const replied = asBool(row.replied);
+      if (isCold) {
+        if (lastColdMs === null) lastColdMs = ts;
+        if (ts >= cutoff30d && ts <= nowMs) coldTouches30d += 1;
+        if (!streakBroken) {
+          if (replied) streakBroken = true;
+          else unansweredColdStreak += 1;
+        }
+      } else if (ts >= dayStartMs && ts <= nowMs) {
+        opTouchesToday += 1;
+      }
+    }
+
+    const daysSinceLastCold =
+      lastColdMs === null ? 999 : Math.max(0, Math.floor((nowMs - lastColdMs) / 86_400_000));
+
+    return {
+      contactHash,
+      daysSinceLastCold,
+      coldTouches30d,
+      unansweredColdStreak,
+      opTouchesToday,
+      lastTouchedAt: list[0] ? toIso(list[0].touched_at) : null,
+    };
+  }
+
+  async recordContactTouchpoint(input: {
+    contactHash: string;
+    campaignId?: string | null;
+    surface: ContactTouchSurface;
+    isCold: boolean;
+    answered?: boolean;
+  }): Promise<void> {
+    const id = this.idGen();
+    const now = new Date(this.clock.now());
+    await this.sql`
+      insert into marketing.contact_touchpoints (
+        id, contact_hash, campaign_id, surface, is_cold, replied, touched_at
+      ) values (
+        ${id}, ${input.contactHash}, ${input.campaignId ?? null},
+        ${input.surface}, ${input.isCold}, ${Boolean(input.answered)}, ${now}
+      )
+    `;
+  }
+
+  async getCampaignStopStats(campaignId: string): Promise<CampaignStopStats> {
+    const rows = await this.sql`
+      select
+        count(distinct m.human_id)::int as contacted_humans,
+        count(distinct m.human_id) filter (where h.stopped or m.status = 'blocked_stop')::int as stopped_humans
+      from marketing.outreach_messages m
+      left join marketing.humans h on h.id = m.human_id
+      where m.campaign_id = ${campaignId}
+        and m.human_id is not null
+    `;
+    const r = firstRow(rows);
+    const contactedHumans = asNum(r?.contacted_humans);
+    const stoppedHumans = asNum(r?.stopped_humans);
+    const stopRateBps =
+      contactedHumans > 0 ? Math.round((stoppedHumans * 10_000) / contactedHumans) : 0;
+    return { contactedHumans, stoppedHumans, stopRateBps };
+  }
+
+  async quarantineClaimsBatch(
+    ids: readonly string[],
+    clusterId: string,
+    reason: string,
+  ): Promise<number> {
+    if (ids.length === 0) return 0;
+    const rows = await this.sql`
+      update marketing.antifraud_claims set
+        cluster_id = ${clusterId},
+        status = 'quarantined',
+        reason = ${reason}
+      where id = any(${[...ids]})
+      returning id
+    `;
+    return allRows(rows).length;
+  }
+
+  async updateBanditArmsBatch(updates: readonly BanditArmBatchUpdate[]): Promise<BanditArm[]> {
+    if (updates.length === 0) return [];
+    const now = new Date(this.clock.now());
+    return this.sql.begin(async (tx) => {
+      const results: BanditArm[] = [];
+      for (const patch of updates) {
+        const rows = await tx`
+          update marketing.bandit_arms set
+            alpha = ${patch.alpha},
+            beta = ${patch.beta},
+            weight = ${patch.weight},
+            status = ${patch.status},
+            updated_at = ${now}
+          where id = ${patch.id}
+          returning *
+        `;
+        const row = firstRow(rows);
+        if (row) results.push(this.mapBanditArm(row));
+      }
+      return results;
+    });
+  }
+
+  async upsertCityPack(
+    code: string,
+    stage: CityLaunchStage,
+    config: Record<string, unknown>,
+  ): Promise<CityPackOverride> {
+    const normalized = code.trim().toLowerCase();
+    const now = new Date(this.clock.now());
+    const payload = JSON.stringify(config);
+    const rows = await this.sql`
+      insert into marketing.city_packs (code, stage, config, updated_at)
+      values (${normalized}, ${stage}, ${payload}::text::jsonb, ${now})
+      on conflict (code) do update set
+        stage = excluded.stage,
+        config = excluded.config,
+        updated_at = excluded.updated_at
+      returning *
+    `;
+    return this.mapCityPackOverride(firstRow(rows)!);
+  }
+
+  async listCityPacksOverrides(): Promise<CityPackOverride[]> {
+    const rows = await this.sql`
+      select * from marketing.city_packs
+      order by code asc
+    `;
+    return allRows(rows).map((r) => this.mapCityPackOverride(r));
+  }
+
+  private parseJsonRecord(v: unknown): Record<string, unknown> {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+    if (typeof v === "string") {
+      try {
+        const parsed: unknown = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  private mapEnrichmentCache(r: Row): EnrichmentCacheEntry {
+    return {
+      cacheKey: asStr(r.cache_key),
+      provider: asStr(r.provider, "apollo"),
+      operation: asStr(r.operation, "people_match") as EnrichmentCacheEntry["operation"],
+      contactHash: asOptStr(r.contact_hash),
+      payload: this.parseJsonRecord(r.payload),
+      verifiedEmail: asBool(r.verified_email),
+      creditsSpent: asNum(r.credits_spent),
+      fetchedAt: toIso(r.fetched_at),
+      expiresAt: toIso(r.expires_at),
+    };
+  }
+
+  private mapApolloCredit(r: Row): ApolloCreditLedgerEntry {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      operation: asStr(r.operation, "people_match") as ApolloOperationKind,
+      credits: asNum(r.credits),
+      costCents: asNum(r.cost_cents),
+      cacheHit: asBool(r.cache_hit),
+      dryRun: asBool(r.dry_run),
+      idempotencyKey: asStr(r.idempotency_key),
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapPlatformInteraction(r: Row): PlatformInteractionRecord {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      platform: asStr(r.platform, "email") as CanonicalOutreachPlatform | "email",
+      channelAccountId: asOptStr(r.channel_account_id),
+      contactHash: asStr(r.contact_hash),
+      direction: (asStr(r.direction, "outbound") === "inbound" ? "inbound" : "outbound"),
+      interactionKind: asStr(r.interaction_kind),
+      reportRiskScore: asNum(r.report_risk_score),
+      outcome: asStr(r.outcome, "sent") as PlatformInteractionOutcome,
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapIntakeCandidate(r: Row): IntakeCandidateRecord {
+    const rawBreakdown = this.parseJsonRecord(r.score_breakdown);
+    const scoreBreakdown: IntakeScoreBreakdown = {
+      specificityEffort: asNum(rawBreakdown["specificityEffort"]),
+      proofOfWorkAnchoring: asNum(rawBreakdown["proofOfWorkAnchoring"]),
+      reliabilityFollowThrough: asNum(rawBreakdown["reliabilityFollowThrough"]),
+      bilateralValueFit: asNum(rawBreakdown["bilateralValueFit"]),
+      disqualifiers: Array.isArray(rawBreakdown["disqualifiers"])
+        ? rawBreakdown["disqualifiers"].filter((x: unknown): x is string => typeof x === "string")
+        : [],
+    };
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      city: asStr(r.city, "nyc"),
+      targetAppId: asStr(r.target_app_id, "ntwrk") as BrandAppId,
+      desireLane: asOptStr(r.desire_lane),
+      sourcePlatform: asStr(r.source_platform),
+      contactHash: asStr(r.contact_hash),
+      statedAge: r.stated_age === null || r.stated_age === undefined ? null : asNum(r.stated_age),
+      qualityScore: asNum(r.quality_score),
+      scoreBreakdown,
+      valueDelivered: asBool(r.value_delivered),
+      explicitPositiveSignal: asBool(r.explicit_positive_signal),
+      inviteAttempts: asNum(r.invite_attempts),
+      status: asStr(r.status, "spotted") as IntakeCandidateStatus,
+      createdAt: toIso(r.created_at),
+      updatedAt: toIso(r.updated_at),
+    };
+  }
+
+  async getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const now = new Date(nowMs);
+    const rows = await this.sql`
+      select * from marketing.enrichment_cache
+      where cache_key = ${cacheKey}
+        and expires_at > ${now}
+      limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapEnrichmentCache(r) : null;
+  }
+
+  async upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const payload = JSON.stringify(entry.payload);
+    const rows = await this.sql`
+      insert into marketing.enrichment_cache (
+        cache_key, provider, operation, contact_hash, payload,
+        verified_email, credits_spent, fetched_at, expires_at
+      ) values (
+        ${entry.cacheKey}, ${entry.provider}, ${entry.operation}, ${entry.contactHash},
+        ${payload}::text::jsonb, ${entry.verifiedEmail}, ${entry.creditsSpent},
+        ${new Date(entry.fetchedAt)}, ${new Date(entry.expiresAt)}
+      )
+      on conflict (cache_key) do update set
+        provider = excluded.provider,
+        operation = excluded.operation,
+        contact_hash = coalesce(excluded.contact_hash, marketing.enrichment_cache.contact_hash),
+        payload = excluded.payload,
+        verified_email = excluded.verified_email,
+        credits_spent = excluded.credits_spent,
+        fetched_at = excluded.fetched_at,
+        expires_at = excluded.expires_at
+      returning *
+    `;
+    return this.mapEnrichmentCache(firstRow(rows)!);
+  }
+
+  async purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    const rows = await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${contactHash}
+      returning cache_key
+    `;
+    return allRows(rows).length;
+  }
+
+  async recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.apollo_credit_ledger (
+        campaign_id, operation, credits, cost_cents, cache_hit, dry_run, idempotency_key, created_at
+      ) values (
+        ${input.campaignId ?? null}, ${input.operation}, ${Math.max(0, Math.round(input.credits))},
+        ${Math.max(0, Math.round(input.costCents))}, ${Boolean(input.cacheHit)},
+        ${Boolean(input.dryRun)}, ${input.idempotencyKey}, ${now}
+      )
+      on conflict (idempotency_key) do update set
+        idempotency_key = marketing.apollo_credit_ledger.idempotency_key
+      returning *
+    `;
+    return this.mapApolloCredit(firstRow(rows)!);
+  }
+
+  async getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const day = new Date(nowMs).toISOString().slice(0, 10);
+    const month = day.slice(0, 7);
+    const dayStart = new Date(`${day}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+    const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+    const rows = await this.sql`
+      select
+        coalesce(sum(credits) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_credits,
+        coalesce(sum(credits) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_credits,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and operation = 'people_search' and not cache_hit)::int as daily_searches,
+        coalesce(sum(cost_cents) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_cost_cents,
+        coalesce(sum(cost_cents) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_cost_cents,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and cache_hit)::int as cache_hits_today,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd})::int as total_calls_today
+      from marketing.apollo_credit_ledger
+      where created_at >= ${monthStart} and created_at < ${dayEnd}
+    `;
+    const r = firstRow(rows);
+    const cacheHitsToday = asNum(r?.cache_hits_today);
+    const totalCallsToday = asNum(r?.total_calls_today);
+    return {
+      day,
+      month,
+      creditsUsedToday: asNum(r?.daily_credits),
+      creditsUsedMonth: asNum(r?.monthly_credits),
+      searchCallsToday: asNum(r?.daily_searches),
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    };
+  }
+
+  async recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const id = this.idGen();
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.platform_interactions (
+        id, campaign_id, platform, channel_account_id, contact_hash,
+        direction, interaction_kind, report_risk_score, outcome, created_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.platform}, ${input.channelAccountId ?? null},
+        ${input.contactHash}, ${input.direction}, ${input.interactionKind},
+        ${Math.max(0, Math.min(100, Math.round(input.reportRiskScore)))}, ${input.outcome}, ${now}
+      )
+      returning *
+    `;
+    return this.mapPlatformInteraction(firstRow(rows)!);
+  }
+
+  async listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.platform_interactions
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.platform ?? null}::text is null or platform = ${filter?.platform ?? null})
+        and (${filter?.channelAccountId ?? null}::text is null or channel_account_id = ${filter?.channelAccountId ?? null})
+        and (${filter?.contactHash ?? null}::text is null or contact_hash = ${filter?.contactHash ?? null})
+      order by created_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapPlatformInteraction(r));
+  }
+
+  async upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const id = input.id ?? this.idGen();
+    const now = new Date(this.clock.now());
+    const breakdownJson = JSON.stringify(input.scoreBreakdown);
+    const rows = await this.sql`
+      insert into marketing.intake_candidates (
+        id, campaign_id, city, target_app_id, desire_lane, source_platform,
+        contact_hash, stated_age, quality_score, score_breakdown,
+        value_delivered, explicit_positive_signal, invite_attempts, status,
+        created_at, updated_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.city}, ${input.targetAppId},
+        ${input.desireLane ?? null}, ${input.sourcePlatform}, ${input.contactHash},
+        ${input.statedAge ?? null}, ${Math.max(0, Math.min(100, Math.round(input.qualityScore)))},
+        ${breakdownJson}::text::jsonb, ${Boolean(input.valueDelivered)},
+        ${Boolean(input.explicitPositiveSignal)}, ${Math.max(0, Math.round(input.inviteAttempts))},
+        ${input.status}, ${now}, ${now}
+      )
+      on conflict (contact_hash) do update set
+        campaign_id = coalesce(excluded.campaign_id, marketing.intake_candidates.campaign_id),
+        city = excluded.city,
+        target_app_id = excluded.target_app_id,
+        desire_lane = coalesce(excluded.desire_lane, marketing.intake_candidates.desire_lane),
+        stated_age = case
+          when marketing.intake_candidates.stated_age is null then excluded.stated_age
+          when excluded.stated_age is null then marketing.intake_candidates.stated_age
+          else least(marketing.intake_candidates.stated_age, excluded.stated_age)
+        end,
+        quality_score = excluded.quality_score,
+        score_breakdown = excluded.score_breakdown,
+        value_delivered = (marketing.intake_candidates.value_delivered or excluded.value_delivered),
+        explicit_positive_signal = (marketing.intake_candidates.explicit_positive_signal or excluded.explicit_positive_signal),
+        invite_attempts = greatest(marketing.intake_candidates.invite_attempts, excluded.invite_attempts),
+        status = excluded.status,
+        updated_at = excluded.updated_at
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
+  }
+
+  async getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where id = ${id} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where contact_hash = ${contactHash} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.intake_candidates
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.city ?? null}::text is null or city = ${filter?.city ?? null})
+        and (${filter?.status ?? null}::text is null or status = ${filter?.status ?? null})
+      order by quality_score desc, updated_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapIntakeCandidate(r));
+  }
+
+  async updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = await this.getIntakeCandidate(id);
+    if (!existing) throw new Error(`Intake candidate not found: ${id}`);
+    const now = new Date(this.clock.now());
+    const nextAge =
+      patch.statedAge !== undefined
+        ? minAgeReading(existing.statedAge, patch.statedAge)
+        : existing.statedAge;
+    const nextScore =
+      patch.qualityScore !== undefined
+        ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+        : existing.qualityScore;
+    const nextBreakdown = patch.scoreBreakdown ?? existing.scoreBreakdown;
+    const nextValueDelivered =
+      patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered;
+    const nextPositive =
+      patch.explicitPositiveSignal !== undefined
+        ? Boolean(patch.explicitPositiveSignal)
+        : existing.explicitPositiveSignal;
+    const nextAttempts =
+      patch.inviteAttempts !== undefined
+        ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+        : existing.inviteAttempts;
+    const nextStatus = patch.status ?? existing.status;
+
+    const rows = await this.sql`
+      update marketing.intake_candidates set
+        stated_age = ${nextAge},
+        quality_score = ${nextScore},
+        score_breakdown = ${JSON.stringify(nextBreakdown)}::text::jsonb,
+        value_delivered = ${nextValueDelivered},
+        explicit_positive_signal = ${nextPositive},
+        invite_attempts = ${nextAttempts},
+        status = ${nextStatus},
+        updated_at = ${now}
+      where id = ${id}
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
   }
 }

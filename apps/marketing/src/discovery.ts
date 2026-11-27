@@ -1,14 +1,24 @@
-// Tier 1 ($0 cost) open-web multi-city discovery engine for @thenetwork/marketing (Node 26).
-// Uses standard fetch with injectable fetchImpl, per-request AbortSignal.timeout,
-// bounded concurrency, and injected Clock for offline deterministic testing.
-// Clock & RNG discipline: never calls Date.now() or Math.random() directly.
-
-import type { BrandAppId, Clock, DiscoveredLead as BaseDiscoveredLead } from "./types.ts";
+import { MEETUP_GRAPHQL_ENDPOINT } from "../../../packages/core/src/externalEvents.ts";
+import {
+  listCityPacks,
+  requireCityPack,
+  type CityPack,
+  type OpenDataConnectorSpec,
+} from "./city-registry.ts";
+import {
+  defaultDesireLaneForApp,
+  inferDesireLanesFromText,
+  type DesireLaneId,
+} from "./desire-lanes.ts";
+import type { MarketingStore } from "./store.ts";
+import type { BrandAppId, Clock, DiscoveredLead as BaseDiscoveredLead, VipProspect } from "./types.ts";
+import { classifyVipArchetypeOrNull, inferSourceAuthority } from "./vip-engine.ts";
 
 export type MarketingVertical = BrandAppId;
 export type LeadCategory = "venue" | "event" | "creator" | "vip" | "community";
-export type DiscoveryCity = "nyc" | "sf" | "la" | "chicago" | "miami" | "austin" | "london";
+export type DiscoveryCity = string;
 export type DiscoverySource =
+  | "city_open_data"
   | "nyc_open_data"
   | "nys_sla"
   | "nys_sla_pending"
@@ -20,10 +30,14 @@ export type DiscoverySource =
   | "luma"
   | "eventbrite"
   | "partiful"
+  | "meetup"
+  | "apollo_search"
   | "sec_form_d"
   | "openalex"
   | "irs_990"
   | "clinical_trials";
+
+export type DiscoverySourceTrust = "official_api" | "public_filing" | "public_html";
 
 export type DiscoveryClock = Clock;
 
@@ -37,8 +51,11 @@ export type FetchLike = (
 export interface DiscoveredLead extends BaseDiscoveredLead {
   neighborhood?: string;
   source: DiscoverySource;
+  sourceTrust?: DiscoverySourceTrust;
   summary: string;
   handleOrContact?: string;
+  desireLane: DesireLaneId;
+  desireLanes: DesireLaneId[];
   tags: string[];
   rawMeta?: Record<string, unknown>;
 }
@@ -68,6 +85,8 @@ export interface DiscoveryOptions {
   redditSubreddits?: readonly string[];
   youtubeChannelIds?: readonly string[];
   partifulUrls?: readonly string[];
+  meetupOAuthToken?: string;
+  meetupQuery?: string;
   hnQuery?: string;
   githubQuery?: string;
   arxivQuery?: string;
@@ -90,6 +109,7 @@ export const PUBLIC_DISCOVERY_ENDPOINTS = {
   lumaNycUrl: "https://lu.ma/nyc",
   eventbriteNycUrl: "https://www.eventbrite.com/d/ny--new-york/events/",
   partifulBase: "https://partiful.com",
+  meetupGraphqlEndpoint: MEETUP_GRAPHQL_ENDPOINT,
   secFormDSearchBase: "https://efts.sec.gov/LATEST/search-index",
   openAlexAuthorsBase: "https://api.openalex.org/authors",
   proPublicaNonprofitsBase: "https://projects.propublica.org/nonprofits/api/v2/search.json",
@@ -110,11 +130,12 @@ const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 const MAX_LIMIT_PER_SOURCE = 50;
 const MAX_SUBREDDITS_OR_CHANNELS = 10;
 
-interface CityDiscoveryProfile {
-  readonly code: DiscoveryCity;
+export interface CityDiscoveryProfile {
+  readonly code: string;
   readonly displayName: string;
   readonly stateCode: string | null;
   readonly countryCode: string;
+  readonly opsEmail: string;
   readonly subreddits: readonly string[];
   readonly hnQuery: string;
   readonly githubLocation: string;
@@ -122,155 +143,62 @@ interface CityDiscoveryProfile {
   readonly eventbriteUrl: string;
   readonly clinicalLocation: string;
   readonly openAlexQuery: string;
+  readonly openDataConnectors: readonly OpenDataConnectorSpec[];
   readonly neighborhoods: ReadonlyArray<{ label: string; patterns: readonly (string | RegExp)[] }>;
 }
 
-const NYC_NEIGHBORHOOD_PATTERNS: ReadonlyArray<{
-  label: string;
-  patterns: readonly (string | RegExp)[];
-}> = [
-  { label: "West Village", patterns: ["west village", "washington square", "bleecker", "w 4th", "greenwich village"] },
-  { label: "East Village", patterns: ["east village", "astor place", "st marks", "st. marks", "alphabet city"] },
-  { label: "SoHo / Nolita", patterns: ["soho", "nolita", "prince st", "spring st", "w broadway"] },
-  { label: "Flatiron / Union Square", patterns: ["flatiron", "union square", "gramercy", "14th st", "23rd st"] },
-  { label: "Williamsburg", patterns: ["williamsburg", "bedford ave", "domino park", "greenpoint", "bushwick"] },
-  { label: "Midtown West", patterns: ["midtown", "bryant park", "hudson yards", "hell's kitchen", "times square"] },
-  { label: "Lower East Side", patterns: ["lower east side", /\bles\b/, "ludlow", "orchard st", "bowery"] },
-  { label: "Brooklyn", patterns: ["brooklyn", "kings", "dumbo", "park slope", "cobble hill"] },
-  { label: "Manhattan", patterns: ["manhattan", "new york", "tribeca", "chelsea", "upper west", "upper east"] },
-];
+function packToDiscoveryProfile(pack: CityPack): CityDiscoveryProfile {
+  return {
+    code: pack.code,
+    displayName: pack.label,
+    stateCode: pack.stateCode,
+    countryCode: pack.country,
+    opsEmail: pack.opsEmail,
+    subreddits: pack.discovery.subreddits,
+    hnQuery: pack.discovery.hnQuery,
+    githubLocation: pack.discovery.githubLocationQuery,
+    lumaUrl: pack.discovery.lumaUrl,
+    eventbriteUrl: pack.discovery.eventbriteUrl,
+    clinicalLocation: pack.discovery.clinicalLocation,
+    openAlexQuery: pack.discovery.openAlexQuery,
+    openDataConnectors: pack.discovery.openDataConnectors,
+    neighborhoods: pack.neighborhoodPatterns.map((entry) => ({
+      label: entry.label,
+      patterns: entry.patterns,
+    })),
+  };
+}
 
-export const CITY_DISCOVERY_PROFILES: Record<DiscoveryCity, CityDiscoveryProfile> = {
-  nyc: {
-    code: "nyc",
-    displayName: "New York",
-    stateCode: "NY",
-    countryCode: "US",
-    subreddits: DEFAULT_NYC_SUBREDDITS,
-    hnQuery: "NYC OR Show HN AI agent",
-    githubLocation: "NYC",
-    lumaUrl: PUBLIC_DISCOVERY_ENDPOINTS.lumaNycUrl,
-    eventbriteUrl: PUBLIC_DISCOVERY_ENDPOINTS.eventbriteNycUrl,
-    clinicalLocation: "New York, NY",
-    openAlexQuery: "New York University OR Columbia University OR Cornell Tech",
-    neighborhoods: NYC_NEIGHBORHOOD_PATTERNS,
-  },
-  sf: {
-    code: "sf",
-    displayName: "San Francisco",
-    stateCode: "CA",
-    countryCode: "US",
-    subreddits: ["sanfrancisco", "AskSF", "bayarea", "startups"],
-    hnQuery: "San Francisco OR Show HN AI agent",
-    githubLocation: "San Francisco",
-    lumaUrl: "https://lu.ma/sf",
-    eventbriteUrl: "https://www.eventbrite.com/d/ca--san-francisco/events/",
-    clinicalLocation: "San Francisco, CA",
-    openAlexQuery: "UCSF OR Stanford University",
-    neighborhoods: [
-      { label: "Mission", patterns: ["mission district", "valencia st", "dolores park"] },
-      { label: "SoMa / Hayes Valley", patterns: [/\bsoma\b/, "hayes valley", "south park"] },
-      { label: "Marina / North Beach", patterns: ["marina", "north beach", "chestnut st"] },
-    ],
-  },
-  la: {
-    code: "la",
-    displayName: "Los Angeles",
-    stateCode: "CA",
-    countryCode: "US",
-    subreddits: ["LosAngeles", "AskLosAngeles", "LAlist"],
-    hnQuery: "Los Angeles OR Venice Beach startup",
-    githubLocation: "Los Angeles",
-    lumaUrl: "https://lu.ma/la",
-    eventbriteUrl: "https://www.eventbrite.com/d/ca--los-angeles/events/",
-    clinicalLocation: "Los Angeles, CA",
-    openAlexQuery: "UCLA OR USC OR Caltech",
-    neighborhoods: [
-      { label: "Silver Lake / Echo Park", patterns: ["silver lake", "silverlake", "echo park"] },
-      { label: "Venice / Santa Monica", patterns: ["venice", "abbot kinney", "santa monica"] },
-      { label: "West Hollywood", patterns: ["west hollywood", "weho", "melrose"] },
-    ],
-  },
-  chicago: {
-    code: "chicago",
-    displayName: "Chicago",
-    stateCode: "IL",
-    countryCode: "US",
-    subreddits: ["chicago", "AskChicago", "chicagotech"],
-    hnQuery: "Chicago startup OR AI",
-    githubLocation: "Chicago",
-    lumaUrl: "https://lu.ma/chicago",
-    eventbriteUrl: "https://www.eventbrite.com/d/il--chicago/events/",
-    clinicalLocation: "Chicago, IL",
-    openAlexQuery: "University of Chicago OR Northwestern University",
-    neighborhoods: [
-      { label: "West Loop / Fulton Market", patterns: ["west loop", "fulton market"] },
-      { label: "Wicker Park / Logan Square", patterns: ["wicker park", "logan square"] },
-      { label: "River North / Lincoln Park", patterns: ["river north", "lincoln park"] },
-    ],
-  },
-  miami: {
-    code: "miami",
-    displayName: "Miami",
-    stateCode: "FL",
-    countryCode: "US",
-    subreddits: ["Miami", "MiamiTech"],
-    hnQuery: "Miami startup OR tech",
-    githubLocation: "Miami",
-    lumaUrl: "https://lu.ma/miami",
-    eventbriteUrl: "https://www.eventbrite.com/d/fl--miami/events/",
-    clinicalLocation: "Miami, FL",
-    openAlexQuery: "University of Miami",
-    neighborhoods: [
-      { label: "Wynwood / Design District", patterns: ["wynwood", "design district"] },
-      { label: "Brickell", patterns: ["brickell"] },
-      { label: "Miami Beach", patterns: ["miami beach", "south beach"] },
-    ],
-  },
-  austin: {
-    code: "austin",
-    displayName: "Austin",
-    stateCode: "TX",
-    countryCode: "US",
-    subreddits: ["Austin", "AustinTech"],
-    hnQuery: "Austin startup OR AI",
-    githubLocation: "Austin",
-    lumaUrl: "https://lu.ma/austin",
-    eventbriteUrl: "https://www.eventbrite.com/d/tx--austin/events/",
-    clinicalLocation: "Austin, TX",
-    openAlexQuery: "University of Texas at Austin",
-    neighborhoods: [
-      { label: "East Austin", patterns: ["east austin", "east 6th"] },
-      { label: "South Congress", patterns: ["south congress", "soco"] },
-      { label: "Downtown / Rainey", patterns: ["downtown austin", "rainey"] },
-    ],
-  },
-  london: {
-    code: "london",
-    displayName: "London",
-    stateCode: null,
-    countryCode: "GB",
-    subreddits: ["london", "LondonSocialClub", "ukstartups"],
-    hnQuery: "London startup OR AI",
-    githubLocation: "London",
-    lumaUrl: "https://lu.ma/london",
-    eventbriteUrl: "https://www.eventbrite.co.uk/d/united-kingdom--london/events/",
-    clinicalLocation: "London, United Kingdom",
-    openAlexQuery: "University College London OR Imperial College London",
-    neighborhoods: [
-      { label: "Shoreditch / Hackney", patterns: ["shoreditch", "hackney", "dalston"] },
-      { label: "Soho / Fitzrovia", patterns: ["soho", "fitzrovia", "covent garden"] },
-      { label: "King's Cross / Camden", patterns: ["king's cross", "kings cross", "camden"] },
-    ],
-  },
-};
+function buildProfilesRecord(): Record<string, CityDiscoveryProfile> {
+  const out: Record<string, CityDiscoveryProfile> = {};
+  for (const pack of listCityPacks()) {
+    out[pack.code] = packToDiscoveryProfile(pack);
+  }
+  return out;
+}
+
+export const CITY_DISCOVERY_PROFILES: Record<string, CityDiscoveryProfile> = buildProfilesRecord();
 
 function resolveCityProfile(city?: string): CityDiscoveryProfile {
-  const normalized = (city ?? "nyc").trim().toLowerCase() as DiscoveryCity;
-  if (normalized in CITY_DISCOVERY_PROFILES) {
-    return CITY_DISCOVERY_PROFILES[normalized];
+  const pack = requireCityPack(city && city.trim().length > 0 ? city : "nyc");
+  return packToDiscoveryProfile(pack);
+}
+
+function resolveDesireTagging(
+  text: string,
+  vertical: MarketingVertical,
+  fallbackLanes?: readonly DesireLaneId[],
+): { readonly desireLane: DesireLaneId; readonly desireLanes: DesireLaneId[] } {
+  const inferred = inferDesireLanesFromText(text, defaultDesireLaneForApp(vertical));
+  const merged = new Set<DesireLaneId>(inferred.desireLanes);
+  if (fallbackLanes) {
+    for (const lane of fallbackLanes) merged.add(lane);
   }
-  return CITY_DISCOVERY_PROFILES.nyc;
+  const desireLanes = Array.from(merged);
+  return {
+    desireLane: inferred.primaryDesireLane,
+    desireLanes,
+  };
 }
 
 function clampLimit(limit: number | undefined, fallback: number): number {
@@ -346,7 +274,11 @@ export function detectNeighborhood(text: string, city = "nyc"): string | undefin
   for (const entry of profile.neighborhoods) {
     if (
       entry.patterns.some((p) =>
-        typeof p === "string" ? hay.includes(p) : p.test(hay),
+        typeof p === "string"
+          ? p.length <= 3
+            ? new RegExp(`\\b${p.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(hay)
+            : hay.includes(p.toLowerCase())
+          : p.test(hay),
       )
     ) {
       return entry.label;
@@ -370,7 +302,7 @@ export function inferVerticalFromText(
   if (/(founder|startup|engineer|developer|ai agent|machine learning|researcher|arxiv|github|hiring|freelance|saas|vc|pitch|hackathon|builder)/.test(hay)) {
     return "peon";
   }
-  if (/(friend|meetup|run club|running club|social club|supper club|community|book club|pickleball|trivia|new to nyc|hangout)/.test(hay)) {
+  if (/(friend|meetup|run club|running club|social club|supper club|community|book club|pickleball|trivia|new to |hangout)/.test(hay)) {
     return "friends";
   }
   return fallback;
@@ -440,7 +372,7 @@ async function readResponseTextBounded(res: Response, maxBytes = MAX_RESPONSE_BY
     try {
       reader.releaseLock();
     } catch {
-      // Ignore already released lock.
+      // Lock already released.
     }
   }
   return out;
@@ -518,9 +450,167 @@ async function mapSettledWithConcurrency<T, R>(
   return results;
 }
 
-// ============================================================================
-// 1. NYC Open Data DOHMH Venues & NYS SLA Liquor Licenses (Active + Named Principals)
-// ============================================================================
+export function parseGenericOpenDataVenues(
+  rows: readonly Record<string, unknown>[],
+  connector: OpenDataConnectorSpec,
+  discoveredAt: string,
+  city: string,
+): DiscoveredLead[] {
+  const profile = resolveCityProfile(city);
+  const out: DiscoveredLead[] = [];
+  const fm = connector.fieldMap;
+  const source: DiscoverySource =
+    connector.id === "nyc-dohmh-venues"
+      ? "nyc_open_data"
+      : connector.id === "nys-sla-active"
+        ? "nys_sla"
+        : connector.id === "nys-sla-principals"
+          ? "nys_sla_pending"
+          : "city_open_data";
+
+  for (const row of rows) {
+    const primaryName = cleanText(row[fm.nameField], 120);
+    const fallbackName = fm.fallbackNameField ? cleanText(row[fm.fallbackNameField], 120) : "";
+    const name = primaryName || fallbackName;
+    if (!name) continue;
+
+    const address = cleanText(
+      fm.addressFields.map((field) => safeString(row[field])).filter(Boolean).join(" "),
+      160,
+    );
+    const category = fm.categoryField ? cleanText(row[fm.categoryField], 80) : "";
+    const principal = fm.principalField ? cleanText(row[fm.principalField], 100) : "";
+    const gradeOrStatus = fm.gradeOrStatusField ? cleanText(row[fm.gradeOrStatusField], 40) : "";
+    const phone = fm.phoneField ? cleanText(row[fm.phoneField], 32) : "";
+    const zip = fm.zipField ? cleanText(row[fm.zipField], 20) : "";
+    const boro = fm.countyOrBoroField ? cleanText(row[fm.countyOrBoroField], 40) : "";
+    const rawId = safeString(row[fm.idField]).trim();
+
+    const combined = `${name} ${principal} ${address} ${category}`;
+    const neighborhood = detectNeighborhood(combined, profile.code) ?? (boro || undefined);
+    const isSocialVenue = /(bar|lounge|wine|cocktail|coffee|cafe|bakery|bistro|tapas|tavern|restaurant|club)/i.test(
+      `${name} ${category}`,
+    );
+    const vertical = inferVerticalFromText(
+      combined,
+      connector.kind === "liquor_licenses" || connector.kind === "liquor_principals" || isSocialVenue
+        ? "slop"
+        : "friends",
+    );
+    const desires = resolveDesireTagging(combined, vertical, connector.defaultDesireLanes);
+    const keyId = rawId
+      ? `${connector.id}:${rawId}`
+      : `${connector.id}:${slugPart(name)}:${slugPart(zip || address)}`;
+
+    let score = connector.kind === "liquor_principals" ? 68 : 58;
+    if (gradeOrStatus === "A" || /pass/i.test(gradeOrStatus)) score += 14;
+    if (isSocialVenue) score += 12;
+    if (principal) score += 12;
+    if (neighborhood) score += 8;
+
+    const contactHint = principal || phone || null;
+    const baseUrl = connector.urlTemplate.split("?")[0] ?? connector.urlTemplate;
+    const sourceUrl = rawId
+      ? `${baseUrl}?${encodeURIComponent(fm.idField)}=${encodeURIComponent(rawId)}`
+      : connector.urlTemplate.replace("{limit}", "25");
+
+    out.push({
+      dedupeKey: `${source}:${keyId}`,
+      city: profile.code,
+      neighborhood,
+      vertical,
+      category: "venue",
+      source,
+      title: principal ? `${name} (Principal: ${principal})` : name,
+      summary: cleanText(
+        `${category || `${profile.displayName} Licensed Venue`} — ${address}${gradeOrStatus ? ` (${gradeOrStatus})` : ""}`,
+      ),
+      sourceUrl,
+      contactHint,
+      handleOrContact: contactHint ?? undefined,
+      score: clampScore(score),
+      discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
+      tags: [
+        connector.id,
+        "open-data",
+        "venue",
+        profile.code,
+        ...(category ? [slugPart(category)] : []),
+      ],
+      rawMeta: {
+        connectorId: connector.id,
+        recordId: rawId || undefined,
+        principal: principal || undefined,
+        gradeOrStatus: gradeOrStatus || undefined,
+        zip: zip || undefined,
+      },
+    });
+  }
+
+  return out;
+}
+
+export async function fetchCityOpenDataVenues(
+  opts: Pick<DiscoveryOptions, "fetchImpl" | "clock" | "city" | "limitPerSource" | "timeoutMs" | "concurrency" | "userAgent">,
+): Promise<{ leads: DiscoveredLead[]; errors: DiscoverySourceError[] }> {
+  const profile = resolveCityProfile(opts.city);
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const discoveredAt = readClockIso(opts.clock);
+  const limit = clampLimit(opts.limitPerSource, 25);
+  const ua = opts.userAgent ?? DEFAULT_USER_AGENT;
+  const leads: DiscoveredLead[] = [];
+  const errors: DiscoverySourceError[] = [];
+
+  if (profile.openDataConnectors.length === 0) {
+    return { leads, errors };
+  }
+
+  const settled = await mapSettledWithConcurrency(
+    profile.openDataConnectors,
+    opts.concurrency ?? DEFAULT_CONCURRENCY,
+    async (connector) => {
+      const url = connector.urlTemplate.replace("{limit}", String(limit));
+      try {
+        const rows = await fetchJson<Array<Record<string, unknown>>>(fetchImpl, url, ua, opts.timeoutMs);
+        return parseGenericOpenDataVenues(
+          Array.isArray(rows) ? rows : [],
+          connector,
+          discoveredAt,
+          profile.code,
+        );
+      } catch (err) {
+        throw new SourceFetchError(url, err instanceof Error ? err.message : String(err));
+      }
+    },
+  );
+
+  for (let i = 0; i < settled.length; i += 1) {
+    const r = settled[i];
+    const connector = profile.openDataConnectors[i];
+    if (r.status === "fulfilled") {
+      leads.push(...r.value);
+    } else {
+      const reason: unknown = r.reason;
+      const source: DiscoverySource =
+        connector.id === "nyc-dohmh-venues"
+          ? "nyc_open_data"
+          : connector.id === "nys-sla-active"
+            ? "nys_sla"
+            : connector.id === "nys-sla-principals"
+              ? "nys_sla_pending"
+              : "city_open_data";
+      errors.push({
+        source,
+        url: reason instanceof SourceFetchError ? reason.url : connector.urlTemplate,
+        message: reason instanceof Error ? reason.message : String(reason),
+      });
+    }
+  }
+
+  return { leads, errors };
+}
 
 export interface DohmhVenueRow {
   camis?: string;
@@ -554,10 +644,8 @@ export function parseNycOpenDataVenues(
     const isSocialVenue = /(bar|lounge|wine|cocktail|coffee|cafe|bakery|bistro|tapas|italian|mexican|japanese)/i.test(
       `${name} ${cuisine}`,
     );
-    const vertical = inferVerticalFromText(
-      combined,
-      isSocialVenue ? "slop" : "friends",
-    );
+    const vertical = inferVerticalFromText(combined, isSocialVenue ? "slop" : "friends");
+    const desires = resolveDesireTagging(combined, vertical, ["soulmate_dating", "ideal_friends"]);
     const keyId = row.camis ? `camis:${row.camis}` : `dba:${slugPart(name)}:${slugPart(row.zipcode ?? "")}`;
     let score = 55;
     if (row.grade === "A") score += 15;
@@ -581,6 +669,8 @@ export function parseNycOpenDataVenues(
       handleOrContact: contactHint ?? undefined,
       score: clampScore(score),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["nyc-open-data", "venue", ...(cuisine ? [slugPart(cuisine)] : []), ...(row.grade ? [`grade-${row.grade.toLowerCase()}`] : [])],
       rawMeta: { camis: row.camis, boro: row.boro, zipcode: row.zipcode, grade: row.grade },
     });
@@ -620,6 +710,8 @@ export function parseNysSlaVenues(
     const combined = `${name} ${addr} ${method}`;
     const neighborhood = detectNeighborhood(combined, city);
     const isOnPremises = /(op|bar|tavern|lounge|restaurant|club|wine)/i.test(method);
+    const vertical = inferVerticalFromText(combined, isOnPremises ? "slop" : "ntwrk");
+    const desires = resolveDesireTagging(combined, vertical, ["soulmate_dating", "bespoke_irl_experience"]);
     const key = row.license_serial_number
       ? `sla:${row.license_serial_number}`
       : `sla:${slugPart(name)}:${slugPart(row.zip ?? "")}`;
@@ -628,7 +720,7 @@ export function parseNysSlaVenues(
       dedupeKey: `nys_sla:${key}`,
       city,
       neighborhood,
-      vertical: inferVerticalFromText(combined, isOnPremises ? "slop" : "ntwrk"),
+      vertical,
       category: "venue",
       source: "nys_sla",
       title: name,
@@ -639,6 +731,8 @@ export function parseNysSlaVenues(
       contactHint: null,
       score: clampScore(60 + (isOnPremises ? 20 : 0) + (neighborhood ? 10 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["nys-sla", "bar-venue", ...(row.license_type_code ? [slugPart(row.license_type_code)] : [])],
       rawMeta: { serial: row.license_serial_number, county: row.county_name_desc, zip: row.zip },
     });
@@ -664,6 +758,8 @@ export function parseNysSlaNamedPrincipals(
     const method = cleanText(row.method_of_operation || row.license_type_code, 80);
     const combined = `${name} ${principal} ${addr} ${method}`;
     const neighborhood = detectNeighborhood(combined, city);
+    const vertical = inferVerticalFromText(combined, "slop");
+    const desires = resolveDesireTagging(combined, vertical, ["soulmate_dating", "bespoke_irl_experience"]);
     const key = row.license_serial_number
       ? `sla_principal:${row.license_serial_number}`
       : `sla_principal:${slugPart(name)}:${slugPart(principal)}`;
@@ -672,7 +768,7 @@ export function parseNysSlaNamedPrincipals(
       dedupeKey: `nys_sla_pending:${key}`,
       city,
       neighborhood,
-      vertical: inferVerticalFromText(combined, "slop"),
+      vertical,
       category: "venue",
       source: "nys_sla_pending",
       title: principal ? `${name} (Principal: ${principal})` : name,
@@ -684,6 +780,8 @@ export function parseNysSlaNamedPrincipals(
       handleOrContact: principal || undefined,
       score: clampScore(68 + (principal ? 14 : 0) + (neighborhood ? 10 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["nys-sla", "named-principal", "bd-venue", slugPart(status) || "pending"],
       rawMeta: {
         serial: row.license_serial_number,
@@ -739,10 +837,6 @@ export async function fetchNysSlaNamedPrincipals(
   return parseNysSlaNamedPrincipals(Array.isArray(rows) ? rows : [], discoveredAt, city);
 }
 
-// ============================================================================
-// 2. Builders, Researchers & Creators (HN, GitHub, arXiv, Reddit, YouTube RSS)
-// ============================================================================
-
 export interface HnSearchResponse {
   hits?: Array<{
     objectID?: string;
@@ -773,7 +867,9 @@ export function parseHnStories(
     const isLocal =
       combined.toLowerCase().includes(cityToken) ||
       combined.toLowerCase().includes(profile.code) ||
-      detectNeighborhood(combined, city) !== undefined;
+      detectNeighborhood(combined, profile.code) !== undefined;
+    const vertical = inferVerticalFromText(combined, "peon");
+    const desires = resolveDesireTagging(combined, vertical, ["cofounder_venture", "money_work"]);
     const score =
       45 +
       Math.min(30, Math.floor(points / 5)) +
@@ -783,9 +879,9 @@ export function parseHnStories(
     const hnContact = hit.author ? `hn:${hit.author}` : null;
     out.push({
       dedupeKey: `hn:${id}`,
-      city,
-      neighborhood: detectNeighborhood(combined, city),
-      vertical: inferVerticalFromText(combined, "peon"),
+      city: profile.code,
+      neighborhood: detectNeighborhood(combined, profile.code),
+      vertical,
       category: "vip",
       source: "hn",
       title,
@@ -798,6 +894,8 @@ export function parseHnStories(
       handleOrContact: hnContact ?? undefined,
       score: clampScore(score),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["hacker-news", "builder", ...(isLocal ? [profile.code] : [])],
       rawMeta: { objectID: hit.objectID, author: hit.author, points, numComments: comments },
     });
@@ -810,8 +908,7 @@ export async function fetchHnBuilders(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 20);
   const query = opts.hnQuery ?? profile.hnQuery;
   const url = `${PUBLIC_DISCOVERY_ENDPOINTS.hnAlgoliaBase}?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${limit}`;
@@ -821,7 +918,7 @@ export async function fetchHnBuilders(
     opts.userAgent ?? DEFAULT_USER_AGENT,
     opts.timeoutMs,
   );
-  return parseHnStories(data, discoveredAt, city);
+  return parseHnStories(data, discoveredAt, profile.code);
 }
 
 export interface GithubUserSearchResponse {
@@ -847,10 +944,11 @@ export function parseGithubUsers(
     const login = cleanText(item.login, 80);
     if (!login) continue;
     const combined = `${login} ${cleanText(item.bio, 180)} ${cleanText(item.location, 80)}`;
+    const desires = resolveDesireTagging(combined, "peon", ["money_work", "cofounder_venture"]);
     out.push({
       dedupeKey: `github:${login.toLowerCase()}`,
-      city,
-      neighborhood: detectNeighborhood(combined, city),
+      city: profile.code,
+      neighborhood: detectNeighborhood(combined, profile.code),
       vertical: "peon",
       category: "vip",
       source: "github",
@@ -866,6 +964,8 @@ export function parseGithubUsers(
       handleOrContact: `github:${login}`,
       score: clampScore(65 + Math.min(25, Math.round((item.score ?? 1) * 10))),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["github", "builder", profile.code],
       rawMeta: { id: item.id, login, type: item.type, location: item.location },
     });
@@ -878,8 +978,7 @@ export async function fetchGithubNycBuilders(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 20);
   const q = opts.githubQuery ?? `location:${profile.githubLocation} followers:>25`;
   const url = `${PUBLIC_DISCOVERY_ENDPOINTS.githubUsersBase}?q=${encodeURIComponent(q)}&per_page=${limit}`;
@@ -889,7 +988,7 @@ export async function fetchGithubNycBuilders(
     opts.userAgent ?? DEFAULT_USER_AGENT,
     opts.timeoutMs,
   );
-  return parseGithubUsers(data, discoveredAt, city);
+  return parseGithubUsers(data, discoveredAt, profile.code);
 }
 
 export function parseArxivAtom(
@@ -897,6 +996,7 @@ export function parseArxivAtom(
   discoveredAt: string,
   city = "nyc",
 ): DiscoveredLead[] {
+  const profile = resolveCityProfile(city);
   const out: DiscoveredLead[] = [];
   for (const entry of splitXmlEntries(xml)) {
     const idUrl = extractXmlTag(entry, "id");
@@ -907,11 +1007,12 @@ export function parseArxivAtom(
     const primaryAuthor = authorMatch ? decodeXmlEntities(authorMatch[1] ?? "") : undefined;
     const paperKey = slugPart(idUrl || title);
     const isAgentPaper = /(agent|social|matching|graph|llm|multi-agent|autonomous)/i.test(`${title} ${summary}`);
+    const desires = resolveDesireTagging(`${title} ${summary}`, "peon", ["cofounder_venture", "mentorship_mastery"]);
 
     const arxivContact = primaryAuthor ? `arxiv:${primaryAuthor}` : null;
     out.push({
       dedupeKey: `arxiv:${paperKey}`,
-      city,
+      city: profile.code,
       vertical: "peon",
       category: "vip",
       source: "arxiv",
@@ -922,6 +1023,8 @@ export function parseArxivAtom(
       handleOrContact: arxivContact ?? undefined,
       score: clampScore(58 + (isAgentPaper ? 22 : 0) + (primaryAuthor ? 5 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["arxiv", "researcher", ...(isAgentPaper ? ["ai-agents"] : [])],
       rawMeta: { primaryAuthor, idUrl },
     });
@@ -934,6 +1037,7 @@ export async function fetchArxivResearchers(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 15);
   const q = opts.arxivQuery ?? "all:autonomous agents OR all:social matching";
   const url = `${PUBLIC_DISCOVERY_ENDPOINTS.arxivApiBase}?search_query=${encodeURIComponent(q)}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
@@ -944,7 +1048,7 @@ export async function fetchArxivResearchers(
     "application/atom+xml, text/xml",
     opts.timeoutMs,
   );
-  return parseArxivAtom(xml, discoveredAt, (opts.city ?? "nyc").trim().toLowerCase());
+  return parseArxivAtom(xml, discoveredAt, profile.code);
 }
 
 export interface RedditListingResponse {
@@ -988,6 +1092,8 @@ export function parseRedditFeed(
         : /meetup|friend|social/i.test(sub)
           ? "friends"
           : "ntwrk";
+    const vertical = inferVerticalFromText(combined, subFallback);
+    const desires = resolveDesireTagging(combined, vertical);
 
     const fallbackUrl = `https://www.reddit.com/r/${encodeURIComponent(sub)}`;
     const permalink = post.permalink
@@ -997,9 +1103,9 @@ export function parseRedditFeed(
     const redditContact = post.author && post.author !== "[deleted]" ? `u/${post.author}` : null;
     out.push({
       dedupeKey: `reddit:${post.id ?? slugPart(`${sub}-${title}`)}`,
-      city,
-      neighborhood: detectNeighborhood(combined, city),
-      vertical: inferVerticalFromText(combined, subFallback),
+      city: profile.code,
+      neighborhood: detectNeighborhood(combined, profile.code),
+      vertical,
       category: /meetup|event|mixer|party/i.test(combined) ? "event" : "community",
       source: "reddit",
       title,
@@ -1009,6 +1115,8 @@ export function parseRedditFeed(
       handleOrContact: redditContact ?? undefined,
       score: clampScore(50 + Math.min(25, Math.floor(postScore / 4)) + Math.min(15, Math.floor(comments / 3))),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["reddit", `r-${slugPart(sub)}`, profile.code],
       rawMeta: { id: post.id, subreddit: sub, author: post.author, score: postScore, comments },
     });
@@ -1024,8 +1132,7 @@ export async function fetchRedditNycFeeds(
 ): Promise<{ leads: DiscoveredLead[]; errors: DiscoverySourceError[] }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 15);
   const subs = (opts.redditSubreddits ?? profile.subreddits)
     .map((s) => s.trim())
@@ -1043,7 +1150,7 @@ export async function fetchRedditNycFeeds(
       const url = `${PUBLIC_DISCOVERY_ENDPOINTS.redditBase}/r/${encodeURIComponent(sub)}/new.json?limit=${limit}`;
       try {
         const json = await fetchJson<RedditListingResponse>(fetchImpl, url, ua, opts.timeoutMs);
-        return { url, items: parseRedditFeed(json, discoveredAt, city) };
+        return { url, items: parseRedditFeed(json, discoveredAt, profile.code) };
       } catch (err) {
         throw new SourceFetchError(url, err instanceof Error ? err.message : String(err));
       }
@@ -1070,6 +1177,7 @@ export function parseYoutubeRss(
   discoveredAt: string,
   city = "nyc",
 ): DiscoveredLead[] {
+  const profile = resolveCityProfile(city);
   const channelTitle = cleanText(extractXmlTag(xml, "title"), 100);
   const channelIdFromFeed = extractXmlTag(xml, "yt:channelId");
   const out: DiscoveredLead[] = [];
@@ -1094,17 +1202,19 @@ export function parseYoutubeRss(
     const viewsRaw = extractXmlAttr(entry, "media:statistics", "views");
     const views = viewsRaw ? Number.parseInt(viewsRaw, 10) : 0;
     const combined = `${authorName} ${title} ${description}`;
-    const isStreetInterview = /(street interview|washington square|nyc|new york|vox pop|dating in|ask new yorkers|sidetalk)/i.test(
+    const isStreetInterview = /(street interview|vox pop|dating in|ask |sidetalk|on the street)/i.test(
       combined,
     );
+    const vertical = inferVerticalFromText(combined, "slop");
+    const desires = resolveDesireTagging(combined, vertical, ["creative_collab"]);
     const score = 60 + (isStreetInterview ? 25 : 0) + (views >= 5000 && views <= 150000 ? 15 : views > 0 ? 5 : 0);
 
     const ytContact = channelId ? `yt_channel:${channelId}` : (authorName || null);
     out.push({
       dedupeKey: `youtube_rss:${videoId || slugPart(`${channelId}-${title}`)}`,
-      city,
-      neighborhood: detectNeighborhood(combined, city),
-      vertical: inferVerticalFromText(combined, "slop"),
+      city: profile.code,
+      neighborhood: detectNeighborhood(combined, profile.code),
+      vertical,
       category: "creator",
       source: "youtube_rss",
       title: authorName ? `${authorName}: ${title}` : title,
@@ -1114,6 +1224,8 @@ export function parseYoutubeRss(
       handleOrContact: ytContact ?? undefined,
       score: clampScore(score),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["youtube-rss", "creator", ...(isStreetInterview ? ["street-interview"] : [])],
       rawMeta: { videoId, channelId, authorName, views },
     });
@@ -1127,7 +1239,7 @@ export async function fetchYoutubeChannelRss(
 ): Promise<{ leads: DiscoveredLead[]; errors: DiscoverySourceError[] }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
+  const profile = resolveCityProfile(opts.city);
   const ua = opts.userAgent ?? DEFAULT_USER_AGENT;
   const validIds = channelIds
     .map((id) => id.trim())
@@ -1150,7 +1262,7 @@ export async function fetchYoutubeChannelRss(
           "application/atom+xml, application/xml, text/xml",
           opts.timeoutMs,
         );
-        return { url, items: parseYoutubeRss(xml, discoveredAt, city) };
+        return { url, items: parseYoutubeRss(xml, discoveredAt, profile.code) };
       } catch (err) {
         throw new SourceFetchError(url, err instanceof Error ? err.message : String(err));
       }
@@ -1171,10 +1283,6 @@ export async function fetchYoutubeChannelRss(
   }
   return { leads, errors };
 }
-
-// ============================================================================
-// 3. Public Event Feeds (Luma, Eventbrite, Partiful)
-// ============================================================================
 
 function extractJsonLdEvents(html: string): Array<Record<string, unknown>> {
   const results: Array<Record<string, unknown>> = [];
@@ -1261,15 +1369,17 @@ export function parseLumaEvents(
             : ev.host,
           80,
         );
-        const neighborhood = detectNeighborhood(combined, city);
+        const neighborhood = detectNeighborhood(combined, profile.code);
+        const vertical = inferVerticalFromText(combined, "ntwrk");
+        const desires = resolveDesireTagging(combined, vertical, ["bespoke_irl_experience"]);
         const startAtStr = safeString(ev.start_at);
 
         const lumaContact = host || null;
         out.push({
           dedupeKey: `luma:${slugPart(slug || title)}`,
-          city,
+          city: profile.code,
           neighborhood,
-          vertical: inferVerticalFromText(combined, "ntwrk"),
+          vertical,
           category: "event",
           source: "luma",
           title,
@@ -1279,6 +1389,8 @@ export function parseLumaEvents(
           handleOrContact: lumaContact ?? undefined,
           score: clampScore(72 + (neighborhood ? 12 : 0) + (host ? 6 : 0)),
           discoveredAt,
+          desireLane: desires.desireLane,
+          desireLanes: desires.desireLanes,
           tags: ["luma", "event", profile.code],
           rawMeta: { startAt: ev.start_at, host, location: geo },
         });
@@ -1304,14 +1416,16 @@ export function parseLumaEvents(
       140,
     );
     const combined = `${title} ${locText} ${cleanText(ev.description, 160)}`;
-    const neighborhood = detectNeighborhood(combined, city);
+    const neighborhood = detectNeighborhood(combined, profile.code);
+    const vertical = inferVerticalFromText(combined, "ntwrk");
+    const desires = resolveDesireTagging(combined, vertical, ["bespoke_irl_experience"]);
     const startDateStr = safeString(ev.startDate);
 
     out.push({
       dedupeKey: `luma:${slugPart(url !== profile.lumaUrl ? url : title)}`,
-      city,
+      city: profile.code,
       neighborhood,
-      vertical: inferVerticalFromText(combined, "ntwrk"),
+      vertical,
       category: "event",
       source: "luma",
       title,
@@ -1320,6 +1434,8 @@ export function parseLumaEvents(
       contactHint: null,
       score: clampScore(70 + (neighborhood ? 12 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["luma", "event", profile.code],
       rawMeta: { startDate: ev.startDate, location: locText },
     });
@@ -1353,14 +1469,16 @@ export function parseEventbriteEvents(
         const url = sanitizeHttpUrl(ev.url, profile.eventbriteUrl);
         const venue = cleanText(ev.venue ?? ev.location, 140);
         const combined = `${title} ${venue} ${cleanText(ev.summary, 160)}`;
-        const neighborhood = detectNeighborhood(combined, city);
+        const neighborhood = detectNeighborhood(combined, profile.code);
+        const vertical = inferVerticalFromText(combined, "friends");
+        const desires = resolveDesireTagging(combined, vertical, ["ideal_friends", "bespoke_irl_experience"]);
         const idStr = safeString(ev.id) || url || title;
         const startStr = safeString(ev.start);
         out.push({
           dedupeKey: `eventbrite:${slugPart(idStr)}`,
-          city,
+          city: profile.code,
           neighborhood,
-          vertical: inferVerticalFromText(combined, "friends"),
+          vertical,
           category: "event",
           source: "eventbrite",
           title,
@@ -1369,6 +1487,8 @@ export function parseEventbriteEvents(
           contactHint: null,
           score: clampScore(68 + (neighborhood ? 12 : 0)),
           discoveredAt,
+          desireLane: desires.desireLane,
+          desireLanes: desires.desireLanes,
           tags: ["eventbrite", "event", profile.code],
           rawMeta: { id: ev.id, start: ev.start, venue },
         });
@@ -1388,13 +1508,15 @@ export function parseEventbriteEvents(
       : undefined;
     const locText = cleanText(locObj?.name, 140);
     const combined = `${title} ${locText} ${cleanText(ev.description, 160)}`;
-    const neighborhood = detectNeighborhood(combined, city);
+    const neighborhood = detectNeighborhood(combined, profile.code);
+    const vertical = inferVerticalFromText(combined, "friends");
+    const desires = resolveDesireTagging(combined, vertical, ["ideal_friends", "bespoke_irl_experience"]);
     const startDateStr = safeString(ev.startDate);
     out.push({
       dedupeKey: `eventbrite:${slugPart(url !== profile.eventbriteUrl ? url : title)}`,
-      city,
+      city: profile.code,
       neighborhood,
-      vertical: inferVerticalFromText(combined, "friends"),
+      vertical,
       category: "event",
       source: "eventbrite",
       title,
@@ -1403,6 +1525,8 @@ export function parseEventbriteEvents(
       contactHint: null,
       score: clampScore(66 + (neighborhood ? 12 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["eventbrite", "event", profile.code],
       rawMeta: { startDate: ev.startDate, location: locText },
     });
@@ -1410,7 +1534,6 @@ export function parseEventbriteEvents(
   return out;
 }
 
-/** Normalizes a public Partiful event URL (`partiful.com/e/<eventId>`), rejecting non-Partiful or unsafe URLs. */
 export function normalizePartifulUrl(rawUrl: string): string | null {
   try {
     const parsed = new URL(rawUrl.trim());
@@ -1449,12 +1572,14 @@ export function parsePartifulEvents(
         : undefined;
     const host = cleanText(organizerObj?.name, 80) || null;
     const combined = `${title} ${locText} ${cleanText(ev.description, 160)}`;
-    const neighborhood = detectNeighborhood(combined, city);
+    const neighborhood = detectNeighborhood(combined, profile.code);
+    const vertical = inferVerticalFromText(combined, "friends");
+    const desires = resolveDesireTagging(combined, vertical, ["ideal_friends", "bespoke_irl_experience"]);
     out.push({
       dedupeKey: `partiful:${slugPart(normalizedUrl)}`,
-      city,
+      city: profile.code,
       neighborhood,
-      vertical: inferVerticalFromText(combined, "friends"),
+      vertical,
       category: "event",
       source: "partiful",
       title,
@@ -1464,6 +1589,8 @@ export function parsePartifulEvents(
       handleOrContact: host ?? undefined,
       score: clampScore(74 + (neighborhood ? 10 : 0) + (host ? 6 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["partiful", "event", profile.code],
       rawMeta: { host, location: locText, startDate: ev.startDate },
     });
@@ -1479,12 +1606,14 @@ export function parsePartifulEvents(
     if (title) {
       const desc = cleanText(ogDesc, 200);
       const combined = `${title} ${desc}`;
-      const neighborhood = detectNeighborhood(combined, city);
+      const neighborhood = detectNeighborhood(combined, profile.code);
+      const vertical = inferVerticalFromText(combined, "friends");
+      const desires = resolveDesireTagging(combined, vertical, ["ideal_friends"]);
       out.push({
         dedupeKey: `partiful:${slugPart(normalizedUrl)}`,
-        city,
+        city: profile.code,
         neighborhood,
-        vertical: inferVerticalFromText(combined, "friends"),
+        vertical,
         category: "event",
         source: "partiful",
         title,
@@ -1493,6 +1622,8 @@ export function parsePartifulEvents(
         contactHint: null,
         score: clampScore(70 + (neighborhood ? 10 : 0)),
         discoveredAt,
+        desireLane: desires.desireLane,
+        desireLanes: desires.desireLanes,
         tags: ["partiful", "event", profile.code],
         rawMeta: { normalizedUrl },
       });
@@ -1507,8 +1638,7 @@ export async function fetchLumaNycEvents(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const body = await fetchText(
     fetchImpl,
     profile.lumaUrl,
@@ -1516,7 +1646,7 @@ export async function fetchLumaNycEvents(
     "text/html, application/json;q=0.9",
     opts.timeoutMs,
   );
-  return parseLumaEvents(body, discoveredAt, city);
+  return parseLumaEvents(body, discoveredAt, profile.code);
 }
 
 export async function fetchEventbriteNycEvents(
@@ -1524,8 +1654,7 @@ export async function fetchEventbriteNycEvents(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const body = await fetchText(
     fetchImpl,
     profile.eventbriteUrl,
@@ -1533,7 +1662,7 @@ export async function fetchEventbriteNycEvents(
     "text/html, application/json;q=0.9",
     opts.timeoutMs,
   );
-  return parseEventbriteEvents(body, discoveredAt, city);
+  return parseEventbriteEvents(body, discoveredAt, profile.code);
 }
 
 export async function fetchPartifulEvents(
@@ -1542,7 +1671,7 @@ export async function fetchPartifulEvents(
 ): Promise<{ leads: DiscoveredLead[]; errors: DiscoverySourceError[] }> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
+  const profile = resolveCityProfile(opts.city);
   const ua = opts.userAgent ?? DEFAULT_USER_AGENT;
   const normalizedUrls = partifulUrls
     .map((u) => normalizePartifulUrl(u))
@@ -1558,7 +1687,7 @@ export async function fetchPartifulEvents(
     async (url) => {
       try {
         const html = await fetchText(fetchImpl, url, ua, "text/html, application/json;q=0.9", opts.timeoutMs);
-        return parsePartifulEvents(html, url, discoveredAt, city);
+        return parsePartifulEvents(html, url, discoveredAt, profile.code);
       } catch (err) {
         throw new SourceFetchError(url, err instanceof Error ? err.message : String(err));
       }
@@ -1579,10 +1708,6 @@ export async function fetchPartifulEvents(
   }
   return { leads, errors };
 }
-
-// ============================================================================
-// 4. $0 Public VIP & BD Open-Data Fetchers (SEC Form D, OpenAlex, IRS 990, ClinicalTrials)
-// ============================================================================
 
 export interface SecFormDSearchResponse {
   hits?: {
@@ -1619,11 +1744,12 @@ export function parseSecFormDFilings(
     const sourceUrl = cik
       ? `https://www.sec.gov/edgar/browse/?CIK=${encodeURIComponent(cik)}`
       : PUBLIC_DISCOVERY_ENDPOINTS.secFormDSearchBase;
+    const desires = resolveDesireTagging(`${entityName} ${loc}`, "peon", ["cofounder_venture", "investors_patrons"]);
 
     out.push({
       dedupeKey: `sec_form_d:${slugPart(adsh || entityName)}`,
-      city,
-      neighborhood: detectNeighborhood(`${entityName} ${loc}`, city),
+      city: profile.code,
+      neighborhood: detectNeighborhood(`${entityName} ${loc}`, profile.code),
       vertical: "peon",
       category: "vip",
       source: "sec_form_d",
@@ -1634,6 +1760,8 @@ export function parseSecFormDFilings(
       handleOrContact: cik ? `sec_cik:${cik}` : undefined,
       score: clampScore(82 + (loc ? 6 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["sec-form-d", "funded-founder", "vip", profile.code],
       rawMeta: { adsh, cik, fileDate: src.file_date, location: loc },
     });
@@ -1644,8 +1772,7 @@ export function parseSecFormDFilings(
 export async function fetchSecFormDVips(
   opts: Pick<DiscoveryOptions, "fetchImpl" | "clock" | "city" | "limitPerSource" | "timeoutMs" | "userAgent">,
 ): Promise<DiscoveredLead[]> {
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   if (profile.countryCode !== "US") return [];
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
@@ -1655,10 +1782,10 @@ export async function fetchSecFormDVips(
   const data = await fetchJson<SecFormDSearchResponse>(
     fetchImpl,
     url,
-    opts.userAgent ?? `${DEFAULT_USER_AGENT} ops-nyc@ntwrk.party`,
+    opts.userAgent ?? `${DEFAULT_USER_AGENT} ${profile.opsEmail}`,
     opts.timeoutMs,
   );
-  return parseSecFormDFilings(data, discoveredAt, city);
+  return parseSecFormDFilings(data, discoveredAt, profile.code);
 }
 
 export interface OpenAlexAuthorsResponse {
@@ -1690,10 +1817,11 @@ export function parseOpenAlexResearchers(
     const cites = typeof author.cited_by_count === "number" ? author.cited_by_count : 0;
     const key = slugPart(author.id ?? name);
     const contactHint = author.orcid ? cleanText(author.orcid, 80) : null;
+    const desires = resolveDesireTagging(`${name} ${inst}`, "peon", ["mentorship_mastery", "cofounder_venture"]);
 
     out.push({
       dedupeKey: `openalex:${key}`,
-      city,
+      city: profile.code,
       vertical: "peon",
       category: "vip",
       source: "openalex",
@@ -1704,6 +1832,8 @@ export function parseOpenAlexResearchers(
       handleOrContact: contactHint ?? undefined,
       score: clampScore(68 + Math.min(22, Math.floor(Math.log10(cites + 1) * 7))),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["openalex", "researcher", "vip", profile.code],
       rawMeta: { id: author.id, institution: inst, worksCount: works, citedByCount: cites },
     });
@@ -1716,8 +1846,7 @@ export async function fetchOpenAlexResearchers(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 15);
   const url = `${PUBLIC_DISCOVERY_ENDPOINTS.openAlexAuthorsBase}?search=${encodeURIComponent(profile.openAlexQuery)}&per-page=${limit}&sort=cited_by_count:desc`;
   const data = await fetchJson<OpenAlexAuthorsResponse>(
@@ -1726,7 +1855,7 @@ export async function fetchOpenAlexResearchers(
     opts.userAgent ?? DEFAULT_USER_AGENT,
     opts.timeoutMs,
   );
-  return parseOpenAlexResearchers(data, discoveredAt, city);
+  return parseOpenAlexResearchers(data, discoveredAt, profile.code);
 }
 
 export interface ProPublicaNonprofitsResponse {
@@ -1752,9 +1881,10 @@ export function parseProPublicaNonprofits(
     if (!name) continue;
     const ein = safeString(org.ein).trim();
     const loc = cleanText([org.city, org.state].filter(Boolean).join(", "), 80);
+    const desires = resolveDesireTagging(`${name} ${loc}`, "ntwrk", ["investors_patrons", "elite_serendipity"]);
     out.push({
       dedupeKey: `irs_990:${ein || slugPart(name)}`,
-      city,
+      city: profile.code,
       vertical: "ntwrk",
       category: "vip",
       source: "irs_990",
@@ -1767,6 +1897,8 @@ export function parseProPublicaNonprofits(
       handleOrContact: ein ? `ein:${ein}` : undefined,
       score: clampScore(72 + (org.ntee_code?.startsWith("A") ? 10 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["irs-990", "foundation", "vip", profile.code],
       rawMeta: { ein, city: org.city, state: org.state, nteeCode: org.ntee_code },
     });
@@ -1777,8 +1909,7 @@ export function parseProPublicaNonprofits(
 export async function fetchIrs990Foundations(
   opts: Pick<DiscoveryOptions, "fetchImpl" | "clock" | "city" | "limitPerSource" | "timeoutMs" | "userAgent">,
 ): Promise<DiscoveredLead[]> {
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   if (profile.countryCode !== "US" || !profile.stateCode) return [];
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
@@ -1790,7 +1921,7 @@ export async function fetchIrs990Foundations(
     opts.timeoutMs,
   );
   const limit = clampLimit(opts.limitPerSource, 15);
-  return parseProPublicaNonprofits(data, discoveredAt, city).slice(0, limit);
+  return parseProPublicaNonprofits(data, discoveredAt, profile.code).slice(0, limit);
 }
 
 export interface ClinicalTrialsResponse {
@@ -1827,10 +1958,11 @@ export function parseClinicalTrialsPis(
     const title = cleanText(idMod?.briefTitle, 140);
     const org = cleanText(official?.affiliation ?? idMod?.organization?.fullName, 120);
     if (!piName && !title) continue;
+    const desires = resolveDesireTagging(`${piName} ${title} ${org}`, "ntwrk", ["mentorship_mastery", "elite_serendipity"]);
 
     out.push({
       dedupeKey: `clinical_trials:${slugPart(nctId || `${piName}-${org}`)}`,
-      city,
+      city: profile.code,
       vertical: "ntwrk",
       category: "vip",
       source: "clinical_trials",
@@ -1843,6 +1975,8 @@ export function parseClinicalTrialsPis(
       handleOrContact: piName || undefined,
       score: clampScore(74 + (piName ? 8 : 0)),
       discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
       tags: ["clinical-trials", "physician-pi", "vip", profile.code],
       rawMeta: { nctId, piName, organization: org },
     });
@@ -1855,8 +1989,7 @@ export async function fetchClinicalTrialsPis(
 ): Promise<DiscoveredLead[]> {
   const fetchImpl = opts.fetchImpl ?? fetch;
   const discoveredAt = readClockIso(opts.clock);
-  const city = (opts.city ?? "nyc").trim().toLowerCase();
-  const profile = resolveCityProfile(city);
+  const profile = resolveCityProfile(opts.city);
   const limit = clampLimit(opts.limitPerSource, 15);
   const url = `${PUBLIC_DISCOVERY_ENDPOINTS.clinicalTrialsBase}?query.locn=${encodeURIComponent(profile.clinicalLocation)}&pageSize=${limit}`;
   const data = await fetchJson<ClinicalTrialsResponse>(
@@ -1865,12 +1998,8 @@ export async function fetchClinicalTrialsPis(
     opts.userAgent ?? DEFAULT_USER_AGENT,
     opts.timeoutMs,
   );
-  return parseClinicalTrialsPis(data, discoveredAt, city);
+  return parseClinicalTrialsPis(data, discoveredAt, profile.code);
 }
-
-// ============================================================================
-// 5. Ranking, Deduplication & Parallel Orchestrator
-// ============================================================================
 
 export function deduplicateAndRankLeads(leads: readonly DiscoveredLead[]): DiscoveredLead[] {
   const byKey = new Map<string, DiscoveredLead>();
@@ -1887,6 +2016,7 @@ export function deduplicateAndRankLeads(leads: readonly DiscoveredLead[]): Disco
 }
 
 const CORE_DISCOVERY_SOURCES: readonly DiscoverySource[] = [
+  "city_open_data",
   "nyc_open_data",
   "nys_sla",
   "hn",
@@ -1899,6 +2029,7 @@ const CORE_DISCOVERY_SOURCES: readonly DiscoverySource[] = [
 ];
 
 const VIP_BD_DISCOVERY_SOURCES: readonly DiscoverySource[] = [
+  "city_open_data",
   "nys_sla_pending",
   "partiful",
   "sec_form_d",
@@ -1907,9 +2038,9 @@ const VIP_BD_DISCOVERY_SOURCES: readonly DiscoverySource[] = [
   "clinical_trials",
 ];
 
-export async function discoverNycLeads(options: DiscoveryOptions): Promise<DiscoveryRunResult> {
-  const city = (options.city ?? "nyc").trim().toLowerCase() || "nyc";
-  const profile = resolveCityProfile(city);
+export async function discoverCityLeads(options: DiscoveryOptions): Promise<DiscoveryRunResult> {
+  const profile = resolveCityProfile(options.city);
+  const city = profile.code;
   const discoveredAt = readClockIso(options.clock);
   const defaultSources = options.includeVipBdSources
     ? [...CORE_DISCOVERY_SOURCES, ...VIP_BD_DISCOVERY_SOURCES]
@@ -1936,58 +2067,72 @@ export async function discoverNycLeads(options: DiscoveryOptions): Promise<Disco
     });
   };
 
-  addSingle("nyc_open_data", PUBLIC_DISCOVERY_ENDPOINTS.nycDohmhVenues, () =>
-    fetchNycOpenDataVenues(options),
-  );
-  addSingle("nys_sla", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaLicenses, () =>
-    fetchNysSlaVenues(options),
-  );
-  addSingle("nys_sla_pending", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaNamedPrincipals, () =>
-    fetchNysSlaNamedPrincipals(options),
-  );
+  if (city === "nyc") {
+    addSingle("nyc_open_data", PUBLIC_DISCOVERY_ENDPOINTS.nycDohmhVenues, () =>
+      fetchNycOpenDataVenues({ ...options, city }),
+    );
+    addSingle("nys_sla", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaLicenses, () =>
+      fetchNysSlaVenues({ ...options, city }),
+    );
+    addSingle("nys_sla_pending", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaNamedPrincipals, () =>
+      fetchNysSlaNamedPrincipals({ ...options, city }),
+    );
+  } else if (enabled.has("city_open_data") && profile.openDataConnectors.length > 0) {
+    jobs.push({
+      source: "city_open_data",
+      url: profile.openDataConnectors[0]?.urlTemplate ?? "",
+      run: () => fetchCityOpenDataVenues({ ...options, city }),
+    });
+  }
+
   addSingle("hn", PUBLIC_DISCOVERY_ENDPOINTS.hnAlgoliaBase, () =>
-    fetchHnBuilders(options),
+    fetchHnBuilders({ ...options, city }),
   );
   addSingle("github", PUBLIC_DISCOVERY_ENDPOINTS.githubUsersBase, () =>
-    fetchGithubNycBuilders(options),
+    fetchGithubNycBuilders({ ...options, city }),
   );
   addSingle("arxiv", PUBLIC_DISCOVERY_ENDPOINTS.arxivApiBase, () =>
-    fetchArxivResearchers(options),
+    fetchArxivResearchers({ ...options, city }),
   );
   if (enabled.has("reddit")) {
     jobs.push({
       source: "reddit",
       url: PUBLIC_DISCOVERY_ENDPOINTS.redditBase,
-      run: () => fetchRedditNycFeeds(options),
+      run: () => fetchRedditNycFeeds({ ...options, city }),
     });
   }
   if (enabled.has("youtube_rss") && (options.youtubeChannelIds?.length ?? 0) > 0) {
     jobs.push({
       source: "youtube_rss",
       url: PUBLIC_DISCOVERY_ENDPOINTS.youtubeRssBase,
-      run: () => fetchYoutubeChannelRss(options.youtubeChannelIds ?? [], options),
+      run: () => fetchYoutubeChannelRss(options.youtubeChannelIds ?? [], { ...options, city }),
     });
   }
-  addSingle("luma", profile.lumaUrl, () => fetchLumaNycEvents(options));
-  addSingle("eventbrite", profile.eventbriteUrl, () => fetchEventbriteNycEvents(options));
+  addSingle("luma", profile.lumaUrl, () => fetchLumaNycEvents({ ...options, city }));
+  addSingle("eventbrite", profile.eventbriteUrl, () => fetchEventbriteNycEvents({ ...options, city }));
   if (enabled.has("partiful") && (options.partifulUrls?.length ?? 0) > 0) {
     jobs.push({
       source: "partiful",
       url: PUBLIC_DISCOVERY_ENDPOINTS.partifulBase,
-      run: () => fetchPartifulEvents(options.partifulUrls ?? [], options),
+      run: () => fetchPartifulEvents(options.partifulUrls ?? [], { ...options, city }),
     });
   }
+  if (enabled.has("meetup") && options.meetupOAuthToken?.trim()) {
+    addSingle("meetup", PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint, () =>
+      fetchMeetupOfficialEvents({ ...options, city }),
+    );
+  }
   addSingle("sec_form_d", PUBLIC_DISCOVERY_ENDPOINTS.secFormDSearchBase, () =>
-    fetchSecFormDVips(options),
+    fetchSecFormDVips({ ...options, city }),
   );
   addSingle("openalex", PUBLIC_DISCOVERY_ENDPOINTS.openAlexAuthorsBase, () =>
-    fetchOpenAlexResearchers(options),
+    fetchOpenAlexResearchers({ ...options, city }),
   );
   addSingle("irs_990", PUBLIC_DISCOVERY_ENDPOINTS.proPublicaNonprofitsBase, () =>
-    fetchIrs990Foundations(options),
+    fetchIrs990Foundations({ ...options, city }),
   );
   addSingle("clinical_trials", PUBLIC_DISCOVERY_ENDPOINTS.clinicalTrialsBase, () =>
-    fetchClinicalTrialsPis(options),
+    fetchClinicalTrialsPis({ ...options, city }),
   );
 
   const collected: DiscoveredLead[] = [];
@@ -2029,13 +2174,196 @@ export async function discoverNycLeads(options: DiscoveryOptions): Promise<Disco
   };
 }
 
-/** Convenience wrapper running the $0 VIP & BD open-data feeds for any supported city. */
+export function discoverNycLeads(options: DiscoveryOptions): Promise<DiscoveryRunResult> {
+  return discoverCityLeads(options);
+}
+
 export function discoverVipAndBdLeads(
   options: Omit<DiscoveryOptions, "includeVipBdSources">,
 ): Promise<DiscoveryRunResult> {
-  return discoverNycLeads({
+  return discoverCityLeads({
     ...options,
     includeSources: options.includeSources ?? VIP_BD_DISCOVERY_SOURCES,
     includeVipBdSources: true,
   });
+}
+
+export interface MeetupGraphqlEdgeNode {
+  readonly id?: string;
+  readonly title?: string;
+  readonly eventUrl?: string;
+  readonly dateTime?: string;
+  readonly description?: string;
+  readonly going?: number;
+  readonly group?: {
+    readonly name?: string;
+    readonly urlname?: string;
+    readonly city?: string;
+  };
+  readonly venue?: {
+    readonly name?: string;
+    readonly city?: string;
+  };
+}
+
+export interface MeetupGraphqlResponse {
+  readonly data?: {
+    readonly keywordSearch?: {
+      readonly edges?: ReadonlyArray<{ readonly node?: { readonly result?: MeetupGraphqlEdgeNode } }>;
+    };
+  };
+}
+
+export function parseMeetupGraphqlEvents(
+  payload: MeetupGraphqlResponse,
+  discoveredAt: string,
+  city = "nyc",
+): DiscoveredLead[] {
+  const edges = payload.data?.keywordSearch?.edges ?? [];
+  const profile = resolveCityProfile(city);
+  const out: DiscoveredLead[] = [];
+
+  for (const edge of edges) {
+    const ev = edge.node?.result;
+    if (!ev?.title) continue;
+    const title = ev.title.trim();
+    const groupName = ev.group?.name?.trim() ?? "";
+    const venueName = ev.venue?.name?.trim() ?? "";
+    const summaryText = [groupName, venueName, ev.description?.slice(0, 200) ?? ""]
+      .filter(Boolean)
+      .join(" — ");
+    const combined = `${title} ${summaryText}`;
+    const desires = resolveDesireTagging(combined, "friends");
+    const going = typeof ev.going === "number" ? ev.going : 0;
+    const dedupeKey = `meetup:${profile.code}:${ev.id ?? title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
+    out.push({
+      dedupeKey,
+      source: "meetup",
+      sourceTrust: "official_api",
+      category: "event",
+      vertical: "friends",
+      city: profile.code,
+      title,
+      summary: summaryText || `Meetup event in ${profile.displayName}`,
+      sourceUrl: ev.eventUrl?.trim() || PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint,
+      contactHint: groupName || null,
+      handleOrContact: ev.group?.urlname || undefined,
+      score: clampScore(68 + Math.min(20, Math.floor(going / 3))),
+      discoveredAt,
+      desireLane: desires.desireLane,
+      desireLanes: desires.desireLanes,
+      tags: ["meetup", "official-api", "event", profile.code],
+      rawMeta: {
+        meetupEventId: ev.id ?? null,
+        dateTime: ev.dateTime ?? null,
+        going,
+        groupName,
+        venueName,
+      },
+    });
+  }
+
+  return out;
+}
+
+export async function fetchMeetupOfficialEvents(
+  opts: Pick<
+    DiscoveryOptions,
+    "fetchImpl" | "clock" | "city" | "limitPerSource" | "timeoutMs" | "userAgent" | "meetupOAuthToken" | "meetupQuery"
+  >,
+): Promise<DiscoveredLead[]> {
+  const token = opts.meetupOAuthToken?.trim();
+  if (!token) return [];
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const discoveredAt = readClockIso(opts.clock);
+  const profile = resolveCityProfile(opts.city);
+  const limit = clampLimit(opts.limitPerSource, 15);
+  const queryText = opts.meetupQuery?.trim() || `${profile.displayName} founders tech social`;
+
+  const gqlQuery = `
+    query SearchEvents($query: String!, $first: Int!) {
+      keywordSearch(filter: { query: $query, source: EVENTS }, input: { first: $first }) {
+        edges {
+          node {
+            result {
+              ... on Event {
+                id
+                title
+                eventUrl
+                dateTime
+                description
+                going
+                group { name urlname city }
+                venue { name city }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const res = await fetchImpl(PUBLIC_DISCOVERY_ENDPOINTS.meetupGraphqlEndpoint, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${token}`,
+      "user-agent": opts.userAgent ?? DEFAULT_USER_AGENT,
+    },
+    body: JSON.stringify({
+      query: gqlQuery,
+      variables: { query: queryText, first: limit },
+    }),
+    signal: AbortSignal.timeout(opts.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS),
+  });
+  if (!res.ok) {
+    throw new Error(`Meetup GraphQL HTTP ${res.status}`);
+  }
+  const text = await res.text();
+  if (Buffer.byteLength(text, "utf8") > MAX_RESPONSE_BYTES) {
+    throw new Error(`Meetup GraphQL response exceeded ${MAX_RESPONSE_BYTES} byte limit`);
+  }
+  const parsed = JSON.parse(text) as MeetupGraphqlResponse;
+  return parseMeetupGraphqlEvents(parsed, discoveredAt, profile.code);
+}
+
+export interface PersistDiscoveredVipsResult {
+  readonly persisted: VipProspect[];
+  readonly skippedCount: number;
+}
+
+export async function persistDiscoveredVips(
+  store: MarketingStore,
+  campaignId: string,
+  result: DiscoveryRunResult,
+  opts: { readonly minScore?: number; readonly limit?: number } = {},
+): Promise<PersistDiscoveredVipsResult> {
+  const minScore = opts.minScore ?? 65;
+  const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+  const vipLeads = result.leads
+    .filter((lead) => lead.category === "vip" && lead.score >= minScore)
+    .slice(0, limit);
+
+  const persisted: VipProspect[] = [];
+
+  for (const lead of vipLeads) {
+    const archetype =
+      classifyVipArchetypeOrNull(`${lead.title} ${lead.summary} ${lead.tags.join(" ")}`)?.slug ??
+      "startup_founder";
+    const authority = inferSourceAuthority(lead.source);
+    const created = await store.createVipProspect({
+      campaignId,
+      city: lead.city,
+      name: lead.title.slice(0, 180),
+      archetype,
+      organization: lead.contactHint ?? null,
+      publicSource: `${lead.source}:${authority}`,
+      sourceUrl: lead.sourceUrl ?? null,
+      prestigeScore: lead.score,
+      status: "discovered",
+    });
+    persisted.push(created);
+  }
+  const skippedCount = result.leads.filter((l) => l.category === "vip").length - persisted.length;
+  return { persisted, skippedCount: Math.max(0, skippedCount) };
 }

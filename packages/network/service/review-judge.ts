@@ -54,10 +54,15 @@ export function engineJudgeLimitsFromEnv(env: Env): EngineJudgeLimits {
   };
 }
 
-export async function llmSpentMicros(sql: SQL, app: AppId, day: string, purpose: JudgeCostPurpose): Promise<number> {
-  const [row] = await sql<{ usd: number }[]>`select coalesce(sum(cost_usd), 0)::float8 as usd from network.cost_ledger
+export async function llmUsageForDay(sql: SQL, app: AppId, day: string, purpose: JudgeCostPurpose): Promise<{ spentMicros: number; requests: number }> {
+  const [row] = await sql<{ usd: number; requests: number }[]>`select coalesce(sum(cost_usd), 0)::float8 as usd,
+      coalesce(count(*), 0)::int as requests from network.cost_ledger
     where app_id = ${app} and day = ${day} and kind = 'llm' and detail->>'purpose' = ${purpose}`;
-  return Math.round(Number(row?.usd ?? 0) * 1e6);
+  return { spentMicros: Math.round(Number(row?.usd ?? 0) * 1e6), requests: Number(row?.requests ?? 0) };
+}
+
+export async function llmSpentMicros(sql: SQL, app: AppId, day: string, purpose: JudgeCostPurpose): Promise<number> {
+  return (await llmUsageForDay(sql, app, day, purpose)).spentMicros;
 }
 
 const KNOWN_REASONS: ReadonlySet<string> = new Set<JudgeReasonCode>(["none", ...FLAG_REASONS, ...CODE_FLAG_REASONS, ...UNDECIDED_REASONS, ...CANNOT_RUN_REASONS, ...SIMULATED_REASONS]);
@@ -254,11 +259,16 @@ export class ReviewJudgeWorker {
         where app_id = ${rt.app.id} and network_id = ${rt.id} and claimed_at <= ${new Date(now - reviewJudgmentRetentionMs)}
           and not (member_ids && ${tx.array([...openCaseMembers], "TEXT")})
         order by claimed_at limit 500`;
-      for (const r of rows) {
-        if (judgmentRetained(now - new Date(r.claimed_at).getTime(), r.member_ids.some(id => openCaseMembers.has(id)))) continue;
-        await tx`delete from network.review_judgments where app_id = ${rt.app.id} and network_id = ${rt.id}
-          and opportunity_id = ${r.opportunity_id} and revision = ${r.revision} and packet_hash = ${r.packet_hash}`;
-      }
+      const expired = rows.filter(r => !judgmentRetained(now - new Date(r.claimed_at).getTime(), r.member_ids.some(id => openCaseMembers.has(id))));
+      if (!expired.length) return;
+      await tx`delete from network.review_judgments r
+        using unnest(
+          ${tx.array(expired.map(x => x.opportunity_id), "TEXT")},
+          ${tx.array(expired.map(x => x.revision), "int8")},
+          ${tx.array(expired.map(x => x.packet_hash), "TEXT")}
+        ) as d(opportunity_id, revision, packet_hash)
+        where r.app_id = ${rt.app.id} and r.network_id = ${rt.id}
+          and r.opportunity_id = d.opportunity_id and r.revision = d.revision::int and r.packet_hash = d.packet_hash`;
     });
   }
 }

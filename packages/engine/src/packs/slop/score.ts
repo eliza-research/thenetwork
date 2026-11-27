@@ -1,9 +1,54 @@
+import { evaluateDateActivityAllowed } from "@thenetwork/core";
 import {
   type DateGoal, type DateHabit, type DateKids, type DatePackAnswers, type DatePackCheap, type DatePackSeeker, type DatePolitics,
   datePackScale, datePackValue as datePackValueOf,
 } from "../../../../core/src/generated/datePackValue.ts";
 import type { SlopPackOptions } from "./options.ts";
 import type { SlopProfile } from "./profile.ts";
+
+const SOBER_TOKENS = new Set(["sober", "strict_sober", "recovery", "no_alcohol", "alcohol_free", "alcohol_boundary"]);
+const NON_DRINKER_TOKENS = new Set([
+  "never", "none", "non_drinker", "nondrinker", "sober", "strict_sober", "no_alcohol", "alcohol_free", "alcohol_boundary",
+]);
+const LOW_WALKING_TOKENS = new Set(["low_walking", "wheelchair", "mobility", "no_hiking"]);
+const LOW_NOISE_TOKENS = new Set(["low_noise", "quiet_only", "sensory_quiet", "no_loud_venues"]);
+const DAYTIME_ONLY_TOKENS = new Set(["daytime_only", "daytime", "no_after_dark"]);
+
+export interface DateActivityRedLines {
+  anyStrictSober: boolean;
+  anyNonDrinker: boolean;
+  anyLowWalking: boolean;
+  anyLowNoise?: boolean;
+  anyDaytimeOnly: boolean;
+  isAfterDark: boolean;
+}
+
+export function slopRedLinesOf(
+  a: SlopProfile,
+  b: SlopProfile,
+  overrides: Partial<DateActivityRedLines> = {}
+): DateActivityRedLines {
+  const check = (p: SlopProfile) => {
+    const drink = p.values.drinking?.trim().toLowerCase() ?? "";
+    const dbs = p.dealbreakers.map(d => d.trim().toLowerCase());
+    const strictSober = SOBER_TOKENS.has(drink) || dbs.some(d => SOBER_TOKENS.has(d));
+    const nonDrinker = strictSober || NON_DRINKER_TOKENS.has(drink) || dbs.some(d => NON_DRINKER_TOKENS.has(d));
+    const lowWalking = dbs.some(d => LOW_WALKING_TOKENS.has(d));
+    const lowNoise = dbs.some(d => LOW_NOISE_TOKENS.has(d));
+    const daytimeOnly = dbs.some(d => DAYTIME_ONLY_TOKENS.has(d));
+    return { strictSober, nonDrinker, lowWalking, lowNoise, daytimeOnly };
+  };
+  const ra = check(a);
+  const rb = check(b);
+  return {
+    anyStrictSober: Boolean(overrides.anyStrictSober) || ra.strictSober || rb.strictSober,
+    anyNonDrinker: Boolean(overrides.anyNonDrinker) || ra.nonDrinker || rb.nonDrinker,
+    anyLowWalking: Boolean(overrides.anyLowWalking) || ra.lowWalking || rb.lowWalking,
+    anyLowNoise: Boolean(overrides.anyLowNoise) || ra.lowNoise || rb.lowNoise,
+    anyDaytimeOnly: Boolean(overrides.anyDaytimeOnly) || ra.daytimeOnly || rb.daytimeOnly,
+    isAfterDark: overrides.isAfterDark ?? false,
+  };
+}
 
 function dealbreakerHit(d: string, v: SlopProfile["values"]): boolean | undefined {
   switch (d) {
@@ -50,15 +95,33 @@ function preferredActivity(current: string | undefined, activity: string): strin
   return rank < 0 || (rank === 0 && activity < current) ? activity : current;
 }
 
-export function dateActivity(a: SlopProfile, b: SlopProfile): string {
-  let shared: string | undefined, first: string | undefined;
-  for (const activity of a.activities) {
-    first = preferredActivity(first, activity);
-    if (b.activities.includes(activity)) shared = preferredActivity(shared, activity);
-  }
-  if (shared !== undefined) return shared;
-  for (const activity of b.activities) first = preferredActivity(first, activity);
-  return first ?? "coffee";
+export function isNonDrinkerProfile(p: SlopProfile): boolean {
+  const drink = p.values.drinking?.trim().toLowerCase() ?? "";
+  return drink === "never" || drink === "none" || drink === "sober";
+}
+
+export function dateActivity(a: SlopProfile, b: SlopProfile, overrides?: boolean | Partial<DateActivityRedLines>): string {
+  const normalizedOverrides = typeof overrides === "boolean" ? { anyNonDrinker: overrides } : overrides;
+  const rl = slopRedLinesOf(a, b, normalizedOverrides);
+  const allowed = (act: string, afterDark = rl.isAfterDark) =>
+    evaluateDateActivityAllowed(act, rl.anyStrictSober, rl.anyNonDrinker, rl.anyLowWalking, rl.anyLowNoise ?? false, rl.anyDaytimeOnly, afterDark);
+
+  const pickWith = (afterDark: boolean): string | undefined => {
+    let shared: string | undefined, first: string | undefined;
+    for (const activity of a.activities) {
+      if (!allowed(activity, afterDark)) continue;
+      first = preferredActivity(first, activity);
+      if (b.activities.includes(activity)) shared = preferredActivity(shared, activity);
+    }
+    if (shared !== undefined) return shared;
+    for (const activity of b.activities) {
+      if (!allowed(activity, afterDark)) continue;
+      first = preferredActivity(first, activity);
+    }
+    return first;
+  };
+
+  return pickWith(rl.isAfterDark) ?? (rl.isAfterDark && rl.anyDaytimeOnly ? pickWith(false) : undefined) ?? "coffee";
 }
 
 function revealedBodyPref(a: SlopProfile, type: string, shrinkN: number): number | undefined {

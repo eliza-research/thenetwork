@@ -3,12 +3,18 @@ import { laneLimits, standingCeiling } from "../../../../core/src/generated/matc
 import { standingFromEvidence, standingUncertaintyFor } from "../../../../core/src/generated/memberStanding.ts";
 import { pairValueScale } from "../../../../core/src/generated/pairValue.ts";
 import { memberReason } from "../../filters.ts";
+import { peonCapitalAllowed } from "../../humanVector.ts";
 import type { EntityStanding, EntityTags, MatchEntity, MatchProfile, Membership, PackVectors } from "../../match/profile.ts";
 import type { World } from "../../world.ts";
 import { networkVectors } from "../network/vectors.ts";
 import { peonCofounderMembership, peonCofounderTags } from "./cofounder.ts";
 import { candidateOf, jobOf, profileOf, type CandidateProfile, type JobProfile } from "./profile.ts";
 import { peonMarkets } from "./rules.ts";
+
+export const PEON_ALLOWED_CAPITAL_DIMS = ["domain_craft", "verified_skill", "seniority", "work_style"] as const;
+for (const dim of PEON_ALLOWED_CAPITAL_DIMS) {
+  if (!peonCapitalAllowed(dim)) throw new Error(`peon firewall rejected dimension: ${dim}`);
+}
 
 function effectiveLevel(c: CandidateProfile, skill: string): number {
   const s = c.skills.get(skill);
@@ -82,16 +88,26 @@ const levelPoints = (level: number): number => Math.floor((Math.min(TOP_LEVEL, M
 function standing(w: World, e: MatchEntity): EntityStanding {
   if (e.lane === "Cofounder") return networkVectors.standing(w, e);
   const p = profileOf(w, e.memberId)!;
-  const level = [{ points: levelPoints(p.seniority!), reviewed: true }];
   const reviewed = p.kind === "job" ? new Set<string>() : new Set([
     p.seniorityReviewedIn,
     ...[...p.skills.values()].filter(s => s.level >= p.seniority!).map(s => s.reviewedIn),
   ].filter(id => id !== undefined));
+  const hasAnyReviewedSkill = p.kind === "candidate" && [...p.skills.values()].some(s => s.reviewedIn !== undefined);
+  const mi = w.get(e.memberId);
+  const explicitlyUnverified = p.kind === "candidate"
+    && p.seniorityReviewedIn === undefined
+    && reviewed.size === 0
+    && (p.fakeCue
+      || w.input.qualityByMember?.[e.memberId]?.unverifiedHype === true
+      || mi?.tags.has("hv:hype:pitch") === true
+      || mi?.tags.has("peon:seniority:unverified") === true
+      || (hasAnyReviewedSkill && (p.seniority ?? 0) >= 4));
+  const level = [{ points: levelPoints(p.seniority!), reviewed: !explicitlyUnverified }];
   const evidenceIds = [...new Set([p.seniorityFacetId, ...reviewed])].filter(id => id !== undefined);
   return { standing: standingFromEvidence(level), uncertainty: standingUncertaintyFor(reviewed.size, p.kind === "job"), evidenceIds };
 }
 
-const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, v));
+const clampValue = (v: number) => Math.max(0, Math.min(pairValueScale, Math.round(v)));
 function payHeadroom(floor: number, payMax: number): number {
   return clampValue(pairValueScale / 2 + Math.floor((payMax - floor) * pairValueScale * 5 / (2 * Math.max(20, floor))));
 }
@@ -101,12 +117,23 @@ function payFit(payMin: number, payMax: number, floor: number): number {
   return clampValue(pairValueScale - Math.floor((floor - payMin) * (pairValueScale / 2) / (payMax - payMin)));
 }
 
+function workStylePaceDelta(c: CandidateProfile, j: JobProfile): number {
+  if (!peonCapitalAllowed("work_style")) return 0;
+  let delta = 0;
+  if (j.mode && c.modes.has(j.mode)) delta += 15;
+  if (c.startWeeks !== undefined && j.urgency > 1) {
+    if (c.startWeeks <= 2) delta += 25;
+    else if (c.startWeeks >= 8) delta -= 25;
+  }
+  return delta;
+}
+
 function packValue(w: World, a: MatchProfile, b: MatchProfile): number {
   if (a.lane === "Cofounder" || b.lane === "Cofounder") return 0;
   const ja = jobOf(w, a.memberId), cb = candidateOf(w, b.memberId);
-  if (ja && cb) return payFit(ja.payMin!, ja.payMax!, cb.floor!);
+  if (ja && cb) return clampValue(payFit(ja.payMin!, ja.payMax!, cb.floor!) + workStylePaceDelta(cb, ja));
   const ca = candidateOf(w, a.memberId), jb = jobOf(w, b.memberId);
-  return ca && jb ? payHeadroom(ca.floor!, jb.payMax!) : 0;
+  return ca && jb ? clampValue(payHeadroom(ca.floor!, jb.payMax!) + workStylePaceDelta(ca, jb)) : 0;
 }
 
 export const peonVectors: PackVectors = { memberships, tags, standing, packValue };

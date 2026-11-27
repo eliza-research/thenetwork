@@ -1,29 +1,32 @@
 import { isIP } from "node:net";
-import type {
-  AgentAuthMode,
-  AgentStatus,
-  AppId,
-  BdDealStage,
-  BrandAppId,
-  DevicePlatform,
-  DeviceStatus,
-  DeviceWarmupStage,
-  HumanRole,
-  ImplementationTier,
-  OutreachChannel,
-  PayoutRail,
-  PersonaId,
-  ProofKind,
-  ProofVerdict,
-  QrBatchAssigneeType,
-  RiskDial,
-  RiskZone,
-  SubscriptionProvider,
-  TaskKind,
-  TaskStatus,
-  VendorChannel,
-  VideoAssetStage,
-  VipProspectStatus,
+import {
+  CANONICAL_OUTREACH_PLATFORMS,
+  type AgentAuthMode,
+  type AgentStatus,
+  type AppId,
+  type AttributionEventKind,
+  type BdDealStage,
+  type BrandAppId,
+  type CanonicalOutreachPlatform,
+  type DevicePlatform,
+  type DeviceStatus,
+  type DeviceWarmupStage,
+  type HumanRole,
+  type ImplementationTier,
+  type OutreachChannel,
+  type PayoutRail,
+  type PersonaId,
+  type ProofKind,
+  type ProofVerdict,
+  type QrBatchAssigneeType,
+  type RiskDial,
+  type RiskZone,
+  type SubscriptionProvider,
+  type TaskKind,
+  type TaskStatus,
+  type VendorChannel,
+  type VideoAssetStage,
+  type VipProspectStatus,
 } from "./types.ts";
 
 export const DEFAULT_MAX_BODY_BYTES = 1_048_576;
@@ -81,9 +84,19 @@ const OUTREACH_CHANNELS = new Set<OutreachChannel>([
   "tiktok",
   "instagram",
   "x",
+  "reddit",
+  "linkedin",
+  "tinder",
+  "bumble",
+  "hinge",
+  "meetup",
+  "eventbrite",
+  "luma",
+  "partiful",
   "venue",
   "sms_opted_in",
 ]);
+const CANONICAL_PLATFORM_SET = new Set<CanonicalOutreachPlatform>(CANONICAL_OUTREACH_PLATFORMS);
 const TASK_KINDS = new Set<TaskKind>([
   "street_fliering",
   "event_activation",
@@ -131,9 +144,18 @@ const PROOF_KINDS = new Set<ProofKind>([
   "oss_pr_merge",
 ]);
 const PROOF_VERDICTS = new Set<ProofVerdict>(["pending", "verified", "rejected"]);
-const ATTRIBUTION_KINDS = new Set<
-  "qr_scan" | "site_visit" | "signup_started" | "signup_verified_adult" | "video_view"
->(["qr_scan", "site_visit", "signup_started", "signup_verified_adult", "video_view"]);
+const ATTRIBUTION_KINDS = new Set<AttributionEventKind>([
+  "qr_scan",
+  "site_visit",
+  "signup_started",
+  "signup_verified_adult",
+  "video_view",
+  "first_match_accepted",
+  "irl_meeting_confirmed",
+  "second_meetup_retained",
+  "intro_or_hire_unlocked",
+  "t3_match_verified",
+]);
 const BD_DEAL_STAGES = new Set<BdDealStage>([
   "prospect",
   "enriched",
@@ -347,12 +369,15 @@ export function validatePublicHttpsUrl(value: unknown, field: string): string {
     throw new HttpValidationError(400, "INVALID_URL_AUTH", `${field} must not embed credentials.`);
   }
   const host = parsed.hostname.toLowerCase();
+  const bareHost = host.replace(/^\[|\]$/g, "");
+  const isIpLiteral = isIP(bareHost) !== 0;
   if (
     !host ||
     host === "localhost" ||
     host.endsWith(".localhost") ||
     host.endsWith(".local") ||
     host.endsWith(".internal") ||
+    (!isIpLiteral && !host.includes(".")) ||
     isPrivateIpAddress(host)
   ) {
     throw new HttpValidationError(
@@ -772,10 +797,22 @@ export interface ParsedCreateHuman {
   channel: OutreachChannel;
   role: HumanRole;
   city?: string;
+  contactEmail?: string | null;
   lowestAge?: number | null;
   stopped?: boolean;
   banned?: boolean;
   requireAdult?: boolean;
+}
+
+const BASIC_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function optValidatedEmail(value: unknown, field: string): string | null | undefined {
+  const email = optNullableString(value, field, 254);
+  if (email === undefined || email === null) return email;
+  if (!BASIC_EMAIL_RE.test(email)) {
+    throw new HttpValidationError(400, "INVALID_EMAIL", `${field} must be a valid email address.`);
+  }
+  return email.toLowerCase();
 }
 
 export function parseCreateHuman(raw: unknown): ParsedCreateHuman {
@@ -787,6 +824,7 @@ export function parseCreateHuman(raw: unknown): ParsedCreateHuman {
     channel: reqEnum(b.channel, "channel", OUTREACH_CHANNELS),
     role: reqEnum(b.role, "role", HUMAN_ROLES),
     city: optString(b.city, "city", 64),
+    contactEmail: optValidatedEmail(b.contactEmail, "contactEmail"),
     lowestAge: optNullableInt(b.lowestAge, "lowestAge", 0, 150),
     stopped: optBool(b.stopped, "stopped"),
     banned: optBool(b.banned, "banned"),
@@ -919,8 +957,10 @@ export function parseCreateOutreach(raw: unknown): ParsedCreateOutreach {
 export interface ParsedCreateAttribution {
   campaignId: string;
   taskId?: string | null;
+  armId?: string | null;
+  desireLane?: string | null;
   qrBatchCode?: string | null;
-  eventKind: "qr_scan" | "site_visit" | "signup_started" | "signup_verified_adult" | "video_view";
+  eventKind: AttributionEventKind;
   city?: string;
   appId: BrandAppId;
   count?: number;
@@ -930,9 +970,17 @@ export interface ParsedCreateAttribution {
 export function parseCreateAttribution(raw: unknown): ParsedCreateAttribution {
   const b = asRecord(raw);
   const meta = b.metadata === undefined ? undefined : asRecord(b.metadata, "metadata");
+  const desireLane =
+    b.desireLane === undefined
+      ? undefined
+      : b.desireLane === null
+        ? null
+        : parseDesireLane(b.desireLane, "desireLane");
   return {
     campaignId: reqString(b.campaignId, "campaignId", 128),
     taskId: optNullableString(b.taskId, "taskId", 128),
+    armId: optNullableString(b.armId, "armId", 128),
+    desireLane,
     qrBatchCode: optNullableString(b.qrBatchCode, "qrBatchCode", 128),
     eventKind: reqEnum(b.eventKind, "eventKind", ATTRIBUTION_KINDS),
     city: optString(b.city, "city", 64),
@@ -1123,4 +1171,542 @@ export function parsePaginationQuery(searchParams: URLSearchParams): ParsedPagin
   const status = searchParams.get("status")?.trim() || undefined;
 
   return { limit, offset, campaignId, city, status };
+}
+
+const CITY_SLUG_RE = /^[a-z][a-z0-9_-]{1,31}$/;
+const DESIRE_LANE_RE = /^[a-z][a-z0-9_]{1,63}$/;
+const CONTACT_HASH_RE = /^[a-f0-9]{16,128}$/i;
+const E164_OR_PHONE_RE = /^\+?[1-9]\d{6,14}$/;
+
+const DISCOVERY_SOURCES = new Set<string>([
+  "nyc_open_data",
+  "nys_sla",
+  "nys_sla_pending",
+  "city_open_data",
+  "hn",
+  "github",
+  "arxiv",
+  "reddit",
+  "youtube_rss",
+  "luma",
+  "eventbrite",
+  "partiful",
+  "meetup",
+  "apollo_search",
+  "sec_form_d",
+  "openalex",
+  "irs_990",
+  "clinical_trials",
+]);
+
+export function parseCityParam(
+  raw: unknown,
+  field = "city",
+  opts: { readonly allowAll?: boolean } = {},
+): string {
+  const value = reqString(raw, field, 32).toLowerCase();
+  if (opts.allowAll && value === "all") return "all";
+  if (!CITY_SLUG_RE.test(value)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_CITY",
+      `${field} must be a lowercase city code (2-32 chars, letters/digits/-/_).`,
+    );
+  }
+  return value;
+}
+
+export function parseDesireLane(raw: unknown, field = "desireLane"): string {
+  const value = reqString(raw, field, 64).toLowerCase();
+  if (!DESIRE_LANE_RE.test(value)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_DESIRE_LANE",
+      `${field} must be a lowercase snake_case desire lane identifier.`,
+    );
+  }
+  return value;
+}
+
+export interface ParsedSeedCity {
+  city?: string;
+  monthlyBudgetCents?: number;
+  dailyCapCents?: number;
+  maxTaskCents?: number;
+  riskDial?: RiskDial;
+  billingArmed?: boolean;
+}
+
+export function parseSeedCity(raw: unknown): ParsedSeedCity {
+  const b = asRecord(raw);
+  const city = b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined;
+  return {
+    city,
+    monthlyBudgetCents: optInt(b.monthlyBudgetCents, "monthlyBudgetCents", 100, 100_000_000),
+    dailyCapCents: optInt(b.dailyCapCents, "dailyCapCents", 100, 10_000_000),
+    maxTaskCents: optInt(b.maxTaskCents, "maxTaskCents", 100, 10_000_000),
+    riskDial: optEnum(b.riskDial, "riskDial", RISK_DIALS),
+    billingArmed: optBool(b.billingArmed, "billingArmed"),
+  };
+}
+
+export interface ParsedDiscoveryRequest {
+  city?: string;
+  desireLane?: string;
+  limitPerSource?: number;
+  redditSubreddits?: string[];
+  youtubeChannelIds?: string[];
+  includeSources?: string[];
+  includeVipBd?: boolean;
+}
+
+export function parseDiscoveryRequest(raw: unknown): ParsedDiscoveryRequest {
+  const b = asRecord(raw);
+  const city = b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined;
+  const desireLane =
+    b.desireLane !== undefined && b.desireLane !== null
+      ? parseDesireLane(b.desireLane, "desireLane")
+      : undefined;
+  const rawSources = optStringArray(b.includeSources, "includeSources", 20);
+  if (rawSources) {
+    for (const src of rawSources) {
+      if (!DISCOVERY_SOURCES.has(src)) {
+        throw new HttpValidationError(
+          400,
+          "INVALID_DISCOVERY_SOURCE",
+          `Unknown discovery source: ${src}`,
+        );
+      }
+    }
+  }
+  const includeVipBd =
+    b.includeVipBd !== undefined
+      ? reqBool(b.includeVipBd, "includeVipBd")
+      : optBool(b.includeVipBdSources, "includeVipBdSources");
+  return {
+    city,
+    desireLane,
+    limitPerSource: optInt(b.limitPerSource, "limitPerSource", 1, 50),
+    redditSubreddits: optStringArray(b.redditSubreddits, "redditSubreddits", 10),
+    youtubeChannelIds: optStringArray(b.youtubeChannelIds, "youtubeChannelIds", 10),
+    includeSources: rawSources,
+    includeVipBd,
+  };
+}
+
+export interface ParsedSimRequest {
+  seeds?: number[];
+  days?: number;
+  cities?: string[];
+  quick?: boolean;
+  monthlyBudgetCents?: number;
+}
+
+export function parseSimRequest(raw: unknown): ParsedSimRequest {
+  const b = asRecord(raw);
+  let seeds: number[] | undefined;
+  if (b.seeds !== undefined) {
+    if (!Array.isArray(b.seeds) || b.seeds.length === 0 || b.seeds.length > 16) {
+      throw new HttpValidationError(
+        400,
+        "INVALID_SEEDS",
+        "seeds must be a non-empty array of up to 16 positive integers.",
+      );
+    }
+    seeds = b.seeds.map((item, idx) => reqInt(item, `seeds[${idx}]`, 1, 1_000_000));
+  }
+  let cities: string[] | undefined;
+  if (b.cities !== undefined) {
+    if (!Array.isArray(b.cities) || b.cities.length === 0 || b.cities.length > 10) {
+      throw new HttpValidationError(
+        400,
+        "INVALID_CITIES",
+        "cities must be a non-empty array of up to 10 city codes.",
+      );
+    }
+    cities = b.cities.map((item, idx) => parseCityParam(item, `cities[${idx}]`));
+  }
+  return {
+    seeds,
+    days: optInt(b.days, "days", 1, 90),
+    cities,
+    quick: optBool(b.quick, "quick"),
+    monthlyBudgetCents: optInt(b.monthlyBudgetCents, "monthlyBudgetCents", 10_000, 100_000_000),
+  };
+}
+
+export interface ParsedContactSuppression {
+  contactHash?: string;
+  phone?: string;
+  email?: string;
+  reason: string;
+  sourceChannel: string;
+  isMinor: boolean;
+}
+
+export function parseContactSuppression(raw: unknown): ParsedContactSuppression {
+  const b = asRecord(raw);
+  const contactHash = optString(b.contactHash, "contactHash", 128);
+  if (contactHash && !CONTACT_HASH_RE.test(contactHash)) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_CONTACT_HASH",
+      "contactHash must be a hex digest (16-128 hex chars).",
+    );
+  }
+  const phone = optString(b.phone, "phone", 32);
+  if (phone && !E164_OR_PHONE_RE.test(phone.replace(/[\s()-]/g, ""))) {
+    throw new HttpValidationError(400, "INVALID_PHONE", "phone must be a valid E.164 phone number.");
+  }
+  const email = optValidatedEmail(b.email, "email") ?? undefined;
+  if (!contactHash && !phone && !email) {
+    throw new HttpValidationError(
+      400,
+      "REQUIRED_FIELD",
+      "At least one of contactHash, phone, or email is required.",
+    );
+  }
+  return {
+    contactHash,
+    phone,
+    email,
+    reason: reqString(b.reason, "reason", 200),
+    sourceChannel: optString(b.sourceChannel, "sourceChannel", 64) ?? "operator_api",
+    isMinor: optBool(b.isMinor, "isMinor") ?? false,
+  };
+}
+
+export interface ParsedBdUpdate {
+  venueName?: string;
+  vertical?: AppId;
+  contactEmail?: string | null;
+  businessPhone?: string | null;
+  offeredCents?: number;
+  phoneCallbackVerified?: boolean;
+  qrBatchId?: string | null;
+  notes?: string | null;
+}
+
+export function parseBdUpdate(raw: unknown): ParsedBdUpdate {
+  const b = asRecord(raw);
+  if (b.stage !== undefined) {
+    throw new HttpValidationError(
+      400,
+      "USE_BD_STAGE_ENDPOINT",
+      "Stage transitions must use POST /api/bd/:id/stage so bdDealWithinBounds policy checks run.",
+    );
+  }
+  if (b.contractHash !== undefined) {
+    throw new HttpValidationError(
+      400,
+      "USE_BD_CONTRACT_ENDPOINT",
+      "Contract hashes must be issued via POST /api/bd/:id/contract.",
+    );
+  }
+  const businessPhone = optNullableString(b.businessPhone, "businessPhone", 40);
+  if (
+    typeof businessPhone === "string" &&
+    !E164_OR_PHONE_RE.test(businessPhone.replace(/[\s()-]/g, ""))
+  ) {
+    throw new HttpValidationError(
+      400,
+      "INVALID_PHONE",
+      "businessPhone must be a valid E.164 or numeric phone number.",
+    );
+  }
+  return {
+    venueName: optString(b.venueName, "venueName", 200),
+    vertical: optEnum(b.vertical, "vertical", APP_IDS),
+    contactEmail: optValidatedEmail(b.contactEmail, "contactEmail"),
+    businessPhone,
+    offeredCents: optInt(b.offeredCents, "offeredCents", 0, 10_000_000),
+    phoneCallbackVerified: optBool(b.phoneCallbackVerified, "phoneCallbackVerified"),
+    qrBatchId: optNullableString(b.qrBatchId, "qrBatchId", 128),
+    notes: optNullableString(b.notes, "notes", 4000),
+  };
+}
+
+export function parseCanonicalPlatform(
+  raw: unknown,
+  field = "platform",
+): CanonicalOutreachPlatform {
+  return reqEnum(raw, field, CANONICAL_PLATFORM_SET);
+}
+
+export interface ParsedApolloSearch {
+  city: string;
+  campaignId?: string;
+  archetypeSlugs?: string[];
+  titles?: string[];
+  keywords?: string[];
+  perPage?: number;
+  page?: number;
+  forceDryRun?: boolean;
+}
+
+export function parseApolloSearch(raw: unknown): ParsedApolloSearch {
+  const b = asRecord(raw);
+  return {
+    city: b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : "nyc",
+    campaignId: optString(b.campaignId, "campaignId", 128),
+    archetypeSlugs: optStringArray(b.archetypeSlugs, "archetypeSlugs", 10),
+    titles: optStringArray(b.titles, "titles", 20),
+    keywords: optStringArray(b.keywords, "keywords", 20),
+    perPage: optInt(b.perPage, "perPage", 1, 25),
+    page: optInt(b.page, "page", 1, 20),
+    forceDryRun: optBool(b.forceDryRun, "forceDryRun"),
+  };
+}
+
+export interface ParsedApolloEnrich {
+  campaignId?: string;
+  city?: string;
+  apolloPersonId?: string;
+  firstName?: string;
+  lastName?: string;
+  organizationName?: string;
+  domain?: string;
+  linkedinUrl?: string;
+  email?: string;
+  title?: string;
+  headline?: string;
+  enrichOrg?: boolean;
+  prestigeScore?: number;
+  forceDryRun?: boolean;
+}
+
+export function parseApolloEnrich(raw: unknown): ParsedApolloEnrich {
+  const b = asRecord(raw);
+  const linkedinUrl =
+    b.linkedinUrl === undefined || b.linkedinUrl === null || b.linkedinUrl === ""
+      ? undefined
+      : validatePublicHttpsUrl(b.linkedinUrl, "linkedinUrl");
+  const email = optValidatedEmail(b.email, "email") ?? undefined;
+  const apolloPersonId = optString(b.apolloPersonId, "apolloPersonId", 128);
+  const firstName = optString(b.firstName, "firstName", 100);
+  const lastName = optString(b.lastName, "lastName", 100);
+  const organizationName = optString(b.organizationName, "organizationName", 160);
+  const domain = optString(b.domain, "domain", 160);
+  if (!apolloPersonId && !linkedinUrl && !email && !(firstName && (lastName || organizationName || domain))) {
+    throw new HttpValidationError(
+      400,
+      "REQUIRED_FIELD",
+      "Apollo enrichment requires apolloPersonId, linkedinUrl, email, or firstName + lastName/organizationName/domain.",
+    );
+  }
+  return {
+    campaignId: optString(b.campaignId, "campaignId", 128),
+    city: b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined,
+    apolloPersonId,
+    firstName,
+    lastName,
+    organizationName,
+    domain,
+    linkedinUrl,
+    email,
+    title: optString(b.title, "title", 160),
+    headline: optString(b.headline, "headline", 280),
+    enrichOrg: optBool(b.enrichOrg, "enrichOrg"),
+    prestigeScore: optInt(b.prestigeScore, "prestigeScore", 0, 100),
+    forceDryRun: optBool(b.forceDryRun, "forceDryRun"),
+  };
+}
+
+export interface ParsedPlaybookDraft {
+  city: string;
+  recipientName: string;
+  specificContext: string;
+  senderName?: string;
+  peerSummary?: string;
+  neighborhood?: string;
+  dayLabel?: string;
+  timeLabel?: string;
+  activity?: string;
+  mode?: "public_reply" | "opt_in_dm" | "connection_note" | "matchmaker_opener" | "host_note" | "event_listing";
+  isBff?: boolean;
+  isReplyFollowup?: boolean;
+  includeUrl?: boolean;
+}
+
+export function parsePlaybookDraft(raw: unknown): ParsedPlaybookDraft {
+  const b = asRecord(raw);
+  const modes = new Set([
+    "public_reply",
+    "opt_in_dm",
+    "connection_note",
+    "matchmaker_opener",
+    "host_note",
+    "event_listing",
+  ] as const);
+  return {
+    city: b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : "nyc",
+    recipientName: reqString(b.recipientName, "recipientName", 100),
+    specificContext: reqString(b.specificContext, "specificContext", 400),
+    senderName: optString(b.senderName, "senderName", 100),
+    peerSummary: optString(b.peerSummary, "peerSummary", 280),
+    neighborhood: optString(b.neighborhood, "neighborhood", 100),
+    dayLabel: optString(b.dayLabel, "dayLabel", 64),
+    timeLabel: optString(b.timeLabel, "timeLabel", 64),
+    activity: optString(b.activity, "activity", 100),
+    mode: optEnum(b.mode, "mode", modes),
+    isBff: optBool(b.isBff, "isBff"),
+    isReplyFollowup: optBool(b.isReplyFollowup, "isReplyFollowup"),
+    includeUrl: optBool(b.includeUrl, "includeUrl"),
+  };
+}
+
+export interface ParsedPlaybookLint {
+  platform: CanonicalOutreachPlatform;
+  text: string;
+  subject?: string;
+  isBff?: boolean;
+  hasRecipientSpecificReference?: boolean;
+  isFirstTouch?: boolean;
+  explicitUrlRequested?: boolean;
+}
+
+export function parsePlaybookLint(raw: unknown): ParsedPlaybookLint {
+  const b = asRecord(raw);
+  return {
+    platform: parseCanonicalPlatform(b.platform, "platform"),
+    text: reqString(b.text, "text", 4000),
+    subject: optString(b.subject, "subject", 240),
+    isBff: optBool(b.isBff, "isBff"),
+    hasRecipientSpecificReference: optBool(b.hasRecipientSpecificReference, "hasRecipientSpecificReference"),
+    isFirstTouch: optBool(b.isFirstTouch, "isFirstTouch"),
+    explicitUrlRequested: optBool(b.explicitUrlRequested, "explicitUrlRequested"),
+  };
+}
+
+export interface ParsedIntakeScore {
+  id?: string;
+  campaignId?: string;
+  city: string;
+  targetAppId: BrandAppId;
+  desireLane?: string;
+  sourcePlatform: string;
+  contactIdentifier: string;
+  identifierKind?: "email" | "phone" | "handle";
+  statedAge: number | null;
+  replyOrBioText: string;
+  verifiedWorkEmail?: boolean;
+  tier1PublicProof?: boolean;
+  attendedIrlEvent?: boolean;
+  confirmedTimeWithin24h?: boolean;
+  priorNoShow?: boolean;
+  priorDropCount?: number;
+  memberOrAnchorVouched?: boolean;
+  isColdSellerOrRecruiter?: boolean;
+  valueDelivered?: boolean;
+  explicitPositiveSignal?: boolean;
+  persist?: boolean;
+}
+
+export function parseIntakeScore(raw: unknown): ParsedIntakeScore {
+  const b = asRecord(raw);
+  const idKinds = new Set(["email", "phone", "handle"] as const);
+  const statedAge =
+    b.statedAge === undefined || b.statedAge === null
+      ? null
+      : reqInt(b.statedAge, "statedAge", 0, 120);
+  return {
+    id: optString(b.id, "id", 128),
+    campaignId: optString(b.campaignId, "campaignId", 128),
+    city: b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : "nyc",
+    targetAppId: reqEnum(b.targetAppId, "targetAppId", BRAND_APP_IDS),
+    desireLane:
+      b.desireLane !== undefined && b.desireLane !== null
+        ? parseDesireLane(b.desireLane, "desireLane")
+        : undefined,
+    sourcePlatform: reqString(b.sourcePlatform, "sourcePlatform", 64).toLowerCase(),
+    contactIdentifier: reqString(b.contactIdentifier, "contactIdentifier", 254),
+    identifierKind: optEnum(b.identifierKind, "identifierKind", idKinds),
+    statedAge,
+    replyOrBioText: reqString(b.replyOrBioText, "replyOrBioText", 4000),
+    verifiedWorkEmail: optBool(b.verifiedWorkEmail, "verifiedWorkEmail"),
+    tier1PublicProof: optBool(b.tier1PublicProof, "tier1PublicProof"),
+    attendedIrlEvent: optBool(b.attendedIrlEvent, "attendedIrlEvent"),
+    confirmedTimeWithin24h: optBool(b.confirmedTimeWithin24h, "confirmedTimeWithin24h"),
+    priorNoShow: optBool(b.priorNoShow, "priorNoShow"),
+    priorDropCount: optInt(b.priorDropCount, "priorDropCount", 0, 20),
+    memberOrAnchorVouched: optBool(b.memberOrAnchorVouched, "memberOrAnchorVouched"),
+    isColdSellerOrRecruiter: optBool(b.isColdSellerOrRecruiter, "isColdSellerOrRecruiter"),
+    valueDelivered: optBool(b.valueDelivered, "valueDelivered"),
+    explicitPositiveSignal: optBool(b.explicitPositiveSignal, "explicitPositiveSignal"),
+    persist: optBool(b.persist, "persist"),
+  };
+}
+
+export interface ParsedVipPipelineRun {
+  campaignId: string;
+  city?: string;
+  archetypeSlugs?: string[];
+  titles?: string[];
+  keywords?: string[];
+  maxEnrich?: number;
+  minPrestigeScore?: number;
+  offerMode?: "bilateral_intro" | "curated_table";
+  bilateralPeerSummary?: string;
+  sharedExactProblem?: string;
+  forceDryRun?: boolean;
+}
+
+export function parseVipPipelineRun(raw: unknown): ParsedVipPipelineRun {
+  const b = asRecord(raw);
+  const offerModes = new Set(["bilateral_intro", "curated_table"] as const);
+  return {
+    campaignId: reqString(b.campaignId, "campaignId", 128),
+    city: b.city !== undefined && b.city !== null ? parseCityParam(b.city, "city") : undefined,
+    archetypeSlugs: optStringArray(b.archetypeSlugs, "archetypeSlugs", 10),
+    titles: optStringArray(b.titles, "titles", 20),
+    keywords: optStringArray(b.keywords, "keywords", 20),
+    maxEnrich: optInt(b.maxEnrich, "maxEnrich", 0, 25),
+    minPrestigeScore: optInt(b.minPrestigeScore, "minPrestigeScore", 0, 100),
+    offerMode: optEnum(b.offerMode, "offerMode", offerModes),
+    bilateralPeerSummary: optString(b.bilateralPeerSummary, "bilateralPeerSummary", 280),
+    sharedExactProblem: optString(b.sharedExactProblem, "sharedExactProblem", 280),
+    forceDryRun: optBool(b.forceDryRun, "forceDryRun"),
+  };
+}
+
+export interface ParsedVipSend {
+  subject?: string;
+  body?: string;
+  recipientEmail?: string;
+  isFollowup?: boolean;
+  forceDryRun?: boolean;
+}
+
+export function parseVipSend(raw: unknown): ParsedVipSend {
+  const b = asRecord(raw);
+  return {
+    subject: optString(b.subject, "subject", 240),
+    body: optString(b.body, "body", 4000),
+    recipientEmail: optValidatedEmail(b.recipientEmail, "recipientEmail") ?? undefined,
+    isFollowup: optBool(b.isFollowup, "isFollowup"),
+    forceDryRun: optBool(b.forceDryRun, "forceDryRun"),
+  };
+}
+
+export interface ParsedIntakePromote {
+  recipientName?: string;
+  senderName?: string;
+  valueDelivered?: boolean;
+  explicitPositiveSignal?: boolean;
+  channel?: CanonicalOutreachPlatform | "email";
+}
+
+export function parseIntakePromote(raw: unknown): ParsedIntakePromote {
+  const b = asRecord(raw);
+  const channels = new Set<CanonicalOutreachPlatform | "email">([
+    ...CANONICAL_OUTREACH_PLATFORMS,
+    "email",
+  ]);
+  return {
+    recipientName: optString(b.recipientName, "recipientName", 100),
+    senderName: optString(b.senderName, "senderName", 100),
+    valueDelivered: optBool(b.valueDelivered, "valueDelivered"),
+    explicitPositiveSignal: optBool(b.explicitPositiveSignal, "explicitPositiveSignal"),
+    channel: optEnum(b.channel, "channel", channels),
+  };
 }

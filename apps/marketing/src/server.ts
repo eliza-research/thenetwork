@@ -1,15 +1,25 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { gzipSync } from "node:zlib";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { adultParticipantAge } from "../../../packages/core/src/generated/marketingPolicy.ts";
+import { setLeakLabelKey } from "../../../packages/core/src/guard.ts";
 import { serveHttp, type HttpServer } from "../../../packages/core/src/runtime/http.ts";
+import { checkBackendHealth } from "../../../packages/core/src/vibe/backendHealthShell.js";
+import {
+  createApolloEnrichmentAdapter,
+  type ApolloEnrichmentAdapter,
+} from "./adapters/apollo.ts";
 import {
   createPaidAdapterRegistry,
+  spendAuthFromCampaign,
   type PaidAdapterRegistry,
 } from "./adapters/paid.ts";
 import {
   AgentLifecycleManager,
+  DEFAULT_DAILY_COST_CAP_MICROS,
+  DEFAULT_DAILY_TOKEN_CAP,
   type CliProcessRunner,
 } from "./agent-lifecycle.ts";
 import {
@@ -19,17 +29,26 @@ import {
 } from "./antifraud.ts";
 import {
   computeBanditAllocations,
-  type BanditArm as AllocatorBanditArm,
-  type BanditTrack,
+  toAllocatorBanditArm,
 } from "./bandit.ts";
 import {
   BdPipelineEngine,
   type BdContractKind,
 } from "./bd-engine.ts";
 import {
-  listCityConfigs,
   normalizeCityCode,
 } from "./cities.ts";
+import {
+  seedCityLaunch,
+  type CitySeedResult,
+} from "./city-launch-engine.ts";
+import {
+  evaluateCityStageReadiness,
+  listCityPacks,
+  requireCityPack,
+  UnknownCityError,
+  type CityStageReadinessResult,
+} from "./city-registry.ts";
 import {
   DEFAULT_MARKETING_HOST,
   DEFAULT_MARKETING_PORT,
@@ -43,28 +62,50 @@ import {
   MarketingAutopilotDaemon,
 } from "./daemon.ts";
 import {
+  listDesireLanes,
+  UnknownDesireLaneError,
+} from "./desire-lanes.ts";
+import {
   DeviceBridge,
   toDeviceNode,
   type DeviceActionContext,
 } from "./devices/bridge.ts";
 import {
-  discoverNycLeads,
+  discoverCityLeads,
   type DiscoverySource,
 } from "./discovery.ts";
 import {
-  buildNycLaunchSeed,
+  createIntakeBridge,
+  type IntakeBridge,
+} from "./intake-bridge.ts";
+import {
+  createNetworkCoreBridge,
+  type NetworkCoreBridge,
+} from "./network-bridge.ts";
+import {
   NYC_ACTIVATION_CORRIDORS,
   NYC_LAUNCH_CAMPAIGN,
   NYC_LOCAL_PRINTERS,
   NYC_MONTH1_BUDGET_TRACKS,
   NYC_MONTH1_WEEKLY_ROLLOUT,
-  NYC_TIER2_DEVICES,
   SELF_SERVICE_PLATFORMS,
   VETTED_NYC_AGENCIES,
 } from "./nyc-seed.ts";
 import {
+  buildPlatformDraft,
+  CANONICAL_OUTREACH_PLATFORMS,
+  evaluatePlatformHealth,
+  evaluateReportRisk,
+  getPlatformPlaybook,
+} from "./platform-playbooks.ts";
+import {
+  evaluateLlmBudget,
+  keyedContactHash,
   PolicyViolationError,
 } from "./policy.ts";
+import {
+  runMarketingSim,
+} from "./sim.ts";
 import {
   SlopCashBridge,
   SlopCashDisabledError,
@@ -76,25 +117,20 @@ import {
 import {
   MemoryMarketingStore,
   PgMarketingStore,
+  type BanditArmBatchUpdate,
   type MarketingStore,
 } from "./store.ts";
 import type {
   BanditArm,
-  BdDeal,
   BdDealStage,
   BrandAppId,
-  Campaign,
   Clock,
   DeviceNode,
-  HumanPartner,
   MarketingAgent,
-  MarketingTask,
   PersonaId,
   PhoneLineType,
   SubscriptionProvider,
-  VideoAsset,
   VideoAssetStage,
-  VipProspect,
 } from "./types.ts";
 import {
   commandCenterSecurityHeaders,
@@ -106,6 +142,12 @@ import {
 import {
   HttpValidationError,
   parseAgentTick,
+  parseApolloEnrich,
+  parseApolloSearch,
+  parseBdUpdate,
+  parseCanonicalPlatform,
+  parseCityParam,
+  parseContactSuppression,
   parseCreateAgent,
   parseCreateAttribution,
   parseCreateBdDeal,
@@ -118,11 +160,20 @@ import {
   parseCreateVideoAsset,
   parseCreateVipProspect,
   parseDeviceAction,
+  parseDiscoveryRequest,
+  parseIntakePromote,
+  parseIntakeScore,
   parsePaginationQuery,
+  parsePlaybookDraft,
+  parsePlaybookLint,
   parseProofReview,
   parseRiskDialUpdate,
+  parseSeedCity,
+  parseSimRequest,
   parseSubmitProof,
   parseUpdateCampaign,
+  parseVipPipelineRun,
+  parseVipSend,
   readJsonBody,
 } from "./validation.ts";
 import {
@@ -133,8 +184,13 @@ import {
 } from "./video-factory.ts";
 import {
   classifyVipArchetype,
+  gateVipOutreach,
+  inferSourceAuthority,
+  isWeakOrFallbackProofOfWorkHook,
+  recordVipOutreachTouch,
   scoreVipProspect,
   VipDiscoveryEngine,
+  type VipOfferMode,
 } from "./vip-engine.ts";
 
 export interface MarketingServerOptions {
@@ -143,6 +199,7 @@ export interface MarketingServerOptions {
   port?: number;
   hostname?: string;
   token?: string;
+  bridge?: NetworkCoreBridge;
   deviceBridge?: DeviceBridge;
   paidAdapters?: PaidAdapterRegistry;
   discoveryFetch?: typeof fetch;
@@ -151,333 +208,66 @@ export interface MarketingServerOptions {
   daemonIntervalMs?: number;
 }
 
-export interface NycSeedResult {
-  campaign: Campaign;
-  agents: MarketingAgent[];
-  devices: DeviceNode[];
-  agenciesPersisted: HumanPartner[];
-  tasks: MarketingTask[];
-  banditArms: BanditArm[];
-  bdDeals: BdDeal[];
-  vipProspects: VipProspect[];
-  videoAssets: VideoAsset[];
-  directory: {
-    agenciesCount: number;
-    platformsCount: number;
-    printersCount: number;
-  };
-  budgetTracksCents: Record<string, number>;
-}
-
-const VALID_BANDIT_TRACKS: ReadonlySet<string> = new Set<BanditTrack>([
-  "street_fliering",
-  "creator_video",
-  "event_activation",
-  "print_qr",
-  "agency_reserve",
-  "bd_venue",
-  "vip_salon",
-  "video_factory",
-  "organic_play",
-]);
-
-function toAllocatorBanditArm(arm: BanditArm, campaign: Campaign): AllocatorBanditArm {
-  const allocatedShareBps = Math.max(0, Math.min(10_000, Math.round(arm.weight * 10_000)));
-  const remaining = Math.max(
-    0,
-    campaign.monthlyBudgetCents - campaign.spentCents - campaign.reservedCents,
-  );
-  const track: BanditTrack = VALID_BANDIT_TRACKS.has(arm.track)
-    ? (arm.track as BanditTrack)
-    : "organic_play";
-  return {
-    id: arm.id,
-    campaignId: arm.campaignId,
-    armKey: arm.armKey,
-    label: arm.label,
-    track,
-    playCode: null,
-    city: campaign.city,
-    appId: campaign.appId,
-    alpha: Math.max(0.01, arm.alpha),
-    beta: Math.max(0.01, arm.beta),
-    decayGamma: 0.92,
-    exposures: Math.max(0, arm.totalContacts),
-    verifiedT2Joins: Math.max(0, arm.signups),
-    verifiedT3Matches: 0,
-    stopCount: Math.max(0, arm.stopEvents),
-    ftcFailCount: 0,
-    spentCents: Math.max(0, arm.spendCents),
-    targetCpaCents: 858,
-    allocatedShareBps,
-    allocatedCents: Math.round((remaining * allocatedShareBps) / 10_000),
-    state:
-      arm.status === "killed"
-        ? "auto_killed"
-        : arm.status === "paused"
-          ? "paused_low_roi"
-          : "active",
-    killReason: null,
-    updatedAt: arm.updatedAt,
-  };
-}
+export type NycSeedResult = CitySeedResult;
 
 export async function seedNycLaunch(store: MarketingStore): Promise<NycSeedResult> {
-  const seed = buildNycLaunchSeed();
+  return seedCityLaunch(store, "nyc");
+}
 
-  let campaign = await store.getCampaignBySlug(seed.campaign.slug);
-  if (!campaign) {
-    campaign = await store.createCampaign({
-      id: seed.campaign.id,
-      slug: seed.campaign.slug,
-      name: seed.campaign.name,
-      city: seed.campaign.city,
-      appId: seed.campaign.appId,
-      riskZone: seed.campaign.riskZone,
-      riskDial: seed.campaign.riskDial,
-      monthlyBudgetCents: seed.campaign.monthlyBudgetCents,
-      dailyCapCents: seed.campaign.dailyCapCents,
-      maxTaskCents: seed.campaign.maxTaskCents,
-      billingArmed: seed.campaign.billingArmed,
-      slopCashEnabled: seed.campaign.slopCashEnabled,
-      status: "active",
+interface PrecompressedAsset {
+  readonly contentType: string;
+  readonly raw: Buffer;
+  readonly gzipped: Buffer;
+  readonly etag: string;
+  readonly cacheControl: string;
+}
+
+function buildPrecompressedAsset(
+  content: string | Uint8Array,
+  contentType: string,
+  cacheControl: string,
+): PrecompressedAsset {
+  const raw = typeof content === "string" ? Buffer.from(content, "utf8") : Buffer.from(content);
+  const gzipped = gzipSync(raw);
+  const hash = createHash("sha256").update(raw).digest("hex").slice(0, 16);
+  return {
+    contentType,
+    raw,
+    gzipped,
+    etag: `"${hash}"`,
+    cacheControl,
+  };
+}
+
+function etagMatches(ifNoneMatch: string | null, etag: string): boolean {
+  if (!ifNoneMatch) return false;
+  const clean = (s: string) => s.trim().replace(/^W\//, "");
+  const target = clean(etag);
+  return ifNoneMatch.split(",").some((part) => {
+    const trimmed = part.trim();
+    return trimmed === "*" || clean(trimmed) === target;
+  });
+}
+
+function servePrecompressedAsset(request: Request, asset: PrecompressedAsset): Response {
+  const headers: Record<string, string> = {
+    "Content-Type": asset.contentType,
+    "Cache-Control": asset.cacheControl,
+    ETag: asset.etag,
+    Vary: "Accept-Encoding",
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (etagMatches(request.headers.get("if-none-match"), asset.etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  const acceptEncoding = request.headers.get("accept-encoding") ?? "";
+  if (/\bgzip\b/i.test(acceptEncoding)) {
+    return new Response(new Uint8Array(asset.gzipped), {
+      status: 200,
+      headers: { ...headers, "Content-Encoding": "gzip" },
     });
   }
-
-  const agents: MarketingAgent[] = [];
-  for (const agentCfg of seed.agents) {
-    const existing = await store.getAgentByPersona(agentCfg.personaId);
-    if (existing) {
-      agents.push(existing);
-    } else {
-      const appId: BrandAppId = agentCfg.appId === "all" ? "ntwrk" : agentCfg.appId;
-      agents.push(
-        await store.upsertAgent({
-          id: agentCfg.id,
-          personaId: agentCfg.personaId,
-          displayName: agentCfg.displayName,
-          appId,
-          provider: agentCfg.provider,
-          failoverProvider: agentCfg.failoverProvider,
-          authMode: agentCfg.authMode,
-          sessionRef: agentCfg.sessionRef,
-          sessionHealthy: true,
-          dailyTurnCap: agentCfg.dailyTurnCap,
-          turnsUsedToday: 0,
-          status: "idle",
-        }),
-      );
-    }
-  }
-
-  const devices: DeviceNode[] = [];
-  const existingDevices = await store.listDevices({ limit: 500 });
-  const bySerial = new Map(existingDevices.map((d) => [d.serialOrUdid, d]));
-  for (const slot of NYC_TIER2_DEVICES) {
-    const existing = bySerial.get(slot.serialOrUdid);
-    if (existing) {
-      devices.push(existing);
-    } else {
-      devices.push(
-        await store.upsertDevice({
-          id: slot.id,
-          label: slot.label,
-          platform: slot.platform,
-          hostMachine: slot.hostMachine,
-          serialOrUdid: slot.serialOrUdid,
-          assignedPersona: slot.assignedPersona,
-          simCarrier: slot.simCarrier,
-          batteryPct: slot.batteryPct,
-          tempC: slot.tempC,
-          warmupDay: slot.warmupStage === "steady_state" ? 30 : 0,
-          warmupStage: slot.warmupStage,
-          dailyActionsUsed: 0,
-          dailyActionCap: slot.dailyActionCap,
-          status: "online",
-          preserveCounters: true,
-        }),
-      );
-    }
-  }
-
-  const agenciesPersisted: HumanPartner[] = [];
-  for (const agency of VETTED_NYC_AGENCIES) {
-    const hmac = `agency:${agency.id}`;
-    const existing = await store.getHumanByHmac(hmac);
-    if (existing) {
-      agenciesPersisted.push(existing);
-    } else {
-      agenciesPersisted.push(
-        await store.upsertHuman({
-          handleOrEmailHmac: hmac,
-          displayLabel: `${agency.name} (${agency.contactEmailOrIntake})`,
-          channel: "email",
-          role: "agency",
-          city: "nyc",
-          lowestAge: null,
-          stopped: false,
-          banned: false,
-        }),
-      );
-    }
-  }
-
-  const existingTasks = await store.listTasks({ campaignId: campaign.id, limit: 500 });
-  const existingBatch = new Set(existingTasks.map((t) => t.qrBatchCode).filter(Boolean));
-  const tasks: MarketingTask[] = [...existingTasks];
-  for (const starter of seed.starterTasks) {
-    if (existingBatch.has(starter.qrBatchCode)) continue;
-    const vendorChannel =
-      starter.vendorChannel === "backstage"
-        ? "agency_email"
-        : starter.vendorChannel === "print_local"
-          ? "print_api"
-          : starter.vendorChannel;
-    const payoutRail =
-      starter.payoutRail === "agency_invoice" || starter.payoutRail === "platform_escrow"
-        ? "fiat_stripe"
-        : starter.payoutRail;
-    const taskKind = starter.taskKind === "discovery" ? "digital_outreach" : starter.taskKind;
-    tasks.push(
-      await store.createTask({
-        id: starter.id,
-        campaignId: campaign.id,
-        tier: starter.tier,
-        taskKind,
-        city: starter.city,
-        title: starter.title,
-        briefText: starter.briefText,
-        vendorChannel,
-        amountCents: starter.amountCents,
-        qrBatchCode: starter.qrBatchCode,
-        payoutRail,
-        status: "drafted",
-      }),
-    );
-  }
-
-  const existingArms = await store.listBanditArms({ campaignId: campaign.id, limit: 200 });
-  const armByKey = new Map(existingArms.map((a) => [a.armKey, a]));
-  const banditArms: BanditArm[] = [];
-  for (const armSeed of seed.banditArms) {
-    const existing = armByKey.get(armSeed.armKey);
-    if (existing) {
-      banditArms.push(existing);
-    } else {
-      banditArms.push(
-        await store.upsertBanditArm({
-          id: armSeed.id,
-          campaignId: campaign.id,
-          armKey: armSeed.armKey,
-          label: armSeed.label,
-          track: armSeed.track,
-          alpha: armSeed.alpha,
-          beta: armSeed.beta,
-          weight: armSeed.weight,
-          spendCents: armSeed.spendCents,
-          signups: armSeed.signups,
-          stopEvents: armSeed.stopEvents,
-          totalContacts: armSeed.totalContacts,
-          status: armSeed.status,
-        }),
-      );
-    }
-  }
-
-  const existingDeals = await store.listBdDeals({ campaignId: campaign.id, limit: 200 });
-  const dealById = new Map(existingDeals.map((d) => [d.id, d]));
-  const bdDeals: BdDeal[] = [];
-  for (const dealSeed of seed.bdDeals) {
-    const existing = dealById.get(dealSeed.id);
-    if (existing) {
-      bdDeals.push(existing);
-    } else {
-      bdDeals.push(
-        await store.createBdDeal({
-          id: dealSeed.id,
-          campaignId: campaign.id,
-          city: dealSeed.city,
-          venueName: dealSeed.venueName,
-          vertical: dealSeed.vertical,
-          stage: dealSeed.stage,
-          offeredCents: dealSeed.offeredCents,
-          phoneCallbackVerified: dealSeed.phoneCallbackVerified,
-          notes: dealSeed.notes,
-        }),
-      );
-    }
-  }
-
-  const existingVips = await store.listVipProspects({ campaignId: campaign.id, limit: 200 });
-  const vipById = new Map(existingVips.map((v) => [v.id, v]));
-  const vipProspects: VipProspect[] = [];
-  for (const vipSeed of seed.vipProspects) {
-    const existing = vipById.get(vipSeed.id);
-    if (existing) {
-      vipProspects.push(existing);
-    } else {
-      vipProspects.push(
-        await store.createVipProspect({
-          id: vipSeed.id,
-          campaignId: campaign.id,
-          city: vipSeed.city,
-          name: vipSeed.name,
-          archetype: vipSeed.archetype,
-          organization: vipSeed.organization,
-          publicSource: vipSeed.publicSource,
-          prestigeScore: vipSeed.prestigeScore,
-          status: vipSeed.status,
-        }),
-      );
-    }
-  }
-
-  const existingVideos = await store.listVideoAssets({ campaignId: campaign.id, limit: 200 });
-  const videoById = new Map(existingVideos.map((v) => [v.id, v]));
-  const videoAssets: VideoAsset[] = [];
-  for (const vidSeed of seed.videoAssets) {
-    const existing = videoById.get(vidSeed.id);
-    if (existing) {
-      videoAssets.push(existing);
-    } else {
-      videoAssets.push(
-        await store.createVideoAsset({
-          id: vidSeed.id,
-          campaignId: campaign.id,
-          agentId: `agent-${vidSeed.personaId}`,
-          title: vidSeed.title,
-          hook: vidSeed.hook,
-          script: vidSeed.script,
-          stage: vidSeed.stage,
-          platform: vidSeed.platform,
-          ftcDisclosed: vidSeed.ftcDisclosed,
-        }),
-      );
-    }
-  }
-
-  const budgetTracksCents: Record<string, number> = {};
-  for (const t of seed.campaign.tracks) {
-    budgetTracksCents[t.track] = t.amountCents;
-  }
-
-  return {
-    campaign,
-    agents,
-    devices,
-    agenciesPersisted,
-    tasks,
-    banditArms,
-    bdDeals,
-    vipProspects,
-    videoAssets,
-    directory: {
-      agenciesCount: VETTED_NYC_AGENCIES.length,
-      platformsCount: SELF_SERVICE_PLATFORMS.length,
-      printersCount: NYC_LOCAL_PRINTERS.length,
-    },
-    budgetTracksCents,
-  };
+  return new Response(new Uint8Array(asset.raw), { status: 200, headers });
 }
 
 function timingSafeBearerMatch(header: string | null, expectedToken: string): boolean {
@@ -518,6 +308,12 @@ function mapErrorToResponse(err: unknown): Response {
   if (err instanceof HttpValidationError) {
     return jsonResponse({ error: err.message, code: err.code }, err.status);
   }
+  if (err instanceof UnknownCityError) {
+    return jsonResponse({ error: err.message, code: "UNKNOWN_CITY" }, 400);
+  }
+  if (err instanceof UnknownDesireLaneError) {
+    return jsonResponse({ error: err.message, code: "UNKNOWN_DESIRE_LANE" }, 400);
+  }
   const message = err instanceof Error ? err.message : String(err);
   if (/not found/i.test(message)) {
     return jsonResponse({ error: message }, 404);
@@ -546,6 +342,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   token: string;
   daemon: MarketingAutopilotDaemon;
   eventHub: MarketingEventHub;
+  bridge: NetworkCoreBridge;
   stop: () => Promise<void>;
 }> {
   const env = opts.env ?? process.env;
@@ -554,6 +351,17 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   const hostname = opts.hostname ?? DEFAULT_MARKETING_HOST;
   const token = resolveBearerToken(opts.token, env.MARKETING_TOKEN);
 
+  if (env.LEAK_LABEL_KEY && new TextEncoder().encode(env.LEAK_LABEL_KEY).length >= 32) {
+    setLeakLabelKey(env.LEAK_LABEL_KEY);
+  }
+
+  const bridge =
+    opts.bridge ??
+    createNetworkCoreBridge({
+      sql: opts.store.getSql(),
+      clock,
+      env,
+    });
   const deviceBridge = opts.deviceBridge ?? new DeviceBridge({ clock, env });
   const paidAdapters =
     opts.paidAdapters ?? createPaidAdapterRegistry({ clock, env, store: opts.store });
@@ -561,6 +369,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     store: opts.store,
     clock,
     env,
+    bridge,
     cliRunner: opts.cliRunner,
     dryRun: opts.cliRunner ? false : undefined,
   });
@@ -569,6 +378,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     clock,
     env,
     paidAdapters,
+    bridge,
   });
   const slopCashBridge = new SlopCashBridge({
     store: opts.store,
@@ -579,15 +389,41 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
   const antiFraud = new AntiFraudEngine({ clock });
   const bdEngine = new BdPipelineEngine({ clock });
   const vipEngine = new VipDiscoveryEngine({ clock });
+  const apolloAdapter: ApolloEnrichmentAdapter = createApolloEnrichmentAdapter({
+    store: opts.store,
+    bridge,
+    clock,
+    env,
+  });
+  const intakeBridge: IntakeBridge = createIntakeBridge({
+    store: opts.store,
+    bridge,
+    clock,
+    env,
+  });
   const eventHub = new MarketingEventHub({ clock });
-  const dtmfChallenges = new Map<
-    string,
-    { challenge: ReturnType<BdPipelineEngine["createDtmfCallbackChallenge"]>["challenge"]; expectedPin: string }
-  >();
+
+  const cssAsset = buildPrecompressedAsset(
+    renderCommandCenterCss(),
+    "text/css; charset=utf-8",
+    "public, max-age=300, must-revalidate",
+  );
+  const jsAsset = buildPrecompressedAsset(
+    renderCommandCenterJs(),
+    "application/javascript; charset=utf-8",
+    "public, max-age=300, must-revalidate",
+  );
+  const rawFont = loadHostGroteskFont();
+  const fontAsset = rawFont
+    ? buildPrecompressedAsset(rawFont, "font/woff2", "public, max-age=86400, must-revalidate")
+    : null;
+
+  let serving = true;
 
   const daemon = new MarketingAutopilotDaemon({
     store: opts.store,
     clock,
+    bridge,
     intervalMs: opts.daemonIntervalMs ?? 60_000,
     runCampaignTick: async (campaign) => {
       await agentManager.runAutopilotTick(campaign.id);
@@ -599,6 +435,155 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
       });
     },
   });
+
+  const dailyTokenCap = Number(env.MARKETING_DAILY_TOKEN_CAP) || DEFAULT_DAILY_TOKEN_CAP;
+  const dailyCostCapMicros =
+    Number(env.MARKETING_DAILY_COST_CAP_MICROS) || DEFAULT_DAILY_COST_CAP_MICROS;
+
+  const buildCitiesPayload = async () => {
+    const [overrides, deals, events, signals] = await Promise.all([
+      opts.store.listCityPacksOverrides(),
+      opts.store.listBdDeals({ limit: 500 }),
+      opts.store.listAttributionEvents({ limit: 1_000 }),
+      bridge.getDemandAndPressure().catch(() => []),
+    ]);
+    const overrideByCode = new Map(overrides.map((o) => [o.code, o]));
+    return listCityPacks().map((pack) => {
+      const override = overrideByCode.get(pack.code);
+      const cityDeals = deals.filter(
+        (d) =>
+          d.city === pack.code &&
+          (d.stage === "contracted" ||
+            d.stage === "kit_shipped" ||
+            d.stage === "live" ||
+            d.stage === "audited"),
+      );
+      const verifiedWaitlistAdults = events
+        .filter((e) => e.city === pack.code && e.eventKind === "signup_verified_adult")
+        .reduce((sum, e) => sum + e.count, 0);
+      const citySignals = signals.filter((s) => s.city === pack.code);
+      const activeAdults = citySignals.reduce((sum, s) => sum + s.activeAdultBucket, 0);
+      const reviewSlaHealthy = !citySignals.some((s) => s.overdueReviewCount > 0);
+      const readiness: CityStageReadinessResult = evaluateCityStageReadiness(pack, {
+        verifiedWaitlistAdults,
+        signedVenues: cityDeals.length,
+        activeAdults,
+        reviewSlaHealthy,
+        safetyViolations: 0,
+      });
+      return {
+        ...pack,
+        ...(override ? { overrideStage: override.stage } : {}),
+        readiness,
+      };
+    });
+  };
+
+  const buildDesireLanesPayload = async () => {
+    const lanes = listDesireLanes();
+    const [campaigns, tasks, arms, deals, vips, videos] = await Promise.all([
+      opts.store.listCampaigns({ limit: 500 }),
+      opts.store.listTasks({ limit: 1_000 }),
+      opts.store.listBanditArms({ limit: 500 }),
+      opts.store.listBdDeals({ limit: 500 }),
+      opts.store.listVipProspects({ limit: 500 }),
+      opts.store.listVideoAssets({ limit: 500 }),
+    ]);
+    const metrics: Record<
+      string,
+      {
+        campaigns: number;
+        tasks: number;
+        banditArms: number;
+        verifiedOutcomes: number;
+        bdDeals: number;
+        vipProspects: number;
+        videos: number;
+      }
+    > = {};
+    for (const lane of lanes) {
+      metrics[lane.id] = {
+        campaigns: 0,
+        tasks: 0,
+        banditArms: 0,
+        verifiedOutcomes: 0,
+        bdDeals: 0,
+        vipProspects: 0,
+        videos: 0,
+      };
+    }
+    const ensure = (id: string) => {
+      if (!metrics[id]) {
+        metrics[id] = {
+          campaigns: 0,
+          tasks: 0,
+          banditArms: 0,
+          verifiedOutcomes: 0,
+          bdDeals: 0,
+          vipProspects: 0,
+          videos: 0,
+        };
+      }
+      return metrics[id];
+    };
+    for (const c of campaigns) if (c.desireLane) ensure(c.desireLane).campaigns += 1;
+    for (const t of tasks) if (t.desireLane) ensure(t.desireLane).tasks += 1;
+    for (const a of arms) {
+      if (a.desireLane) {
+        const m = ensure(a.desireLane);
+        m.banditArms += 1;
+        m.verifiedOutcomes += a.verifiedOutcomes ?? 0;
+      }
+    }
+    for (const d of deals) if (d.desireLane) ensure(d.desireLane).bdDeals += 1;
+    for (const v of vips) if (v.desireLane) ensure(v.desireLane).vipProspects += 1;
+    for (const v of videos) if (v.desireLane) ensure(v.desireLane).videos += 1;
+    return { lanes, metrics };
+  };
+
+  const buildLlmUsagePayload = async (filter?: {
+    agentId?: string;
+    campaignId?: string;
+    dayIso?: string;
+  }) => {
+    const usage = await opts.store.getDailyLlmUsage(filter);
+    const budgetDecision = evaluateLlmBudget({
+      tokensUsedToday: usage.totalTokens,
+      estimatedTokens: 0,
+      dailyTokenCap,
+      costMicrosToday: usage.costMicros,
+      estimatedCostMicros: 0,
+      dailyCostCapMicros,
+    });
+    return {
+      usage,
+      caps: { dailyTokenCap, dailyCostCapMicros },
+      budgetDecision,
+    };
+  };
+
+  const buildCorePressurePayload = async () => {
+    const [ping, signals] = await Promise.all([
+      bridge.ping(),
+      bridge.getDemandAndPressure().catch(() => []),
+    ]);
+    const daemonStatus = daemon.getStatus();
+    const pausedSet = new Set<string>(Object.keys(daemonStatus.pausedQueues));
+    for (const sig of signals) {
+      if (sig.queuePressurePaused) {
+        pausedSet.add(`${sig.appId}:${sig.city}`);
+      }
+    }
+    const pausedQueues = [...pausedSet].sort();
+    return {
+      mode: ping.mode,
+      bridgeHealthy: ping.ok,
+      bridgeFunctionsPresent: ping.bridgeFunctionsPresent,
+      paused: pausedQueues.length > 0,
+      pausedQueues,
+      signals,
+    };
+  };
 
   const requireAuth = (req: Request): Response | null => {
     if (!timingSafeBearerMatch(req.headers.get("authorization"), token)) {
@@ -615,9 +600,25 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
       const path = url.pathname;
       const method = request.method.toUpperCase();
 
+      if (method === "GET" && path === "/healthz") {
+        const health = await checkBackendHealth(serving, {
+          ping: async () => (await bridge.ping()).ok,
+          hasLateTick: () => false,
+        });
+        return jsonResponse(
+          {
+            ok: health === "Ready",
+            status: health,
+            service: "marketing",
+            time: new Date(clock.now()).toISOString(),
+          },
+          health === "Ready" ? 200 : 503,
+        );
+      }
+
       if (method === "GET" && path === "/health") {
         return jsonResponse({
-          ok: true,
+          ok: serving,
           service: "marketing",
           time: new Date(clock.now()).toISOString(),
           daemonRunning: daemon.getStatus().running,
@@ -632,41 +633,19 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
         });
       }
 
-      if (method === "GET" && path === "/assets/app.css") {
-        return new Response(renderCommandCenterCss(), {
-          status: 200,
-          headers: {
-            "Content-Type": "text/css; charset=utf-8",
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-          },
-        });
+      if (method === "GET" && (path === "/assets/app.css" || path === "/app.css")) {
+        return servePrecompressedAsset(request, cssAsset);
       }
 
-      if (method === "GET" && path === "/assets/app.js") {
-        return new Response(renderCommandCenterJs(), {
-          status: 200,
-          headers: {
-            "Content-Type": "application/javascript; charset=utf-8",
-            "Cache-Control": "no-store",
-            "X-Content-Type-Options": "nosniff",
-          },
-        });
+      if (method === "GET" && (path === "/assets/app.js" || path === "/app.js")) {
+        return servePrecompressedAsset(request, jsAsset);
       }
 
       if (method === "GET" && path === "/fonts/host-grotesk.woff2") {
-        const fontBytes = loadHostGroteskFont();
-        if (!fontBytes) {
+        if (!fontAsset) {
           return new Response("Not found", { status: 404 });
         }
-        return new Response(new Uint8Array(fontBytes), {
-          status: 200,
-          headers: {
-            "Content-Type": "font/woff2",
-            "Cache-Control": "public, max-age=86400",
-            "X-Content-Type-Options": "nosniff",
-          },
-        });
+        return servePrecompressedAsset(request, fontAsset);
       }
 
       if (path.startsWith("/api/")) {
@@ -682,7 +661,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           return eventHub.createStreamResponse(request.signal);
         }
 
-        // Overview
+        // Overview & Coalesced Ops Summary
         if (method === "GET" && path === "/api/overview") {
           const campaignId = url.searchParams.get("campaignId") ?? undefined;
           const [overview, banditArms] = await Promise.all([
@@ -702,27 +681,151 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             },
           });
         }
-
-        // Seed NYC launch dataset (all 17 tables)
-        if (method === "POST" && path === "/api/seed/nyc") {
-          const seeded = await seedNycLaunch(opts.store);
-          eventHub.publish("overview", { action: "seed_nyc", campaignId: seeded.campaign.id });
-          return jsonResponse(seeded, 200);
+        if (method === "GET" && path === "/api/ops-summary") {
+          const campaignId = url.searchParams.get("campaignId") ?? undefined;
+          const [overview, banditArms, cities, desireLanes, llmUsage, corePressure] =
+            await Promise.all([
+              opts.store.getOverview(campaignId),
+              opts.store.listBanditArms(campaignId ? { campaignId, limit: 100 } : { limit: 100 }),
+              buildCitiesPayload(),
+              buildDesireLanesPayload(),
+              buildLlmUsagePayload({ campaignId }),
+              buildCorePressurePayload(),
+            ]);
+          return jsonResponse({
+            overview: {
+              ...overview,
+              banditArms,
+              daemon: daemon.getStatus(),
+              adapters: paidAdapters.listStatus(),
+              slopCash: slopCashBridge.status(),
+            },
+            cities,
+            desireLanes,
+            llmUsage,
+            corePressure,
+          });
         }
 
-        // Directory & Multi-city configs
+        // Multi-city launch seeding (POST /api/seed/:city, including /api/seed/nyc)
+        const seedCityMatch = /^\/api\/seed\/([^/]+)$/.exec(path);
+        if (method === "POST" && seedCityMatch?.[1]) {
+          const rawCity = decodeURIComponent(seedCityMatch[1]);
+          const city = parseCityParam(rawCity, "city");
+          const parsedBody = parseSeedCity(await readJsonBody(request));
+          const seeded = await seedCityLaunch(opts.store, city, {
+            monthlyBudgetCents: parsedBody.monthlyBudgetCents,
+            dailyCapCents: parsedBody.dailyCapCents,
+            maxTaskCents: parsedBody.maxTaskCents,
+          });
+          if (parsedBody.riskDial !== undefined || parsedBody.billingArmed !== undefined) {
+            seeded.campaign = await opts.store.setRiskDial(
+              seeded.campaign.id,
+              parsedBody.riskDial ?? seeded.campaign.riskDial,
+              parsedBody.billingArmed,
+            );
+          }
+          eventHub.publish("overview", {
+            action: `seed_${city}`,
+            city,
+            campaignId: seeded.campaign.id,
+          });
+          return jsonResponse({ ok: true, ...seeded }, 200);
+        }
+
+        // Directory, Multi-city Registry, Desire Lanes, LLM Usage, Suppressions, Core Pressure, Simulator
         if (method === "GET" && path === "/api/cities") {
-          return jsonResponse({ cities: listCityConfigs() });
+          return jsonResponse({ cities: await buildCitiesPayload() });
         }
         if (method === "GET" && path === "/api/directory") {
+          const cityParam = url.searchParams.get("city")?.trim().toLowerCase();
+          if (cityParam && cityParam !== "all") {
+            const pack = requireCityPack(parseCityParam(cityParam, "city"));
+            return jsonResponse({
+              city: pack.code,
+              cityPack: pack,
+              agencies: pack.vendors.vettedAgencies,
+              platforms: pack.vendors.platforms,
+              printers: pack.vendors.printers,
+              connectors: pack.discovery.openDataConnectors,
+              corridors: pack.corridors,
+            });
+          }
           return jsonResponse({
+            city: "all",
             agencies: VETTED_NYC_AGENCIES,
             platforms: SELF_SERVICE_PLATFORMS,
             printers: NYC_LOCAL_PRINTERS,
             tracks: NYC_MONTH1_BUDGET_TRACKS,
             weeklyRollout: NYC_MONTH1_WEEKLY_ROLLOUT,
             corridors: NYC_ACTIVATION_CORRIDORS,
+            cities: listCityPacks(),
           });
+        }
+        if (method === "GET" && path === "/api/desire-lanes") {
+          return jsonResponse(await buildDesireLanesPayload());
+        }
+        if (method === "GET" && path === "/api/llm/usage") {
+          const dayIso = url.searchParams.get("dayIso")?.trim() || undefined;
+          const agentId = url.searchParams.get("agentId")?.trim() || undefined;
+          const campaignId = url.searchParams.get("campaignId")?.trim() || undefined;
+          return jsonResponse(await buildLlmUsagePayload({ dayIso, agentId, campaignId }));
+        }
+        if (method === "GET" && path === "/api/llm/trajectories") {
+          const q = parsePaginationQuery(url.searchParams);
+          const agentId = url.searchParams.get("agentId")?.trim() || undefined;
+          const trajectories = await opts.store.listLlmTrajectories({
+            agentId,
+            campaignId: q.campaignId,
+            limit: q.limit,
+          });
+          return jsonResponse({ trajectories });
+        }
+        if (method === "GET" && path === "/api/suppressions") {
+          const q = parsePaginationQuery(url.searchParams);
+          const suppressions = await opts.store.listContactSuppressions(q.limit);
+          return jsonResponse({ suppressions });
+        }
+        if (method === "POST" && path === "/api/suppressions") {
+          const body = parseContactSuppression(await readJsonBody(request));
+          const resolvedHash =
+            body.contactHash ??
+            (body.phone ? keyedContactHash("phone", body.phone, env) : null) ??
+            (body.email ? keyedContactHash("email", body.email, env) : null);
+          if (!resolvedHash) {
+            throw new HttpValidationError(
+              400,
+              "INVALID_CONTACT",
+              "Could not normalize phone or email for contact suppression hash.",
+            );
+          }
+          const suppression = await opts.store.recordContactSuppression({
+            contactHash: resolvedHash,
+            reason: body.reason,
+            sourceChannel: body.sourceChannel,
+            isMinor: body.isMinor,
+          });
+          eventHub.publish("human", {
+            action: "suppressed",
+            contactHash: suppression.contactHash,
+            isMinor: suppression.isMinor,
+          });
+          return jsonResponse({ ok: true, suppression }, 201);
+        }
+        if (method === "GET" && path === "/api/core-pressure") {
+          return jsonResponse(await buildCorePressurePayload());
+        }
+        if (method === "POST" && path === "/api/simulate/launch") {
+          const body = parseSimRequest(await readJsonBody(request));
+          const days = Math.min(30, body.days ?? (body.quick ? 10 : 30));
+          const seeds = (body.seeds ?? [11]).slice(0, 4);
+          const summary = await runMarketingSim({
+            seed: seeds[0],
+            days,
+            cities: body.cities,
+            quick: body.quick,
+          });
+          return jsonResponse({ ok: true, summary }, 200);
         }
 
         // Campaigns
@@ -1236,16 +1339,13 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           const scan = detectSybilCluster(nodes);
           const quarantinedClaimIds: string[] = [];
           for (const cluster of scan.clusters) {
-            for (const cid of cluster.claimIds) {
-              const existing = await opts.store.getAntiFraudClaim(cid);
-              if (existing) {
-                await opts.store.updateAntiFraudClaim(cid, {
-                  clusterId: cluster.clusterId,
-                  status: "quarantined",
-                  reason: `sybil_ring:${cluster.reasons.join(",")}`,
-                });
-                quarantinedClaimIds.push(cid);
-              }
+            const count = await opts.store.quarantineClaimsBatch(
+              cluster.claimIds,
+              cluster.clusterId,
+              `sybil_ring:${cluster.reasons.join(",")}`,
+            );
+            if (count > 0) {
+              quarantinedClaimIds.push(...cluster.claimIds);
             }
           }
           eventHub.publish("antifraud", { action: "sybil_scan", quarantinedCount: quarantinedClaimIds.length });
@@ -1306,6 +1406,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           if (!campaign) throw new HttpValidationError(404, "NOT_FOUND", `Campaign not found: ${campaignId}`);
           const storedArms = await opts.store.listBanditArms({ campaignId: campaign.id, limit: 100 });
           const allocArms = storedArms.map((a) => toAllocatorBanditArm(a, campaign));
+          const armById = new Map(storedArms.map((a) => [a.id, a]));
           const availableCents = Math.max(
             0,
             campaign.monthlyBudgetCents - campaign.spentCents - campaign.reservedCents,
@@ -1321,21 +1422,23 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             dayOfCampaign: typeof raw.dayOfCampaign === "number" ? raw.dayOfCampaign : undefined,
             directNoShowRate: typeof raw.directNoShowRate === "number" ? raw.directNoShowRate : undefined,
           });
-          const updatedArms: BanditArm[] = [];
-          for (const dec of result.decisions) {
-            const nextStatus =
+          const batchUpdates: BanditArmBatchUpdate[] = result.decisions.map((dec) => {
+            const existing = armById.get(dec.armId);
+            const nextStatus: BanditArm["status"] =
               dec.state === "auto_killed" || dec.state === "halted_safety"
                 ? "killed"
                 : dec.state === "paused_low_roi"
                   ? "paused"
                   : "active";
-            updatedArms.push(
-              await opts.store.updateBanditArm(dec.armId, {
-                weight: Number((dec.nextShareBps / 10_000).toFixed(4)),
-                status: nextStatus,
-              }),
-            );
-          }
+            return {
+              id: dec.armId,
+              alpha: existing?.alpha ?? 1,
+              beta: existing?.beta ?? 1,
+              weight: Number((dec.nextShareBps / 10_000).toFixed(4)),
+              status: nextStatus,
+            };
+          });
+          const updatedArms = await opts.store.updateBanditArmsBatch(batchUpdates);
           eventHub.publish("bandit", { action: "rebalanced", campaignId: campaign.id, arms: updatedArms.length });
           return jsonResponse({ rebalance: result, arms: updatedArms });
         }
@@ -1388,15 +1491,14 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           if (!deal) throw new HttpValidationError(404, "NOT_FOUND", `BD deal not found: ${id}`);
           const raw = await readJsonBody(request);
           if (typeof raw.pin === "string" && raw.pin.trim()) {
-            const pending = dtmfChallenges.get(id);
-            if (!pending) {
+            const active = bdEngine.getDtmfChallenge(id);
+            if (!active) {
               throw new HttpValidationError(400, "NO_ACTIVE_CHALLENGE", "No active DTMF challenge for this deal.");
             }
-            const verified = bdEngine.verifyDtmfPin(pending.challenge, raw.pin);
+            const verified = bdEngine.verifyStoredDtmfPin(id, raw.pin);
             if (!verified.verified) {
               return jsonResponse({ error: verified.reason ?? "PIN mismatch", verified: false }, 403);
             }
-            dtmfChallenges.delete(id);
             const updated = await opts.store.updateBdDeal(id, { phoneCallbackVerified: true });
             eventHub.publish("bd_deal", { action: "callback_verified", id: updated.id });
             return jsonResponse({ verified: true, deal: updated });
@@ -1408,7 +1510,6 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
             throw new HttpValidationError(400, "REQUIRED_FIELD", "businessPhone is required to issue DTMF callback.");
           }
           const issued = bdEngine.createDtmfCallbackChallenge(id, phone, token);
-          dtmfChallenges.set(id, issued);
           return jsonResponse({
             challenge: issued.challenge,
             expectedPin: issued.expectedPin,
@@ -1435,13 +1536,15 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
         if (method === "PATCH" && bdPatchMatch?.[1]) {
           const id = decodeURIComponent(bdPatchMatch[1]);
           const raw = await readJsonBody(request);
-          const updated = await opts.store.updateBdDeal(id, {
-            stage: typeof raw.stage === "string" ? (raw.stage as BdDealStage) : undefined,
-            phoneCallbackVerified:
-              typeof raw.phoneCallbackVerified === "boolean" ? raw.phoneCallbackVerified : undefined,
-            qrBatchId: typeof raw.qrBatchId === "string" ? raw.qrBatchId : undefined,
-            notes: typeof raw.notes === "string" ? raw.notes : undefined,
-          });
+          if (raw.contractSentAt !== undefined) {
+            throw new HttpValidationError(
+              400,
+              "USE_BD_CONTRACT_ENDPOINT",
+              "Contract timestamps must be managed via POST /api/bd/:id/contract.",
+            );
+          }
+          const patch = parseBdUpdate(raw);
+          const updated = await opts.store.updateBdDeal(id, patch);
           eventHub.publish("bd_deal", { action: "updated", id: updated.id });
           return jsonResponse({ deal: updated });
         }
@@ -1490,7 +1593,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
               : scoreVipProspect({
                   archetypeSlug: archetype,
                   bioOrSummary: `${body.name} ${body.organization ?? ""}`,
-                  primarySourceAuthority: "tier1_filing",
+                  primarySourceAuthority: inferSourceAuthority(body.publicSource),
                   recentWithin18Months: true,
                   inTargetCity: true,
                 }).score;
@@ -1502,24 +1605,141 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           eventHub.publish("vip_prospect", { action: "created", id: prospect.id });
           return jsonResponse({ prospect }, 201);
         }
-        const vipInviteMatch = /^\/api\/(?:vips|vip-prospects)\/([^/]+)\/invite$/.exec(path);
+        if (method === "POST" && path === "/api/vips/pipeline/run") {
+          const body = parseVipPipelineRun(await readJsonBody(request));
+          const result = await apolloAdapter.runApolloVipPipeline(body);
+          eventHub.publish("vip_prospect", {
+            action: "pipeline_run",
+            campaignId: result.campaignId,
+            persistedCount: result.persistedCount,
+          });
+          return jsonResponse(result);
+        }
+        const vipSendMatch = /^\/api\/(?:vip|vips|vip-prospects)\/([^/]+)\/send$/.exec(path);
+        if (method === "POST" && vipSendMatch?.[1]) {
+          const id = decodeURIComponent(vipSendMatch[1]);
+          const prospect = await opts.store.getVipProspect(id);
+          if (!prospect) throw new HttpValidationError(404, "NOT_FOUND", `VIP prospect not found: ${id}`);
+          const campaign = await opts.store.getCampaign(prospect.campaignId);
+          if (!campaign) {
+            throw new HttpValidationError(404, "NOT_FOUND", `Campaign not found: ${prospect.campaignId}`);
+          }
+          const body = parseVipSend(await readJsonBody(request));
+          const recipientEmail = body.recipientEmail ?? prospect.contactEmail ?? "";
+          if (!recipientEmail) {
+            return jsonResponse({ error: "VIP prospect has no verified contactEmail.", code: "MISSING_EMAIL" }, 400);
+          }
+          const draftText = body.body ?? prospect.inviteDraft ?? "";
+          if (!draftText.trim()) {
+            return jsonResponse({ error: "VIP invite draft is required before sending.", code: "MISSING_DRAFT" }, 400);
+          }
+          const gate = await gateVipOutreach({
+            prospect: { ...prospect, contactEmail: recipientEmail },
+            store: opts.store,
+            bridge,
+            clock,
+            env,
+            lockdown: campaign.riskDial === "lockdown",
+          });
+          if (!gate.allowed) {
+            return jsonResponse({ ok: false, blocked: true, reason: gate.reason ?? "vip_send_blocked" }, 403);
+          }
+          const risk = evaluateReportRisk({
+            platform: "luma",
+            text: draftText,
+            subject: body.subject,
+            hasRecipientSpecificReference: true,
+            isFirstTouch: !body.isFollowup,
+          });
+          if (!risk.pass) {
+            return jsonResponse({ ok: false, blocked: true, reason: "report_risk_exceeded", risk }, 400);
+          }
+          const liveAllowed =
+            !body.forceDryRun &&
+            env.MARKETING_LIVE_SEND === "1" &&
+            paidAdapters.isLiveBillingEnabled();
+          const receipt = liveAllowed
+            ? await paidAdapters.execute(
+                "email",
+                {
+                  to: recipientEmail,
+                  subject: body.subject ?? `Quick intro in ${prospect.city.toUpperCase()}`,
+                  text: draftText,
+                },
+                {
+                  spend: spendAuthFromCampaign(campaign, 1, { tier: 3, useSlopCash: false, env }),
+                  idempotencyKey: `vip:${prospect.id}:${body.isFollowup ? "followup" : "initial"}`,
+                },
+              )
+            : await paidAdapters.dryRun(
+                "email",
+                {
+                  to: recipientEmail,
+                  subject: body.subject ?? `Quick intro in ${prospect.city.toUpperCase()}`,
+                  text: draftText,
+                },
+                `vip:${prospect.id}:${body.isFollowup ? "followup" : "initial"}`,
+              );
+          if (gate.contactHash) {
+            await recordVipOutreachTouch(opts.store, {
+              contactHash: gate.contactHash,
+              campaignId: prospect.campaignId,
+              isCold: true,
+              answered: false,
+            });
+          }
+          const updated = await opts.store.updateVipProspect(prospect.id, {
+            contactEmail: recipientEmail,
+            inviteDraft: draftText,
+            status: "invited",
+          });
+          eventHub.publish("vip_prospect", {
+            action: "invited",
+            id: updated.id,
+            mode: receipt.mode,
+          });
+          return jsonResponse({ ok: receipt.ok, mode: receipt.mode, receipt, risk, prospect: updated });
+        }
+        const vipInviteMatch = /^\/api\/(?:vip|vips|vip-prospects)\/([^/]+)\/invite$/.exec(path);
         if (method === "POST" && vipInviteMatch?.[1]) {
           const id = decodeURIComponent(vipInviteMatch[1]);
           const prospect = await opts.store.getVipProspect(id);
           if (!prospect) throw new HttpValidationError(404, "NOT_FOUND", `VIP prospect not found: ${id}`);
           const raw = await readJsonBody(request);
+          const proofHook =
+            typeof raw.proofOfWork1Line === "string" ? raw.proofOfWork1Line.trim() : "";
+          if (!proofHook || isWeakOrFallbackProofOfWorkHook(proofHook)) {
+            return jsonResponse(
+              {
+                error:
+                  "proofOfWork1Line must reference a specific public achievement (>= 14 chars, no raw DB slugs).",
+                code: "WEAK_VIP_HOOK",
+              },
+              400,
+            );
+          }
           const firstName = prospect.name.split(/\s+/)[0] ?? prospect.name;
+          const offerMode: VipOfferMode | undefined =
+            raw.offerMode === "bilateral_intro" || raw.offerMode === "curated_table"
+              ? raw.offerMode
+              : undefined;
+          const confirmedCoSeatedRoles = Array.isArray(raw.confirmedCoSeatedRoles)
+            ? raw.confirmedCoSeatedRoles.filter((x): x is string => typeof x === "string")
+            : undefined;
           const invite = vipEngine.buildAndValidateVipInvite({
             firstName,
             archetypeSlug: prospect.archetype,
             city: prospect.city,
-            neighborhood: typeof raw.neighborhood === "string" ? raw.neighborhood : "West Village",
-            proofOfWork1Line:
-              typeof raw.proofOfWork1Line === "string" && raw.proofOfWork1Line.trim()
-                ? raw.proofOfWork1Line.trim()
-                : `your recent work at ${prospect.organization ?? prospect.publicSource}`,
+            neighborhood: typeof raw.neighborhood === "string" ? raw.neighborhood : undefined,
+            proofOfWork1Line: proofHook,
             senderName: typeof raw.senderName === "string" && raw.senderName.trim() ? raw.senderName.trim() : "The Operator",
             dateLabel: typeof raw.dateLabel === "string" ? raw.dateLabel : undefined,
+            offerMode,
+            bilateralPeerSummary:
+              typeof raw.bilateralPeerSummary === "string" ? raw.bilateralPeerSummary : undefined,
+            sharedExactProblem:
+              typeof raw.sharedExactProblem === "string" ? raw.sharedExactProblem : undefined,
+            confirmedCoSeatedRoles,
           });
           if (!invite.valid) {
             return jsonResponse({ error: "VIP invite failed validation", invite }, 400);
@@ -1530,6 +1750,78 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           });
           eventHub.publish("vip_prospect", { action: "invite_drafted", id: updated.id });
           return jsonResponse({ invite, prospect: updated });
+        }
+
+        // Pass 4: Apollo Enrichment & Credits
+        if (method === "POST" && path === "/api/apollo/search") {
+          const body = parseApolloSearch(await readJsonBody(request));
+          const result = await apolloAdapter.searchPeople(body);
+          return jsonResponse(result, result.ok ? 200 : 429);
+        }
+        if (method === "POST" && path === "/api/apollo/enrich") {
+          const body = parseApolloEnrich(await readJsonBody(request));
+          const result = await apolloAdapter.enrichPerson(body);
+          const status = result.ok ? 200 : result.blockedReason?.includes("minor") || result.blockedReason?.includes("suppressed") ? 403 : 400;
+          return jsonResponse(result, status);
+        }
+        if (method === "GET" && path === "/api/apollo/credits") {
+          const usage = await apolloAdapter.getCreditUsage();
+          return jsonResponse({ ok: true, usage });
+        }
+
+        // Pass 4: 10-Platform Helpful Agent Playbooks
+        const playbookDraftMatch = /^\/api\/playbooks\/([^/]+)\/draft$/.exec(path);
+        if (method === "POST" && playbookDraftMatch?.[1]) {
+          const platform = parseCanonicalPlatform(decodeURIComponent(playbookDraftMatch[1]), "platform");
+          const body = parsePlaybookDraft(await readJsonBody(request));
+          const draft = buildPlatformDraft({ platform, ...body });
+          return jsonResponse({ ok: draft.risk.pass, playbook: getPlatformPlaybook(platform), draft });
+        }
+        if (method === "POST" && path === "/api/playbooks/lint") {
+          const body = parsePlaybookLint(await readJsonBody(request));
+          const risk = evaluateReportRisk(body);
+          return jsonResponse(
+            { ok: risk.pass, platform: body.platform, risk },
+            risk.pass ? 200 : 400,
+          );
+        }
+        if (method === "GET" && path === "/api/playbooks/health") {
+          const platformParam = url.searchParams.get("platform");
+          const campaignId = url.searchParams.get("campaignId") ?? undefined;
+          const platforms = platformParam
+            ? [parseCanonicalPlatform(platformParam, "platform")]
+            : [...CANONICAL_OUTREACH_PLATFORMS];
+          const nowMs = clock.now();
+          const health = await Promise.all(
+            platforms.map(async (platform) => {
+              const interactions = await opts.store.listPlatformInteractions({
+                platform,
+                campaignId,
+                limit: 50,
+              });
+              return evaluatePlatformHealth(platform, interactions, nowMs);
+            }),
+          );
+          return jsonResponse({ ok: true, platforms: health });
+        }
+
+        // Pass 4: Out-of-Network -> In-Network Quality Intake Bridge
+        if (method === "POST" && path === "/api/intake/score") {
+          const body = parseIntakeScore(await readJsonBody(request));
+          const scored = await intakeBridge.scoreAndRecordCandidate(body);
+          return jsonResponse(scored, scored.isMinorSignal ? 403 : 200);
+        }
+        const intakePromoteMatch = /^\/api\/intake\/([^/]+)\/promote$/.exec(path);
+        if (method === "POST" && intakePromoteMatch?.[1]) {
+          const candidateId = decodeURIComponent(intakePromoteMatch[1]);
+          const body = parseIntakePromote(await readJsonBody(request));
+          const promoted = await intakeBridge.promoteCandidate(candidateId, body);
+          const status = promoted.allowed
+            ? 200
+            : promoted.blockedReason === "intake_candidate_not_found"
+              ? 404
+              : 403;
+          return jsonResponse(promoted, status);
         }
 
         // Video Factory (both /api/videos and /api/video-assets aliases)
@@ -1582,10 +1874,69 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           const asset = await opts.store.getVideoAsset(id);
           if (!asset) throw new HttpValidationError(404, "NOT_FOUND", `Video asset not found: ${id}`);
           const raw = await readJsonBody(request);
-          const nextStage = typeof raw.stage === "string" ? (raw.stage.trim() as VideoAssetStage) : null;
+          const rawStage = typeof raw.stage === "string" ? raw.stage.trim() : "";
+          const nextStage = (
+            rawStage === "rendered"
+              ? "voice_render"
+              : rawStage === "posted"
+                ? "published"
+                : rawStage
+          ) as VideoAssetStage;
           if (!nextStage) throw new HttpValidationError(400, "REQUIRED_FIELD", "stage is required.");
+
+          const requiresLint =
+            nextStage === "voice_render" ||
+            nextStage === "qa" ||
+            nextStage === "published" ||
+            nextStage === "measured";
+          let lintResult: ReturnType<typeof lintVideoScript> | undefined;
+          if (requiresLint) {
+            const rawPersona =
+              typeof raw.personaId === "string" && raw.personaId in PERSONA_VIDEO_BIBLES
+                ? (raw.personaId as PersonaId)
+                : asset.agentId?.startsWith("agent-") &&
+                    asset.agentId.slice(6) in PERSONA_VIDEO_BIBLES
+                  ? (asset.agentId.slice(6) as PersonaId)
+                  : "sloane";
+            const bible = PERSONA_VIDEO_BIBLES[rawPersona];
+            const manifest: VideoScriptManifest = {
+              id: asset.id,
+              personaId: rawPersona,
+              appId: bible.appId,
+              productionTier: 1,
+              title: asset.title,
+              durationSec: typeof raw.durationSec === "number" ? raw.durationSec : 35,
+              hookText: asset.hook,
+              visualBeats: Array.isArray(raw.visualBeats)
+                ? raw.visualBeats.map(String)
+                : ["Local street beat"],
+              dialogue: asset.script,
+              punchline: typeof raw.punchline === "string" ? raw.punchline : "",
+              ctaText: typeof raw.ctaText === "string" ? raw.ctaText : bible.domain,
+              sponsored: raw.sponsored !== false,
+              ftcDisclosureText:
+                typeof raw.ftcDisclosureText === "string"
+                  ? raw.ftcDisclosureText
+                  : asset.ftcDisclosed
+                    ? "#Ad"
+                    : null,
+              estimatedRenderCents: 0,
+            };
+            lintResult = lintVideoScript(manifest);
+            if (!lintResult.pass) {
+              return jsonResponse(
+                {
+                  error: "Video script failed server-side safety/FTC lint.",
+                  code: "VIDEO_LINT_FAILED",
+                  lint: lintResult,
+                },
+                400,
+              );
+            }
+          }
+
           const check = canTransitionVideoStage(asset.stage, nextStage, {
-            safetyLintPass: raw.safetyLintPass !== false && asset.ftcDisclosed,
+            safetyLintPass: (lintResult ? lintResult.pass : true) && raw.safetyLintPass !== false && asset.ftcDisclosed,
             qaApproved: raw.qaApproved !== false,
           });
           if (!check.allowed) {
@@ -1593,7 +1944,7 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           }
           const updated = await opts.store.updateVideoAsset(id, { stage: nextStage });
           eventHub.publish("video_asset", { action: "stage", id: updated.id, stage: updated.stage });
-          return jsonResponse({ asset: updated, check });
+          return jsonResponse({ asset: updated, check, ...(lintResult ? { lint: lintResult } : {}) });
         }
 
         // Outreach
@@ -1630,26 +1981,39 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
           return jsonResponse(result);
         }
 
-        // Tier-1 $0 Open-Web Multi-City Discovery
-        if (method === "POST" && path === "/api/discovery/nyc") {
+        // Tier-1 $0 Open-Web Multi-City Discovery (POST /api/discovery & /api/discovery/nyc alias)
+        if (method === "POST" && (path === "/api/discovery" || path === "/api/discovery/nyc")) {
           const raw = await readJsonBody(request);
-          const result = await discoverNycLeads({
+          const parsed = parseDiscoveryRequest(raw);
+          const targetCity = parsed.city ?? "nyc";
+          requireCityPack(targetCity);
+          const categories = Array.isArray(raw.categories)
+            ? new Set(raw.categories.map((c) => String(c).toLowerCase()))
+            : null;
+          const result = await discoverCityLeads({
             fetchImpl: opts.discoveryFetch,
             clock,
-            city: typeof raw.city === "string" ? raw.city : "nyc",
-            limitPerSource: typeof raw.limitPerSource === "number" ? raw.limitPerSource : undefined,
-            redditSubreddits: Array.isArray(raw.redditSubreddits)
-              ? raw.redditSubreddits.map(String)
-              : undefined,
-            youtubeChannelIds: Array.isArray(raw.youtubeChannelIds)
-              ? raw.youtubeChannelIds.map(String)
-              : undefined,
-            includeSources: Array.isArray(raw.includeSources)
-              ? (raw.includeSources.map(String) as DiscoverySource[])
-              : undefined,
-            includeVipBdSources: Boolean(raw.includeVipBd ?? raw.includeVipBdSources),
+            city: targetCity,
+            limitPerSource: parsed.limitPerSource,
+            redditSubreddits: parsed.redditSubreddits,
+            youtubeChannelIds: parsed.youtubeChannelIds,
+            includeSources: parsed.includeSources as DiscoverySource[] | undefined,
+            includeVipBdSources: Boolean(parsed.includeVipBd),
           });
-          return jsonResponse(result);
+          const filteredLeads = categories
+            ? result.leads.filter((lead) => categories.has(lead.category.toLowerCase()))
+            : result.leads;
+          return jsonResponse({
+            ok: true,
+            ...result,
+            city: result.city,
+            leads: filteredLeads,
+            persistedCount: 0,
+            summary: {
+              totalLeads: filteredLeads.length,
+              errors: result.errors.length,
+            },
+          });
         }
 
         // Attribution
@@ -1803,7 +2167,9 @@ export async function createMarketingServer(opts: MarketingServerOptions): Promi
     token,
     daemon,
     eventHub,
+    bridge,
     stop: async () => {
+      serving = false;
       await daemon.stop();
       eventHub.closeAll();
       await server.stop(true);

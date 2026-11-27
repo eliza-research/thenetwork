@@ -3,7 +3,7 @@
 // carries everything needed to replay it (ME-004). Nothing is emitted unless the whole run
 // completes (ME-010: no partial proposals).
 import type { LLM, MemberId, WorldSnapshot } from "@thenetwork/core";
-import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfigInput } from "./config.ts";
+import { configHash, ENGINE_VERSION, resolveConfig, type EngineConfig, type EngineConfigInput } from "./config.ts";
 import { localEmbed, type EmbedFn } from "./embed.ts";
 import { explain, privateVocabulary } from "./explain.ts";
 import { candidateAgeReason, involvedMembers, isMinor, memberReason, publicEventPreferencesAllow, screenCandidate } from "./filters.ts";
@@ -18,7 +18,7 @@ import { standingIntentCandidateInScope } from "../../core/src/generated/standin
 import { listedEventMinimumAge } from "../../core/src/public-event-age.ts";
 import { blockingPairs, fairnessMetrics, planAsks, selectProposals, updateExposureDebt } from "./policy.ts";
 import { EngineRng as Rng } from "@thenetwork/core";
-import { sha256, stableStringify } from "./hash.ts";
+import { sha256 } from "./hash.ts";
 import { scoreCandidate, type Scored } from "./scoring.ts";
 import type { Candidate, EngineAsk, EngineInput, EngineProposal, JudgeVerdict, MatchingRunLog, MemberStandingRow, Role } from "./types.ts";
 import type { AppPack } from "./pack.ts";
@@ -55,21 +55,43 @@ export interface EngineResult {
   memberStanding?: readonly MemberStandingRow[];
 }
 
-function hashInput({ memberStanding: _privateStanding, ...input }: EngineInput): string {
-  const strip = (x: unknown) => JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v)));
-  return sha256(stableStringify(strip(input))).slice(0, 16);
+function stableStringifyWithoutEmbedding(v: unknown): string {
+  if (v === null || v === undefined) return "null";
+  const t = typeof v;
+  if (t === "number") return Number.isFinite(v as number) ? JSON.stringify(v) : "null";
+  if (t === "boolean" || t === "string") return JSON.stringify(v);
+  if (t !== "object") return "null";
+  if (Array.isArray(v)) {
+    const parts = new Array<string>(v.length);
+    for (let i = 0; i < v.length; i++) {
+      const el = v[i];
+      parts[i] = el === undefined || typeof el === "function" || typeof el === "symbol"
+        ? "null"
+        : stableStringifyWithoutEmbedding(el);
+    }
+    return `[${parts.join(",")}]`;
+  }
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o).sort();
+  const entries: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i]!;
+    if (k === "embedding") continue;
+    const val = o[k];
+    if (val === undefined || typeof val === "function" || typeof val === "symbol") continue;
+    entries.push(`${JSON.stringify(k)}:${stableStringifyWithoutEmbedding(val)}`);
+  }
+  return `{${entries.join(",")}}`;
 }
 
-/**
- * The input with every top-level list in a canonical order (by id, else by content), so the
- * output, the input hash and the run id do not depend on the row order of the snapshot
- * (engine-pipeline-17: the snapshot loader has no ORDER BY). Nested lists keep their order
- * (participants[0] is the requester).
- */
+function hashInput({ memberStanding: _privateStanding, ...input }: EngineInput): string {
+  return sha256(stableStringifyWithoutEmbedding(input)).slice(0, 16);
+}
+
 export function canonicalInput(input: EngineInput): EngineInput {
   const keyOf = (x: unknown): string => {
     const id = (x as { id?: unknown }).id;
-    return typeof id === "string" ? `0|${id}` : `1|${stableStringify(JSON.parse(JSON.stringify(x, (k, v) => (k === "embedding" ? undefined : v))))}`;
+    return typeof id === "string" ? `0|${id}` : `1|${stableStringifyWithoutEmbedding(x)}`;
   };
   const out: Record<string, unknown> = { ...input };
   for (const [k, v] of Object.entries(input)) {
@@ -79,6 +101,112 @@ export function canonicalInput(input: EngineInput): EngineInput {
     out[k] = keyed.map(e => e.x);
   }
   return out as unknown as EngineInput;
+}
+
+function resolvePostSelection(raw: EngineConfig["judge"]["postSelection"]): {
+  enabled: boolean; minConfidence: number; maxConfidence: number; backups: number;
+} {
+  if (!raw) return { enabled: false, minConfidence: 0.35, maxConfidence: 0.72, backups: 1 };
+  if (raw === true) return { enabled: true, minConfidence: 0.35, maxConfidence: 0.72, backups: 1 };
+  return {
+    enabled: raw.enabled ?? true,
+    minConfidence: raw.minConfidence ?? 0.35,
+    maxConfidence: raw.maxConfidence ?? 0.72,
+    backups: raw.backups ?? 1,
+  };
+}
+
+async function runJudgmentPasses(
+  w: World,
+  cfg: EngineConfig,
+  deps: EngineDeps,
+  llm: LLM,
+  scored: Scored[],
+  targetKeys: ReadonlySet<string> | null,
+  runLog: MatchingRunLog,
+  lap: (name: string, since: number) => number,
+  tStart: number,
+): Promise<{ scored: Scored[]; t: number }> {
+  let t = tStart;
+  const J = w.pack.judge!;
+  const screen = J.screen;
+  let judgment = stepJudgmentRun(initialJudgmentRun, {
+    type: "configureRun",
+    rubricOption: { enabled: cfg.judge.enabled, limit: cfg.judge.topK, supported: Boolean(llm && J) },
+    screenOption: { enabled: targetKeys === null && cfg.judge.screen.enabled, limit: cfg.judge.screen.topK, supported: Boolean(screen) },
+  });
+  if (judgment.phase === "Complete") return { scored, t };
+
+  let nextScored = scored;
+  const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
+  const pickTop = (xs: Scored[], k: number, gk: number) =>
+    targetKeys !== null
+      ? xs.filter(s => targetKeys.has(s.c.key))
+      : [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
+
+  let pool = byScore(nextScored.filter(s => s.eligible && (J.reviewCandidate?.(s.c) ?? true)));
+  if (judgment.phase === "Screening" && screen) {
+    const sc = cfg.judge.screen;
+    const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
+    const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
+    const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
+    const snap = screenSnapshot(w);
+    const res = await runCachedPass(w, toScreen, llm, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
+      screenStats, c => prepareScreen(w, c, sc.maxTokens, snap), screenLog, runLog.judgeModel);
+    runLog.judge.screen = { ...screenStats, verdicts: screenLog };
+    const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
+    nextScored = nextScored.map(s => (rejected.has(s.c.key) ? { ...s, eligible: false, reason: "screen_reject" } : s));
+    pool = pool.filter(s => res.has(s.c.key) && !rejected.has(s.c.key));
+    t = lap("judge_screen", t);
+    judgment = stepJudgmentRun(judgment, { type: "finishScreen" });
+  }
+  if (judgment.phase === "Rubric") {
+    const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
+    const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts, runLog.judgeModel);
+    nextScored = nextScored.map(s => {
+      const v = verdicts.get(s.c.key);
+      if (!v) return s;
+      const r = scoreCandidate(w, s.c, v);
+      const judged = r.score > s.score ? { ...s, verdict: v, eligible: r.eligible, reason: r.reason } : r;
+      return s.eligible ? judged : { ...judged, eligible: false, reason: s.reason ?? "below_threshold" };
+    });
+    t = lap("judge", t);
+    judgment = stepJudgmentRun(judgment, {
+      type: "finishRubric",
+      deepOption: { enabled: cfg.judge.deep.enabled, limit: cfg.judge.deep.topK, supported: Boolean(J.deep) },
+    });
+  }
+  if (judgment.phase === "DeepReview" && J.deep) {
+    const dc = cfg.judge.deep;
+    const deepPool = byScore(nextScored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no"));
+    const survivors = targetKeys !== null ? deepPool.filter(s => targetKeys.has(s.c.key)) : deepPool.slice(0, dc.topK);
+    const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
+    const stats = { calls: 0, cacheHits: 0, failures: 0 };
+    const res = await runCachedPass(w, survivors.map(s => s.c), llm, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
+      stats, c => prepareDeepReview(w, c, dc.maxTokens), deepLog, runLog.judgeModel);
+    runLog.judge.deep = { ...stats, verdicts: [] };
+    nextScored = nextScored.map(s => {
+      const r = res.get(s.c.key);
+      if (!r) return s;
+      const v = r.verdict;
+      const gate = hardGate(w, s.c);
+      const gated = gateMemberFacing(w, s.c, v, r.refs);
+      runLog.judge.deep!.verdicts.push({
+        key: s.c.key, verdict: v.verdict, matchProbability: v.matchProbability, rubric: { ...v.rubric },
+        reasoning: redactPrivate(v.reasoning).slice(0, 600), hardGate: gate ?? undefined,
+        question: v.question && gateQuestion(w, s.c, v.question.question) ? { memberId: r.refs[v.question.ref], question: v.question.question } : undefined,
+        memberFacingRejected: gated.rejected.length,
+      });
+      if (gate) return { ...s, eligible: false, reason: `hard_gate:${gate}` };
+      if (v.verdict === "no") return { ...s, eligible: false, reason: "deep_reject" };
+      if (v.verdict === "insufficient_information") return { ...s, eligible: false, reason: "deep_insufficient" };
+      return { ...s, memberWhy: gated.why };
+    });
+    runLog.judge.deep.verdicts.sort((a, b) => (a.key < b.key ? -1 : 1));
+    t = lap("judge_deep", t);
+    judgment = stepJudgmentRun(judgment, { type: "finishDeepReview" });
+  }
+  return { scored: nextScored, t };
 }
 
 export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: EngineConfigInput = {}, deps: EngineDeps = {}): Promise<EngineResult> {
@@ -185,90 +313,85 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
   scored = [...bySet.values()].sort((a, b) => (a.c.key < b.c.key ? -1 : 1));
   t = lap("score", t);
 
-  // 4. LLM judgment passes on the top configurations (each is one input, never the whole score;
-  //    hard filters already ran and can never be undone by a model).
-  //    Pass 1 (screen, optional): cheap look at more candidates; "no" => screen_reject.
-  //    Pass 2 (rubric judge): dimension scores blended into the score; dealbreaker / "no" => ineligible.
-  //    Pass 3 (deep review, optional): richer context on the best survivors; "no" => deep_reject,
-  //    "insufficient_information" => deep_insufficient (with the question to ask), "yes" keeps it.
   const J = pack.judge;
   const llm = deps.llm;
-  const screen = J?.screen;
-  let judgment = stepJudgmentRun(initialJudgmentRun, {
-    type: "configureRun",
-    rubricOption: { enabled: cfg.judge.enabled, limit: cfg.judge.topK, supported: Boolean(llm && J) },
-    screenOption: { enabled: cfg.judge.screen.enabled, limit: cfg.judge.screen.topK, supported: Boolean(screen) },
-  });
-  if (judgment.phase !== "Complete" && llm && J) {
-    const byScore = (xs: Scored[]) => [...xs].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1));
-    const pickTop = (xs: Scored[], k: number, gk: number) => [...xs.filter(s => s.c.participants.length <= 2).slice(0, k), ...xs.filter(s => s.c.participants.length > 2).slice(0, gk)];
-    let pool = byScore(scored.filter(s => (!s.reason || s.reason === "below_threshold") && (J.reviewCandidate?.(s.c) ?? true)));
-    if (judgment.phase === "Screening" && screen) {
-      const sc = cfg.judge.screen;
-      const toScreen = pickTop(pool, sc.topK, sc.groupTopK).map(s => s.c);
-      const screenStats = { calls: 0, cacheHits: 0, failures: 0 };
-      const screenLog: { key: string; cacheKey: string; verdict: ScreenVerdict | null; cached: boolean }[] = [];
-      let snapshot: World["input"] | undefined;
-      const res = await runCachedPass(w, toScreen, llm, deps.screenCache ?? new JudgeCache<ScreenVerdict>(cfg.judge.ttlMs),
-        screenStats, c => prepareScreen(w, c, sc.maxTokens, snapshot ??= screenSnapshot(w)), screenLog, runLog.judgeModel);
-      runLog.judge.screen = { ...screenStats, verdicts: screenLog };
-      const rejected = new Set([...res].filter(([, v]) => v && !screenDecision(v)).map(([k]) => k));
-      scored = scored.map(s => (rejected.has(s.c.key) ? { ...s, eligible: false, reason: "screen_reject" } : s));
-      // Pass 2 only looks at screened survivors (a failed screen call fails open to pass 2).
-      pool = pool.filter(s => res.has(s.c.key) && !rejected.has(s.c.key));
-      t = lap("judge_screen", t);
-      judgment = stepJudgmentRun(judgment, { type: "finishScreen" });
-    }
-    if (judgment.phase === "Rubric") {
-      const toJudge = pickTop(pool, cfg.judge.topK, cfg.judge.groupTopK).map(s => s.c);
-      const verdicts = await judgeCandidates(w, toJudge, llm, deps.judgeCache ?? new JudgeCache(cfg.judge.ttlMs), runLog.judge, runLog.judge.verdicts, runLog.judgeModel);
-      // Pass 2 can only lower or remove (engine-pipeline-7): a verdict that would raise the score keeps
-      // the pre-judge score and components; a floor the verdict breaks still removes the configuration;
-      // a configuration below its bar before the judge stays ineligible.
-      scored = scored.map(s => {
-        const v = verdicts.get(s.c.key);
-        if (!v) return s;
-        const r = scoreCandidate(w, s.c, v);
-        const judged = r.score > s.score ? { ...s, verdict: v, eligible: r.eligible, reason: r.reason } : r;
-        return s.eligible ? judged : { ...judged, eligible: false, reason: s.reason ?? "below_threshold" };
-      });
-      t = lap("judge", t);
-      judgment = stepJudgmentRun(judgment, {
-        type: "finishRubric",
-        deepOption: { enabled: cfg.judge.deep.enabled, limit: cfg.judge.deep.topK, supported: Boolean(J.deep) },
-      });
-    }
-    if (judgment.phase === "DeepReview" && J.deep) {
-      const dc = cfg.judge.deep;
-      const survivors = byScore(scored.filter(s => s.eligible && s.verdict && s.verdict.verdict !== "no")).slice(0, dc.topK);
-      const deepLog: { key: string; cacheKey: string; verdict: { verdict: DeepVerdict; refs: Record<MemberId, string> } | null; cached: boolean }[] = [];
-      const stats = { calls: 0, cacheHits: 0, failures: 0 };
-      const res = await runCachedPass(w, survivors.map(s => s.c), llm, deps.deepCache ?? new JudgeCache<{ verdict: DeepVerdict; refs: Record<MemberId, string> }>(cfg.judge.ttlMs),
-        stats, c => prepareDeepReview(w, c, dc.maxTokens), deepLog, runLog.judgeModel);
-      runLog.judge.deep = { ...stats, verdicts: [] };
-      scored = scored.map(s => {
-        const r = res.get(s.c.key);
-        if (!r) return s; // not reviewed, or the call failed: keep the pass-2 outcome
-        const v = r.verdict;
-        const gate = hardGate(w, s.c);
-        const gated = gateMemberFacing(w, s.c, v, r.refs);
-        // Run log: decision fields only; internal text is redacted and member-facing text is gated.
-        runLog.judge.deep!.verdicts.push({
-          key: s.c.key, verdict: v.verdict, matchProbability: v.matchProbability, rubric: { ...v.rubric },
-          reasoning: redactPrivate(v.reasoning).slice(0, 600), hardGate: gate ?? undefined,
-          question: v.question && gateQuestion(w, s.c, v.question.question) ? { memberId: r.refs[v.question.ref], question: v.question.question } : undefined,
-          memberFacingRejected: gated.rejected.length,
-        });
-        if (gate) return { ...s, eligible: false, reason: `hard_gate:${gate}` }; // never fires after the filters; defense in depth
-        if (v.verdict === "no") return { ...s, eligible: false, reason: "deep_reject" };
-        if (v.verdict === "insufficient_information") return { ...s, eligible: false, reason: "deep_insufficient" };
-        return { ...s, memberWhy: gated.why };
-      });
-      runLog.judge.deep.verdicts.sort((a, b) => (a.key < b.key ? -1 : 1));
-      t = lap("judge_deep", t);
-      judgment = stepJudgmentRun(judgment, { type: "finishDeepReview" });
+  const postSel = resolvePostSelection(cfg.judge.postSelection);
+  if (!postSel.enabled && llm && J) {
+    const res = await runJudgmentPasses(w, cfg, deps, llm, scored, null, runLog, lap, t);
+    scored = res.scored;
+    t = res.t;
+  }
+
+  const priorDebt: Record<MemberId, number> = {};
+  for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
+  const askPlan = planAsks(w, input);
+  f.asks = askPlan.asks.length;
+  f.askFirst = askPlan.exclude.size;
+  const selectionOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
+
+  let selection: ReturnType<typeof selectProposals>;
+  let selected: ReturnType<typeof selectProposals>["selected"];
+  let afterSelRejected = 0;
+
+  if (!postSel.enabled) {
+    selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectionOptions);
+    selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
+    afterSelRejected = selection.selected.length - selected.length;
+  } else {
+    const selectRng = rng.fork("select");
+    selection = selectProposals(w, scored, selectRng.fork("pass1"), priorDebt, selectionOptions);
+    selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
+    afterSelRejected = selection.selected.length - selected.length;
+
+    if (llm && J && cfg.judge.enabled && cfg.judge.topK > 0 && selected.length > 0) {
+      const selectedKeys = new Set(selected.map(sel => sel.s.c.key));
+      const targetKeys = new Set<string>();
+      const calibratedConf = (s: Scored): number => {
+        const marginProb = Math.max(0, Math.min(1, 0.5 + 1.8 * (s.score - s.threshold)));
+        return 0.4 * s.components.confidence + 0.6 * marginProb;
+      };
+      const needsEscalation = (s: Scored): boolean => {
+        if (s.c.safetyClass === "medium" || s.c.exploration) return true;
+        const conf = calibratedConf(s);
+        return conf >= postSel.minConfidence && conf <= postSel.maxConfidence;
+      };
+      const backupsByMember = new Map<MemberId, Scored[]>();
+      for (const s of [...scored].sort((a, b) => (b.score - a.score) || (a.c.key < b.c.key ? -1 : 1))) {
+        if (!s.eligible || selectedKeys.has(s.c.key)) continue;
+        const p0 = s.c.participants[0];
+        if (!p0) continue;
+        let list = backupsByMember.get(p0);
+        if (!list) { list = []; backupsByMember.set(p0, list); }
+        if (list.length < Math.max(1, postSel.backups * 2)) list.push(s);
+      }
+      for (const sel of selected) {
+        if (!needsEscalation(sel.s)) continue;
+        targetKeys.add(sel.s.c.key);
+        if (postSel.backups > 0) {
+          const p0 = sel.s.c.participants[0];
+          const alts = p0 ? backupsByMember.get(p0) ?? [] : [];
+          let added = 0;
+          for (const b of alts) {
+            if (added >= postSel.backups) break;
+            if (!targetKeys.has(b.c.key)) {
+              targetKeys.add(b.c.key);
+              added++;
+            }
+          }
+        }
+      }
+      if (targetKeys.size > 0) {
+        t = lap("select", t);
+        const res = await runJudgmentPasses(w, cfg, deps, llm, scored, targetKeys, runLog, lap, t);
+        scored = res.scored;
+        t = res.t;
+        selection = selectProposals(w, scored, selectRng.fork("pass2"), priorDebt, selectionOptions);
+        selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
+        afterSelRejected = selection.selected.length - selected.length;
+      }
     }
   }
+
   for (const s of scored) {
     if (s.reason === "below_threshold") f.belowThreshold++;
     else if (s.reason === "dealbreaker") f.dealbreakers++;
@@ -276,22 +399,11 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     if (s.eligible) f.eligible++;
   }
 
-  // 5. Global selection: exposure floor, greedy with load balancing + exposure debt, exploration.
-  const priorDebt: Record<MemberId, number> = {};
-  for (const [k, v] of Object.entries(input.exposureDebt ?? {})) priorDebt[w.canonical(k)] = (priorDebt[w.canonical(k)] ?? 0) + v;
-  const askPlan = planAsks(w, input);
-  f.asks = askPlan.asks.length;
-  f.askFirst = askPlan.exclude.size;
-  const selectionOptions = { exclude: askPlan.exclude, extraProactive: askPlan.extraProactive };
-  const selection = selectProposals(w, scored, rng.fork("select"), priorDebt, selectionOptions);
-  const selected = selection.selected.filter(x => candidateAgeReason(w, x.s.c) === null);
-  if (selected.length !== selection.selected.length) f.rejectedAfterSelection = { underage: selection.selected.length - selected.length };
+  if (afterSelRejected > 0) f.rejectedAfterSelection = { underage: afterSelRejected };
   const budgetSkips = selection.budgetSkips;
   f.budgetSkips = budgetSkips;
   f.selected = selected.length;
   f.exploration = selected.filter(s => s.exploration).length;
-  // Judge coverage (engine-pipeline-8): pass 2 sees only its top K, so most selected configurations
-  // can be unjudged. Reported whenever a judge ran, so a run with low coverage is visible.
   if (runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0) {
     runLog.judge.coverage = { selected: selected.length, judged: selected.filter(s => !!s.s.verdict).length };
   }
@@ -300,7 +412,7 @@ export async function runEngine(snapshot: WorldSnapshot | EngineInput, cfgIn: En
     runLog.search = search;
     runLog.searchOutcomes = w.match.searchOutcomes();
   }
-  t = lap("select", t);
+  t = lap(postSel.enabled && runLog.judge.calls + runLog.judge.cacheHits + runLog.judge.failures > 0 ? "reselect" : "select", t);
 
   // 6. Proposals with shareable-only explanations.
   const proposals: EngineProposal[] = selected.map(sel => {

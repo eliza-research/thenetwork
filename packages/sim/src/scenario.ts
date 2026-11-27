@@ -2,12 +2,12 @@
 // top of a background world, then grade the run by its FINAL STATE (run log + metrics),
 // not by transcript vibes. pass^k: a scenario passes only if it passes on k seeds.
 import { fileAt } from "../../core/src/runtime/files.ts";
-import { DAY, MINUTE, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
+import { DAY, MINUTE, Rng, canBeMatched, hash32, type City, type OpportunityKind, type Proposal } from "@thenetwork/core";
 import type { LoggedMessage, MemberId, RunRecord, SimMeta } from "@thenetwork/core";
 import { observatoryMeetingHeld } from "../../core/src/generated/observatoryRoster.ts";
 import type { Metrics } from "./judge/metrics.ts";
 import { generatePersonas } from "./generator.ts";
-import type { AdversarialKind, Archetype, Persona, Responsiveness, Trip } from "./persona.ts";
+import { computeStrataSignals, type AdversarialKind, type Archetype, type Persona, type Responsiveness, type Trip } from "./persona.ts";
 import { simulatedNameMatcher } from "./simulated-names.ts";
 import { desireById } from "./taxonomy.ts";
 import { nextLocalHour } from "./time.ts";
@@ -114,6 +114,27 @@ function buildScriptedPersona(spec: ScenarioPersonaSpec, seed: number): Persona 
   if (spec.adversarial) h.adversarial = spec.adversarial;
   h.boundaries = [];
   p.relationships = []; p.invitedBy = undefined; p.joinDay = spec.join?.day ?? 0;
+  const strata = computeStrataSignals(p, new Rng(hash32("scenario-strata", seed, spec.ref)));
+  Object.assign(h, strata);
+  h.scripted = true;
+  if (!canBeMatched(h.trueAge)) {
+    h.trueAttractiveness = undefined;
+    p.public.projectedFacets = [];
+    p.public.projectedIntents = [];
+  } else if (!h.adversarial) {
+    h.stratumArchetype = "founder_operator";
+    h.economicCapital = 0.58;
+    h.peerPrestige = 0.60;
+    h.symbolicPublicity = 0.20;
+    h.compositeTier = 0.56;
+    h.spendComfortTier = "moderate";
+    h.attachmentStyle = "secure";
+    h.extractionPropensity = 0.04;
+    h.discretionScore = 0.90;
+    h.dunbarOpenSlots = { inner5: true, sympathy15: true, affinity50: true };
+    p.public.projectedFacets = [];
+    p.public.projectedIntents = [];
+  }
   return p;
 }
 

@@ -370,7 +370,9 @@ const SENSITIVE_WORDS = (
   // immigration and legal
   "undocumented asylum refugee deported deportation daca arrested felony felon prison incarcerated parole probation convicted " +
   // religion
-  "muslim jewish christian mormon atheist catholic hindu buddhist sikh"
+  "muslim jewish christian mormon atheist catholic hindu buddhist sikh " +
+  // dietary and allergens
+  "halal kosher celiac allergy allergic anaphylaxis peanut peanuts shellfish"
 ).split(" ");
 const SENSITIVE_PHRASES = ["eating disorder", "self harm", "trying to conceive", "in recovery", "laid off", "chronic illness",
   "sex work", "sex worker", "domestic violence", "sexual assault", "mental health", "hiv positive", "on probation", "on parole"];
@@ -474,6 +476,18 @@ const REF_MARKER = /\s*\(ref [^)]*\)/gi;
 const CANARY_PREFIX = /^canary [a-z0-9]+ [a-z]+ /;
 /** Bidirectional embedding, override and isolate controls (used to disguise text; core-23). */
 const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+
+export const INTERNAL_RANKING_LEAK_PATTERNS: readonly RegExp[] = [
+  /\b(?:clef\s+score|appearance\s+score|looks?\s+(?:rating|score|tier|percentile|band)|hotness\s+(?:score|rating|tier|percentile)|attractiveness\s+(?:score|rating|tier|percentile)|rated\s+(?:you|them|him|her)\s+(?:a\s+)?\d+(?:\.\d+)?\s*(?:\/|out\s+of)\s*10)\b/i,
+  /\b(?:status\s+(?:score|tier|percentile|band|rank|z\s*score)|wealth\s+(?:score|tier|percentile|band)|league\s+gap|out\s+of\s+(?:your|their|his|her|my)\s+league|in\s+(?:your|their|his|her)\s+league|below\s+(?:your|their)\s+league|above\s+(?:your|their)\s+league|standing\s+(?:percentile|score|tier|band)|springrank|sinkhorn\s+(?:shadow|price|dual)|shadow\s+price)\b/i,
+  /\b(?:vampire\s+(?:tier|score|watch|throttled|quarantined)|extraction\s+risk(?:\s+score)?|discretion\s+(?:score|vouch\s+score)|quality\s+band\s*q[0-3]|q[0-3]\s*(?:quarantine|probationary|standard|high\s*signal)|reliability\s+(?:tier|strikes?|cool\s*off)|rel(?:ok|confirmrequired|cooloff|suspended)|pitch\s*slap(?:per)?|network\s+vampire|shadow\s*throttl(?:ed|ing)|reciprocal\s+value\s+ratio)\b/i,
+];
+
+export interface LeakCheckOptions {
+  readonly contacts?: boolean;
+  readonly exceptOwner?: string;
+  readonly contactAllow?: readonly string[];
+}
 
 const N = 4;
 const words = (folded: string) => (folded ? folded.split(" ") : []);
@@ -594,7 +608,7 @@ export class LeakGuard {
   }
 
   /** Reasons the text must not be sent (empty = clean). */
-  check(text: string, o: { exceptOwner?: string; contactAllow?: readonly string[] } = {}): string[] {
+  check(text: string, o: LeakCheckOptions = {}): string[] {
     if (text.length > this.maxLength) return ["too_long"];
     const reasons = new Set<string>();
     if (BIDI.test(text)) reasons.add("format:bidi");
@@ -603,6 +617,10 @@ export class LeakGuard {
     const plains = plainVariants(text);
     const folded = foldedVariants(text);
     const squashed = folded.map(squash);
+    if (plains.some(v => INTERNAL_RANKING_LEAK_PATTERNS.some(re => re.test(v)))
+      || folded.some(v => INTERNAL_RANKING_LEAK_PATTERNS.some(re => re.test(v)))) {
+      reasons.add("internal:ranking");
+    }
     for (const c of this.canaries) {
       if (c.word ? folded.some(f => ` ${f} `.includes(` ${c.folded} `)) : squashed.some(s => s.includes(c.folded))) reasons.add(c.label);
     }
@@ -645,7 +663,7 @@ export class LeakGuard {
       for (const [e, n] of overlap) if (n >= 2) candidates.add(e);
       for (const e of candidates) if (!reasons.has(e.label) && counts(e) && factMatches(e.fact, toks, squashed)) reasons.add(e.label);
     }
-    if (this.contacts) {
+    if (o.contacts ?? this.contacts) {
       const approved = o.contactAllow;
       const contactText = approved?.length ? text.replace(/\S+/gu, token => approved.includes(token) ? " " : token) : text;
       const variants = approved?.length ? undefined : cachedContacts;
@@ -658,7 +676,7 @@ export class LeakGuard {
    * Check the last messages of one thread to the same recipient as one text (core-14): a number or a
    * fact split across messages ("212 555", "0102") is caught. Pass the new message last.
    */
-  checkThread(texts: readonly string[], o: { exceptOwner?: string } = {}): string[] {
+  checkThread(texts: readonly string[], o: LeakCheckOptions = {}): string[] {
     const recent = texts.slice(-5);
     return [...new Set([...this.check(recent.at(-1) ?? "", o), ...this.check(recent.join(" "), o), ...this.check(recent.join(""), o)])];
   }

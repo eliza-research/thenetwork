@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { CITY_TZ, MINUTE, localParts } from "@thenetwork/core";
+import { CITY_TZ, cityTimezone, isVenueOpenAt, MINUTE, localParts } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
 import { monthlyGatheringReview, monthlyGatheringStaffAllowed, monthlyGatheringWindowAllowed, type GatheringPhase } from "../../core/src/generated/monthlyGathering.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
@@ -8,6 +8,7 @@ import type { StaffUser } from "../../../apps/observatory/src/types.ts";
 import type { AppId } from "../../platform/src/apps.ts";
 import { readCappedText } from "../../platform/src/body.ts";
 import { PLAN_VENUES } from "../src/plans.ts";
+import { listActiveVenues } from "./meetup-store.ts";
 import { readPublicEvents } from "./public-events.ts";
 
 interface GatheringContext {
@@ -83,27 +84,36 @@ function gatheringView(row: GatheringRow) {
   };
 }
 
-function nyMonth(at: number): string {
-  const local = localParts(at, CITY_TZ.nyc);
+function localMonth(at: number, tz: string): string {
+  const local = localParts(at, tz);
   return `${local.year}-${String(local.month).padStart(2, "0")}`;
 }
-async function publicVenueName(tx: SQL, input: GatheringInput, now: number): Promise<string | undefined> {
+async function publicVenueName(tx: SQL, input: GatheringInput, now: number, city = "nyc"): Promise<string | undefined> {
   const { startsAt, endsAt } = input;
+  const tz = cityTimezone(city) ?? CITY_TZ.nyc;
   if (input.venue.kind === "curated") {
-    const venue = PLAN_VENUES.find(v => v.id === input.venue.id && v.city === "nyc" && v.public);
-    if (!venue || (venue.capacity ?? Infinity) < input.capacity) return;
-    const slot = { start: startsAt, end: endsAt };
-    const untilEnd = (endsAt - startsAt + startsAt % MINUTE) / MINUTE;
-    return plans.venueOpenForSlot(venue, slot, untilEnd, CITY_TZ.nyc) ? venue.name : undefined;
+    const venue = PLAN_VENUES.find(v => v.id === input.venue.id && v.city === city && v.public);
+    if (venue) {
+      if ((venue.capacity ?? Infinity) < input.capacity) return;
+      const slot = { start: startsAt, end: endsAt };
+      const untilEnd = (endsAt - startsAt + startsAt % MINUTE) / MINUTE;
+      return plans.venueOpenForSlot(venue, slot, untilEnd, tz) ? venue.name : undefined;
+    }
+    const dbVenues = await listActiveVenues(tx, city).catch(() => []);
+    const dbVenue = dbVenues.find(v => v.id === input.venue.id && v.public);
+    if (!dbVenue || dbVenue.walkInGroupCapacity < input.capacity) return;
+    const durationMin = Math.max(30, Math.round((endsAt - startsAt) / MINUTE));
+    return isVenueOpenAt(dbVenue, tz, startsAt, durationMin).open ? dbVenue.name : undefined;
   }
-  const [event] = await readPublicEvents(tx, now, "nyc", input.venue.id);
+  const [event] = await readPublicEvents(tx, now, city, input.venue.id);
   return event?.start === startsAt && event.end === endsAt ? event.listing?.venue : undefined;
 }
 
-async function gatheringVenue(tx: SQL, input: GatheringInput, now: number): Promise<string | undefined> {
+async function gatheringVenue(tx: SQL, input: GatheringInput, now: number, city = "nyc"): Promise<string | undefined> {
   const { startsAt, endsAt } = input;
-  const inMonth = input.month === nyMonth(startsAt) && input.month === nyMonth(endsAt - 1);
-  const name = await publicVenueName(tx, input, now);
+  const tz = cityTimezone(city) ?? CITY_TZ.nyc;
+  const inMonth = input.month === localMonth(startsAt, tz) && input.month === localMonth(endsAt - 1, tz);
+  const name = await publicVenueName(tx, input, now, city);
   return monthlyGatheringWindowAllowed(now, startsAt, endsAt, inMonth, !!name, input.capacity) ? name : undefined;
 }
 

@@ -4,13 +4,17 @@
 // (audit P2-13). The send-time functions themselves come from the engine (@thenetwork/engine
 // attention.ts): learnSendProfile, inSendWindow, inMemberQuietHours, canInterrupt, canSendLogistics.
 import {
-  availabilityCheckInBudget, DAY, HOUR, initialInviteBudget, MINUTE, planInviteBudget, unsolicitedStateBudget,
+  availabilityCheckInBudget, CITY_TZ, DAY, HOUR, initialInviteBudget, isCity, MINUTE, planInviteBudget, unsolicitedStateBudget,
   withinQuietHours, type OutreachBudget, type ParticipationState,
 } from "@thenetwork/core";
 import { DEFAULT_ATTENTION } from "@thenetwork/engine";
 import { reengagementSilenceMs, unansweredInviteLimit, unansweredInviteWaitMs } from "../../core/src/generated/outreachPolicy.ts";
 
 export const NY = "America/New_York";
+
+export function tzForCity(city: string | undefined): string {
+  return city && isCity(city) ? CITY_TZ[city] : NY;
+}
 
 function toSendBudget({ limit, periodDays }: OutreachBudget): { n: number; days: number } {
   return { n: limit, days: periodDays };
@@ -68,18 +72,51 @@ export const SLOT_KINDS: ReadonlySet<SendKind> = new Set<SendKind>(["interview",
 /** Never a direct reply, even when sent while handling the member's message. */
 export const NEVER_REPLY: ReadonlySet<SendKind> = new Set<SendKind>(["growth", "reengage", "checkin", "home_help_consent", "worthwhile"]);
 
-const fmt = new Intl.DateTimeFormat("en-US", { timeZone: NY, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" });
+const fmtCache = new Map<string, Intl.DateTimeFormat>();
+function fmtFor(tz: string): Intl.DateTimeFormat {
+  let f = fmtCache.get(tz);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", weekday: "short" });
+    fmtCache.set(tz, f);
+  }
+  return f;
+}
+export function localDateParts(t: number, tz: string = NY) {
+  let year = "", month = "", day = "", hour = 0, minute = 0, weekday = "";
+  for (const part of fmtFor(tz).formatToParts(t)) {
+    switch (part.type) {
+      case "year": year = part.value; break;
+      case "month": month = part.value; break;
+      case "day": day = part.value; break;
+      case "hour": hour = Number(part.value); break;
+      case "minute": minute = Number(part.value); break;
+      case "weekday": weekday = part.value; break;
+    }
+  }
+  return { day: `${year}-${month}-${day}`, hour: (hour % 24) + minute / 60, weekday };
+}
 export function nyParts(t: number) {
-  const p = Object.fromEntries(fmt.formatToParts(t).map(x => [x.type, x.value]));
-  return { day: `${p.year}-${p.month}-${p.day}`, hour: Number(p.hour) % 24 + Number(p.minute) / 60, weekday: p.weekday as string };
+  return localDateParts(t, NY);
 }
 
-/** Next time (>= t) at local NY hour h on a day accepted by `dayOk`. */
-export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = () => true): number {
-  let x = Math.ceil(t / (15 * MINUTE)) * 15 * MINUTE;
-  for (let i = 0; i < 24 * 4 * 9; i++, x += 15 * MINUTE) {
-    const p = nyParts(x);
+const STEP_15M = 15 * MINUTE;
+
+/** Next time (>= t) at local hour h in timezone `tz` (default NY) on a day accepted by `dayOk`. */
+export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = () => true, tz: string = NY): number {
+  const start = Math.ceil(t / STEP_15M) * STEP_15M;
+  const end = start + 24 * 4 * 9 * STEP_15M;
+  let x = start;
+  while (x < end) {
+    const p = localDateParts(x, tz);
     if (Math.abs(p.hour - h) < 0.01 && dayOk(p.weekday)) return x;
+    const deltaHours = ((h - p.hour) % 24 + 24) % 24;
+    if (deltaHours < 0.01) {
+      x += 23 * HOUR;
+    } else if (deltaHours > 2) {
+      x += Math.floor((deltaHours - 1) * 4) * STEP_15M;
+    } else {
+      x += STEP_15M;
+    }
   }
   return t + DAY;
 }
@@ -88,8 +125,8 @@ export function nextAt(t: number, h: number, dayOk: (wd: string) => boolean = ()
  * May a logistics text reach a member with these quiet hours at time t? Quiet hours always win.
  * (Interruptions also need the member's send window: ConsentNetwork.timingOk.)
  */
-export function allowedAt(t: number, quietHours: [number, number]): boolean {
-  return !withinQuietHours(nyParts(t).hour, ...quietHours);
+export function allowedAt(t: number, quietHours: [number, number], tz: string = NY): boolean {
+  return !withinQuietHours(localDateParts(t, tz).hour, ...quietHours);
 }
 
 /**

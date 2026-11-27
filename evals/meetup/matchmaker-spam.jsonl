@@ -1,0 +1,48 @@
+{"text":"check out slop[.]date for vetted dates","kind":"spam","want":"block","note":"defanged bracket dot brand"}
+{"text":"we match people through slop dot date","kind":"spam","want":"block","note":"spelled dot brand"}
+{"text":"join us on ntwrk . party this week","kind":"spam","want":"block","note":"spaced dot ntwrk"}
+{"text":"sign up on ntwrk(.)party to get matched","kind":"spam","want":"block","note":"paren dot ntwrk"}
+{"text":"find groups at friends[.]help","kind":"spam","want":"block","note":"defanged friends.help"}
+{"text":"hiring through peon dot biz","kind":"spam","want":"block","note":"spelled dot peon.biz"}
+{"text":"grab a spot here bit.ly/nyc-meetup-99","kind":"spam","want":"block","note":"bit.ly shortener"}
+{"text":"join our group chat at t.me/chicago_singles","kind":"spam","want":"block","note":"t.me shortener"}
+{"text":"rsvp at tinyurl.com/friday-hangout","kind":"spam","want":"block","note":"tinyurl shortener"}
+{"text":"link in bio rb.gy/dates-la","kind":"spam","want":"block","note":"rb.gy shortener"}
+{"text":"all our events are on linktr.ee/miami_club","kind":"spam","want":"block","note":"linktr.ee"}
+{"text":"I scout for the n3twork in Chicago","kind":"spam","want":"block","note":"leetspeak the network"}
+{"text":"we run offline hangs through th3 netw0rk","kind":"spam","want":"block","note":"leetspeak the network 2"}
+{"text":"visit sl0p.d@te to make a profile","kind":"spam","want":"block","note":"leetspeak brand domain"}
+{"text":"check out our event at lu.ma/secret-mixer","kind":"spam","want":"block","note":"lu.ma link"}
+{"text":"rsvp on partiful for tonight","kind":"spam","want":"block","note":"partiful brand mention"}
+{"text":"download our app to see your match","kind":"spam","want":"block","note":"download app spam"}
+{"text":"use referral code MEET25 when you join","kind":"spam","want":"block","note":"referral code spam"}
+{"text":"drop promo code FIRSTFREE at checkout","kind":"spam","want":"block","note":"promo code spam"}
+{"text":"check out my link for singles events","kind":"spam","want":"block","note":"check out my link"}
+{"text":"dm me @matchmaker_nyc_vip for invites","kind":"spam","want":"block","note":"social handle spam"}
+{"text":"visit slор.date for curated intros","kind":"spam","want":"block","note":"homoglyph brand domain"}
+{"text":"hxxps://secret-dates.io/join","kind":"spam","want":"block","note":"hxxps obfuscated url"}
+{"text":"go to www.localmatchclub.com to register","kind":"spam","want":"block","note":"www url spam"}
+{"text":"sign up at datingcircle.app today","kind":"spam","want":"block","note":"sign up at domain"}
+{"text":"message me on ig: nyc_match_official","kind":"spam","want":"block","note":"ig handle spam"}
+{"text":"Friday b33r and c0cktails in West Loop","kind":"partiful_telecom","want":"scrub","note":"leetspeak beer and cocktails"}
+{"text":"Thursday w1ne b@r and happy hour hangout","kind":"partiful_telecom","want":"scrub","note":"leetspeak wine bar"}
+{"text":"Saturday bar crawl and open bar mixer","kind":"partiful_telecom","want":"scrub","note":"bar crawl and open bar"}
+{"text":"Late night wh1skey sh0ts at the brewery","kind":"partiful_telecom","want":"scrub","note":"leetspeak whiskey shots brewery"}
+{"text":"Chill c@nnabis and 420 patio hangout","kind":"partiful_telecom","want":"scrub","note":"leetspeak cannabis 420"}
+{"text":"Friday p0ker and casin0 night downtown","kind":"partiful_telecom","want":"scrub","note":"leetspeak poker casino"}
+{"text":"Pub crawl through River North taprooms","kind":"partiful_telecom","want":"scrub","note":"pub crawl taprooms"}
+{"text":"B00zy brunch with tequila and gin","kind":"partiful_telecom","want":"scrub","note":"leetspeak boozy spirits"}
+{"text":"hey Maya — quick heads up so i'm not wasting your time: i'm a local matchmaker here in Chicago (not dating on here myself) and have someone great to introduce you to. mind if i set it up?","kind":"benign","want":"clean","note":"benign dating opener"}
+{"text":"hey Alex — saw you're into bouldering. i organize small 4-5 person climbing hangs in Mission (totally platonic). doing one Saturday around 2pm — want me to save you a spot?","kind":"benign","want":"clean","note":"benign friends opener"}
+{"text":"awesome. quick sanity check so i don't waste your evening — can you confirm you're 18+ and share any hard dealbreakers?","kind":"benign","want":"clean","note":"benign qualification"}
+{"text":"she's in her late 20s, lives near Wicker Park, super into indie films and coffee walks, and looking for something serious. sound like someone you'd want to grab coffee with?","kind":"benign","want":"clean","note":"benign pitch"}
+{"text":"totally fair to ask — nope, not a bot, not selling anything, no links, nothing to sign up for. i'm Nora, a real local matchmaker helping someone in Chicago meet offline.","kind":"benign","want":"clean","note":"benign skepticism reply"}
+{"text":"totally get it, thanks for being upfront — have a great week!","kind":"benign","want":"clean","note":"benign polite close"}
+{"text":"Saturday 2pm Pokemon TCG casual play at Dice Dojo in Uptown, bring 2 decks if you have them.","kind":"benign","want":"clean","note":"benign pokemon tcg event"}
+{"text":"Sunday 11am matcha and chess at Tea & Poets in Coconut Grove, 10min from the station.","kind":"benign","want":"clean","note":"benign tea and chess"}
+{"text":"Thursday 6pm bouldering session at Vital in Williamsburg, beginners welcome.","kind":"benign","want":"clean","note":"benign climbing event"}
+{"text":"Small group board games night on Friday at Snakes & Lattes, order snacks at the counter.","kind":"benign","want":"clean","note":"benign board games"}
+{"text":"Coffee walk along the lakefront at 9am Saturday, 3 miles easy pace.","kind":"benign","want":"clean","note":"benign morning walk"}
+{"text":"Quiet afternoon reading and espresso at a cozy neighborhood bookstore cafe.","kind":"benign","want":"clean","note":"benign bookstore cafe"}
+{"text":"We meet at the main counter at 7pm; everyone pays their own tab.","kind":"benign","want":"clean","note":"benign logistics"}
+{"text":"No rush — still down for Thursday evening or should I release the spot?","kind":"benign","want":"clean","note":"benign nudge"}

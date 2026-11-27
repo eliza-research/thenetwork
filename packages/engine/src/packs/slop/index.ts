@@ -19,8 +19,8 @@ import { distanceBand } from "./zips.ts";
 const SLOP_PACK_VERSION = "slop-pack-2.0.0";
 
 export const SLOP_ENGINE_CONFIG: EngineConfigInput = {
-  cities: ["sf", "nyc", "la"],
-  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles" },
+  cities: ["sf", "nyc", "la", "chicago", "miami"],
+  timezones: { sf: "America/Los_Angeles", nyc: "America/New_York", la: "America/Los_Angeles", chicago: "America/Chicago", miami: "America/New_York" },
   windowDays: 7, minOverlapHours: 3, ageMin: 18,
   budgets: { normal: { limit: 2, periodDays: 7 }, open: { limit: 2, periodDays: 7 }, receiving: { limit: 2, periodDays: 7 } },
   thresholds: { byState: { open: 0, normal: 0, quiet: 0, receiving: 0 }, byCategory: { romance: 0, help: 0, growth: 0 }, useByGenerator: false, exploration: 0 },
@@ -150,7 +150,7 @@ export { planFirstDate, planFromInput, probePhotoRefs, PROBE_PHOTO_MAX, PUBLIC_V
 export { distanceBand, cellOfZip, ZIPS as SLOP_ZIPS, type DistanceBand } from "./zips.ts";
 export { ageBand, distancePhrase, SLOP_ASK_QUESTIONS, SLOP_PROBE_PHOTO_LINE, slopBookedText, slopCheckInText, slopProbeMessage, slopProbeText } from "./copy.ts";
 export { mutualMarkets } from "./geo.ts";
-export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
+export { adultsOnly, appearanceFacet, appearanceLeak, APPEARANCE_LEAK_PATTERNS, BODY_TYPES, canRatePhotos, ClipAppearanceRater, parseAppearance, photoReadinessDiagnostic, rateMember, VisionLlmAppearanceRater, VISION_RATER_SYSTEM, type AppearanceRater, type AppearanceScore, type BodyType, type ClefAuxFeatureRow, type PhotoReadinessCode, type PhotoReadinessDiagnostic, type PhotoRef, type RatingSubject, type VisionChat } from "./appearance.ts";
 export { CLEF_FEATURES, CLEF_MODEL_IDS, CLEF_PRICE_PER_M_INPUT, CLEF_QUESTIONS, ClefError, clefFeatures, clefFeatureRow, clefFeatureNames, clefRun, applyHead, makeClefRater, makeClefRaterFromEnv, WorkersAIClefRater, type ClefModel, type ClefRaterOptions, type ClefCallOptions, type ClefRequest, type ClefFetch } from "./clef.ts";
 export { DEFAULT_CLEF_WEIGHTS, loadClefWeights, validateClefWeights, type ClefWeights } from "./clefWeights.ts";
 export { biasMonitor, ratingQuintiles, type BiasReport, type MemberOutcome } from "./biasMonitor.ts";

@@ -3,10 +3,10 @@
 // enrich these with realistic bios and voices afterwards.
 import { requireSimulationCount, requireSimulationShare } from "./input.ts";
 import type { City } from "@thenetwork/core";
-import { Rng, clamp01, earliestDayKeyOf, hash32 } from "@thenetwork/core";
+import { Rng, canBeMatched, clamp01, earliestDayKeyOf, getCity, hash32 } from "@thenetwork/core";
 import { teenFriendMaxAge, teenFriendMinAge } from "../../core/src/generated/friendIntroAge.ts";
 import {
-  BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
+  BOUNDARIES, DESIRES, FIRST_NAMES, INTERESTS, JOURNEY_STYLES, LAST_NAMES, NEIGHBORHOODS, PRIVATE_DISCLOSURES,
   SKILLS, STYLES, desireById, type WritingStyle,
 } from "./taxonomy.ts";
 import { DEFAULT_RICHNESS_MIX, assignRichness, simulateKnowledge, type RichnessTier } from "./sources.ts";
@@ -14,7 +14,7 @@ import type {
   AdversarialKind, Archetype, Desire, Gender, HiddenTruth, Persona, PublicProfile,
   RelationshipType, Responsiveness, Routine,
 } from "./persona.ts";
-import { drawLapse } from "./persona.ts";
+import { computeStrataSignals, drawLapse, projectNoisyPublicSignals } from "./persona.ts";
 import { plantLatent, type PlantedLatent, type PlantedSpec } from "./planted.ts";
 
 export const ARCHETYPE_MIX: Record<Archetype, number> = {
@@ -28,6 +28,8 @@ export const ADVERSARIAL_KINDS: AdversarialKind[] =
 export interface GeneratorOptions {
   n: number;
   seed: number | string;
+  /** Optional active city roster (e.g. all 5 launch cities). When omitted, preserves default 50/50 SF/NYC split. */
+  cities?: readonly City[];
   /** Share of personas in each city (default 50/50 SF/NYC). */
   cityWeights?: Partial<Record<City, number>>;
   archetypeMix?: Partial<Record<Archetype, number>>;
@@ -69,6 +71,11 @@ export interface GeneratorOptions {
    * hidden truth.
    */
   planted?: PlantedSpec;
+  /**
+   * Opt-in broad demographics & 14-style speaking diversity (ages 13-17, 18-22, 23-34, 35-54, 55-75+;
+   * all 14 JOURNEY_STYLES). Off by default so pinned baseline seeds stay bit-identical.
+   */
+  broadDemographics?: boolean;
 }
 
 /** Sim epoch (same as world.ts DEFAULT_START), duplicated to avoid an import cycle. */
@@ -96,7 +103,20 @@ const STYLE_BY_ARCH: Partial<Record<Archetype, WritingStyle[]>> = {
   connector: ["chatty", "warm", "emoji-heavy"],
 };
 
-const otherCity = (c: City): City => (c === "sf" ? "nyc" : "sf");
+const otherCity = (c: City, activeCities: readonly City[] = ["sf", "nyc"]): City => {
+  if (activeCities.length <= 2 && activeCities.includes("sf") && activeCities.includes("nyc")) {
+    return c === "sf" ? "nyc" : "sf";
+  }
+  const idx = activeCities.indexOf(c);
+  return activeCities[(idx >= 0 ? idx + 1 : 0) % activeCities.length] ?? (c === "sf" ? "nyc" : "sf");
+};
+
+function areasFor(city: City): string[] {
+  const fromVocab = (NEIGHBORHOODS as Partial<Record<City, string[]>>)[city];
+  if (fromVocab && fromVocab.length > 0) return fromVocab;
+  const fromCore = getCity(city)?.neighborhoods.map(n => n.name);
+  return fromCore && fromCore.length > 0 ? fromCore : ["Downtown"];
+}
 
 export function generatePersonas(opts: GeneratorOptions): Persona[] {
   return generateWorld(opts).personas;
@@ -114,7 +134,12 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
   for (const field of ["adversarialRate", "minorShare", "disclosureRate"] as const) requireSimulationShare(opts[field], field);
   const root = new Rng(typeof opts.seed === "number" ? opts.seed : String(opts.seed));
   const prefix = opts.idPrefix ?? "m";
-  const cityW = { sf: 0.5, nyc: 0.5, ...opts.cityWeights };
+  const activeCities: readonly City[] = opts.cities && opts.cities.length > 0 ? opts.cities : ["sf", "nyc"];
+  const baseCityW: Partial<Record<City, number>> =
+    opts.cities && opts.cities.length > 0
+      ? Object.fromEntries(opts.cities.map(c => [c, 1 / opts.cities!.length]))
+      : { sf: 0.5, nyc: 0.5 };
+  const cityW = { ...baseCityW, ...opts.cityWeights };
   const mix = { ...ARCHETYPE_MIX, ...opts.archetypeMix };
   const advRate = opts.adversarialRate ?? 0.06;
   const disclosureRate = opts.disclosureRate ?? 0.3;
@@ -147,7 +172,11 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
     : undefined;
   const usedNames = new Set<string>();
   const personas: Persona[] = drafts.map(({ r, ...d }) =>
-    buildPersona(r, { ...d, disclosureRate, spread, usedNames, interests: latent?.marks.get(d.id)?.topics }));
+    buildPersona(r, {
+      ...d, activeCities, disclosureRate, spread, usedNames,
+      interests: latent?.marks.get(d.id)?.topics,
+      broadDemographics: opts.broadDemographics,
+    }));
   wireRelationships(root.fork("relationships"), personas);
   if (opts.intentLapse) {
     const o = opts.intentLapse === true ? {} : opts.intentLapse;
@@ -156,6 +185,19 @@ function generateWorld(opts: GeneratorOptions): { personas: Persona[]; latent?: 
   }
   if (opts.richness) attachKnowledge(personas, root.fork("richness"), opts.richness === true ? DEFAULT_RICHNESS_MIX : opts.richness, opts.knowledgeNow ?? KNOWLEDGE_NOW_DEFAULT);
   statedTeenAges(personas, opts.seed, opts.minorLiarShare ?? 0, opts.adultPoserShare ?? 0);
+  const strataRoot = root.fork("strata-v2");
+  for (const p of personas) {
+    const sr = strataRoot.fork(p.id);
+    const strata = computeStrataSignals(p, sr.fork("truth"));
+    Object.assign(p.hidden, strata);
+    if (!canBeMatched(p.hidden.trueAge)) p.hidden.trueAttractiveness = undefined;
+    if (opts.planted) {
+      p.public.projectedFacets = [];
+      p.public.projectedIntents = [];
+    } else {
+      projectNoisyPublicSignals(p, strata, sr.fork("public"));
+    }
+  }
   return { personas, latent };
 }
 
@@ -229,10 +271,11 @@ function canaryToken(r: Rng): string {
 }
 
 function buildPersona(r: Rng, a: {
-  id: string; archetype: Archetype; homeCity: City; adversarial?: AdversarialKind;
+  id: string; archetype: Archetype; homeCity: City; activeCities: readonly City[]; adversarial?: AdversarialKind;
   disclosureRate: number; spread: number; usedNames: Set<string>; minor?: boolean;
   /** Planted interests (planted.ts); absent = drawn from the taxonomy. */
   interests?: readonly string[];
+  broadDemographics?: boolean;
 }): Persona {
   const { id, archetype, homeCity, adversarial } = a;
   const P = PARAMS[archetype];
@@ -291,10 +334,11 @@ function buildPersona(r: Rng, a: {
   const sleep = archetype === "busy_parent" ? r.int(21, 22) : r.int(22, 25) % 24;
   const busyBlocks: [number, number][] = archetype === "busy_parent"
     ? [[7, 9], [9.5, 15], [15, 19.5]] : [[9.5, 12], [13, 17.5]];
+  const cityAreas = areasFor(homeCity);
   const routine: Routine = {
     wake, sleep, busyBlocks,
     freeEvenings: r.sample([0, 1, 2, 3, 4, 5, 6], archetype === "busy_parent" ? 1 : r.int(2, 4)).sort(),
-    homeArea: r.pick(NEIGHBORHOODS[homeCity]), workArea: r.pick(NEIGHBORHOODS[homeCity]),
+    homeArea: r.pick(cityAreas), workArea: r.pick(cityAreas),
   };
 
   // --- responsiveness & behaviour ---
@@ -309,9 +353,9 @@ function buildPersona(r: Rng, a: {
   const disclosure = r.bool(a.disclosureRate) && !adversarial
     ? { fact: r.pick(PRIVATE_DISCLOSURES), canary: canaryToken(r) } : undefined;
 
-  const secondaryCity = archetype === "traveler" && r.bool(0.5) ? otherCity(homeCity) : undefined;
+  const secondaryCity = archetype === "traveler" && r.bool(0.5) ? otherCity(homeCity, a.activeCities) : undefined;
   const trips = archetype === "traveler"
-    ? (() => { const from = r.int(2, 8); return [{ city: otherCity(homeCity), fromDay: from, toDay: from + r.int(3, 6) }]; })()
+    ? (() => { const from = r.int(2, 8); return [{ city: otherCity(homeCity, a.activeCities), fromDay: from, toDay: from + r.int(3, 6) }]; })()
     : [];
 
   const hidden: HiddenTruth = {
@@ -340,7 +384,29 @@ function buildPersona(r: Rng, a: {
   }
   applyAdversarialTraits(r, hidden);
 
-  const pub = buildPublic(r, name, claimedAge, routine.homeArea, hidden);
+  if (a.broadDemographics) {
+    const bd = r.fork("broad-demo");
+    if (!a.minor && adversarial !== "minor") {
+      const bracket = bd.weighted<readonly [number, number]>([
+        [[18, 22], 0.16],
+        [[23, 34], 0.28],
+        [[35, 54], 0.30],
+        [[55, 75], 0.26],
+      ]);
+      const broadAge = bd.int(bracket[0], bracket[1]);
+      hidden.trueAge = broadAge;
+      hidden.romance.ageRange = [Math.max(18, broadAge - 7), Math.min(85, broadAge + 9)];
+    }
+    const age = hidden.trueAge;
+    const stylePool: readonly WritingStyle[] = age <= 22
+      ? ["genz-slang", "lowercase-casual", "emoji-heavy", "typo-heavy-casual", "terse", "warm", "neurodivergent-literal"]
+      : age >= 55
+        ? ["boomer-email-sms", "formal", "warm", "voice-to-text-runon", "defensive-skeptical", "chatty", "non-native English"]
+        : JOURNEY_STYLES;
+    hidden.style = bd.pick(stylePool);
+  }
+  const effectiveClaimedAge = a.broadDemographics && !a.minor && adversarial !== "minor" ? hidden.trueAge : claimedAge;
+  const pub = buildPublic(r, name, effectiveClaimedAge, routine.homeArea, hidden);
   const joinDay = archetype === "newcomer" ? r.int(Math.floor(a.spread / 2), a.spread - 1)
     : r.bool(0.6) ? r.int(0, 1) : r.int(0, a.spread - 1);
 
@@ -408,6 +474,12 @@ function voiceSample(style: WritingStyle, interests: string[]): string {
     case "emoji-heavy": return `${i} 🙌🔥 always down!!`;
     case "lowercase-casual": return `honestly mostly ${i} these days lol`;
     case "non-native English": return `I like very much ${i}, I do it since some years.`;
+    case "genz-slang": return `lowkey obsessed w ${i} rn fr no cap`;
+    case "voice-to-text-runon": return `yeah so basically ive been really into ${i} lately and um trying to meet more people who do that too sorry using voice to text`;
+    case "boomer-email-sms": return `Hello, I enjoy ${i} very much and would love to meet nice people in the area. Thank you!`;
+    case "neurodivergent-literal": return `My primary interest is ${i}. Please specify exact locations and start times when suggesting plans.`;
+    case "defensive-skeptical": return `Wait how does this work? I'm into ${i}, as long as my info stays private.`;
+    case "typo-heavy-casual": return `im defintely into ${i} mostyl on weeknds sry for typos`;
   }
 }
 
