@@ -721,7 +721,7 @@ function bookingCancellationDay(timeWord: string, receivedAt: number): string {
 }
 
 const ATTENDANCE_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i\s+)?(?:can'?t|cannot|won'?t|will not)\s+(?:make it|come|attend)|(?:i'?m\s+|i am\s+)?not\s+(?:coming|attending|comfortable meeting)|i\s+(?:need|have)\s+to\s+(?:cancel|call it off))(?:\s+anymore)?[.,!]*$/i;
-const ATTENDANCE_JOIN = /[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
+const ATTENDANCE_JOIN = /[.!?;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
 const NO_SWAP_OR_MEETING = /^(?:please[,]?\s+)?(?:i\s+(?:do not|don'?t)\s+want to|i'?m\s+not)\b[^.!?;]+\b(?:or|nor)\s+meet(?:ing)?\s+(?:you|them)\b[.!]*$/i;
 
 function declinesAttendanceAlongsideSwap(body: string): boolean {
@@ -751,8 +751,16 @@ function declinesProbeAlongsideSwap(body: string): boolean {
     start = end.index + end[0].length;
   }
   if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start).trim());
-  return clauses.some(clause => clause !== "" && !BARE_REFUSAL_CLAUSE.test(clause) && !withdrawsSwap(clause)
-    && (PROBE_PLAN_CLAUSE.test(clause) || consentOf(clause).answer === "no"));
+  if (clauses.some(clause => clause !== "" && !BARE_REFUSAL_CLAUSE.test(clause) && !withdrawsSwap(clause)
+    && (PROBE_PLAN_CLAUSE.test(clause) || consentOf(clause).answer === "no"))) return true;
+  for (let i = 0; i < clauses.length; i++) {
+    if (!/^(?:no+|nope|nah)[.,!]*$/.test(clauses[i]!)) continue;
+    const plan: string[] = [];
+    for (let j = i + 1; j < clauses.length && !withdrawsSwap(clauses[j]!); j++) plan.push(clauses[j]!);
+    if (plan.length > 0 && !plan.some(clause => /\b(?:still in|still coming|still come|still on|see you|count me in|i'?ll be there|i'?m in)\b/.test(clause))
+      && consentOf([clauses[i]!, ...plan].join(", ")).answer === "no") return true;
+  }
+  return false;
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */

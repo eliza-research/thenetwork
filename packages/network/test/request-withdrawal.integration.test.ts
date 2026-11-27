@@ -107,6 +107,12 @@ test.each([
   ["Not interested anymore, revoke the swap", true],
   ["No, withhold my number but I'm still in", false],
   ["No, revoke the swap, see you there though", false],
+  ["No. Not going. Withhold my digits", true],
+  ["Nope, I'm bailing, withdraw the swap", true],
+  ["No, I've changed my mind about meeting. Revoke my number", true],
+  ["No, scratch that, I'm not going. Withholding my number", true],
+  ["No, decided against it. Revoke my number please", true],
+  ["Revoke? No, I'm still in, keep the swap", false],
 ] as const)("a swap refusal with a plan refusal withdraws probe consent only when the plan is refused: %s", async (text, closes) => {
   const x = new Mini([
     { id: "a", name: "Alice Able", age: 30, interests: ["climbing"] },
