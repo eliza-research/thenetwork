@@ -8,12 +8,15 @@
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import {
   buildLumaCreateEventRequest, classifyYesNo, containsUrlOrBrandSpam, detectExternalPromptInjection,
-  fenceExternalEventText, findLeaks, maskPii, normalizeLumaWebhookEvent, normalizeMeetupRsvpPoll,
+  fenceExternalEventText, findLeaks, localParts, maskPii, normalizeLumaWebhookEvent, normalizeMeetupRsvpPoll,
   parseAdult18PlusAnswer, parseOptOut, parseReply, sanitizeProspectFacets, scrubPartifulTelecomCopy,
-  type ExternalEventDraft, type ReplyAnswer,
+  type ExternalEventDraft, type ReplyAnswer, type VenueRejectionReason,
 } from "../../packages/core/src/index.ts";
-import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
+import { ageAnswer, birthDateAnswer, birthDateStated, classify, extractProfile, feedbackOf, isPitchSlapMessage, isProbeCounterTime, otherAgeStated, parseProbeReply } from "../../packages/network/src/classify.ts";
 import { mergeConsent } from "../../packages/network/src/extract.ts";
+import { classifyVenueRejection } from "../../packages/network/src/network.ts";
+import { parseNaturalReschedule } from "../../packages/network/src/rescheduling.ts";
+import { contactOrCode } from "../../packages/mcp/src/tools.ts";
 import { detectKeyword, leaveTarget, optOutPhrase } from "../../packages/platform/src/consent.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { APPS, keywordApp, lookingFor, lookingForReading, type AppId } from "../../packages/platform/src/apps.ts";
@@ -314,6 +317,128 @@ export async function evalsBlock(b: Block): Promise<void> {
   b.gate(`review judge parser: every row (n ${judgeReplies.length})`, judgeReplies.length >= 48 && judgeMiss.length === 0, judgeMiss.slice(0, 5).join("; "));
 
   await meetupCorporaBlock(b);
+  await pass4CorporaBlock(b);
+}
+
+async function pass4CorporaBlock(b: Block): Promise<void> {
+  const OPTIONS = [
+    { key: "a", start: 1, end: 2, label: "Thursday 7pm" },
+    { key: "b", start: 3, end: 4, label: "Saturday 11am" },
+    { key: "c", start: 5, end: 6, label: "Sunday 2pm" },
+  ];
+
+  // ---- speaking-styles.jsonl -----------------------------------------------------------------------
+  type StyleRow =
+    | { kind: "probe"; style: string; text: string; answer: "yes" | "no" | "unclear"; keys: string[]; counterTime?: boolean }
+    | { kind: "feedback"; style: string; text: string; sentiment: "positive" | "negative" | "neutral"; again?: boolean }
+    | { kind: "pitch"; style: string; text: string; pitch: boolean }
+    | { kind: "age_and_area"; style: string; text: string; age: number; minor: boolean; area: string };
+
+  const styleRows = await jsonl<StyleRow>("network/speaking-styles.jsonl");
+  const styleMisses: string[] = [];
+  for (const row of styleRows) {
+    if (row.kind === "probe") {
+      const r = parseProbeReply(row.text, OPTIONS);
+      if (r.answer !== row.answer || JSON.stringify(r.keys) !== JSON.stringify(row.keys)) {
+        styleMisses.push(`probe[${row.style}] ${JSON.stringify(row.text)} -> ${r.answer}/${JSON.stringify(r.keys)}`);
+      }
+      if (row.counterTime !== undefined && isProbeCounterTime(row.text, OPTIONS) !== row.counterTime) {
+        styleMisses.push(`counterTime[${row.style}] ${JSON.stringify(row.text)} -> ${!row.counterTime}`);
+      }
+    } else if (row.kind === "feedback") {
+      const f = feedbackOf(row.text);
+      if (f.sentiment !== row.sentiment || (row.again !== undefined && f.again !== row.again)) {
+        styleMisses.push(`feedback[${row.style}] ${JSON.stringify(row.text)} -> ${f.sentiment}/again=${f.again}`);
+      }
+    } else if (row.kind === "pitch") {
+      const got = isPitchSlapMessage(row.text);
+      if (got !== row.pitch) {
+        styleMisses.push(`pitch[${row.style}] ${JSON.stringify(row.text)} -> ${got} (want ${row.pitch})`);
+      }
+    } else {
+      const c = classify(row.text);
+      const prof = extractProfile(row.text);
+      const isMinorReading = c.minorSignal || (c.statedAge !== undefined && c.statedAge < 18);
+      if (c.statedAge !== row.age || isMinorReading !== row.minor || prof.area !== row.area) {
+        styleMisses.push(`age_area[${row.style}] ${JSON.stringify(row.text)} -> age=${c.statedAge},minor=${isMinorReading},area=${prof.area}`);
+      }
+    }
+  }
+  b.gate(
+    `speaking styles corpus (n ${styleRows.length}): probe, feedback, pitch-slap, and multi-city age/area readings`,
+    styleRows.length >= 40 && styleMisses.length === 0,
+    styleMisses.slice(0, 5).join(" | "),
+  );
+
+  // ---- mcp-proxy-journeys.jsonl --------------------------------------------------------------------
+  type McpRow =
+    | { kind: "submit_profile"; text: string; want: "accepted" | "rejected"; note: string }
+    | { kind: "output_gate"; text: string; want: "clean" | "leaked"; note: string };
+
+  const mcpRows = await jsonl<McpRow>("network/mcp-proxy-journeys.jsonl");
+  const mcpMisses: string[] = [];
+  for (const row of mcpRows) {
+    if (row.kind === "submit_profile") {
+      const rejected = contactOrCode(row.text);
+      const wantRejected = row.want === "rejected";
+      if (rejected !== wantRejected) {
+        mcpMisses.push(`submit_profile(${row.note}) ${JSON.stringify(row.text)} -> rejected=${rejected}`);
+      }
+    } else {
+      const leaked = outputLeaks(row.text).length > 0;
+      const wantLeaked = row.want === "leaked";
+      if (leaked !== wantLeaked) {
+        mcpMisses.push(`output_gate(${row.note}) ${JSON.stringify(row.text)} -> leaked=${leaked}`);
+      }
+    }
+  }
+  b.gate(
+    `MCP proxy journeys corpus (n ${mcpRows.length}): benign 4-digit years/units accepted, OTP/contact blocked, output gate clean`,
+    mcpRows.length >= 25 && mcpMisses.length === 0,
+    mcpMisses.slice(0, 5).join(" | "),
+  );
+
+  // ---- venue-swap-and-reschedule.jsonl -------------------------------------------------------------
+  type SwapReschedRow =
+    | { kind: "natural_reschedule"; text: string; tz: string; nowIso: string; origIso: string; openRef?: string; wantKind: "request" | "vote" | null; wantLocalHour?: number; wantAccepted?: boolean; note: string }
+    | { kind: "venue_rejection"; text: string; wantReason: VenueRejectionReason; note: string };
+
+  const srRows = await jsonl<SwapReschedRow>("network/venue-swap-and-reschedule.jsonl");
+  const srMisses: string[] = [];
+  for (const row of srRows) {
+    if (row.kind === "natural_reschedule") {
+      const cmd = parseNaturalReschedule(row.text, {
+        nowMs: Date.parse(row.nowIso),
+        tz: row.tz,
+        originalAt: Date.parse(row.origIso),
+        ...(row.openRef ? { openRef: row.openRef } : {}),
+      });
+      const gotKind = cmd?.kind ?? null;
+      if (gotKind !== row.wantKind) {
+        srMisses.push(`reschedule(${row.note}) -> ${gotKind} (want ${row.wantKind})`);
+        continue;
+      }
+      if (cmd?.kind === "request" && row.wantLocalHour !== undefined) {
+        const local = localParts(cmd.proposedAt, row.tz);
+        if (local.hour !== row.wantLocalHour) {
+          srMisses.push(`reschedule(${row.note}) hour=${local.hour} (want ${row.wantLocalHour})`);
+        }
+      }
+      if (cmd?.kind === "vote" && row.wantAccepted !== undefined && cmd.accepted !== row.wantAccepted) {
+        srMisses.push(`reschedule_vote(${row.note}) accepted=${cmd.accepted} (want ${row.wantAccepted})`);
+      }
+    } else {
+      const got = classifyVenueRejection(row.text);
+      if (got !== row.wantReason) {
+        srMisses.push(`venue_rejection(${row.note}) -> ${got} (want ${row.wantReason})`);
+      }
+    }
+  }
+  b.gate(
+    `venue swap & natural reschedule corpus (n ${srRows.length}): multi-city reschedule parsing and 7-way venue rejection classification`,
+    srRows.length >= 30 && srMisses.length === 0,
+    srMisses.slice(0, 5).join(" | "),
+  );
 }
 
 async function meetupCorporaBlock(b: Block): Promise<void> {

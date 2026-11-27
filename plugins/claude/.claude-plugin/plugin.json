@@ -1,9 +1,9 @@
 {
   "name": "the-network",
-  "version": "1.1.0",
-  "description": "Skills and MCP servers for the apps powered by The Network: ntwrk.party, slop.date (dating, adults only), peon.biz (work) and friends.help (friends in New York City). Explains each app and helps the person sign themselves up: the person approves the profile in the conversation, and confirms their own phone and allows access in their own browser. Never handles phone numbers or verification codes.",
+  "version": "1.1.1",
+  "description": "Skills and MCP servers for the apps powered by The Network: ntwrk.party, slop.date (dating, adults only), peon.biz (work) and friends.help (friends in NYC, SF, LA, Chicago and Miami). Explains each app and helps the person sign themselves up: the person approves the profile in the conversation, and confirms their own phone and allows access in their own browser. Never handles phone numbers or verification codes.",
   "author": { "name": "Eliza Research Corporation", "url": "https://ntwrk.party" },
   "homepage": "https://ntwrk.party",
   "license": "Proprietary",
-  "keywords": ["friends", "dating", "jobs", "introductions", "new york"]
+  "keywords": ["friends", "dating", "jobs", "introductions", "nyc", "sf", "la", "chicago", "miami"]
 }

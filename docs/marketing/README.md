@@ -11,11 +11,11 @@ The system launches NYC-first across all four apps (`slop.date`, `ntwrk.party`, 
 Every workflow, agent, adapter, and human hiring pipeline in `apps/marketing` obeys these hard rules from [AGENTS.md](../../AGENTS.md):
 
 1. **No public portals on the four landing sites (2026-10-19 rule):** Do not add login links, contractor forms, or campaign pages to `ntwrk.party`, `slop.date`, `peon.biz`, or `friends.help`. All operator release/contract/proof links resolve under `MARKETING_OPS_BASE_URL` (default `https://ops.ntwrk.party`), and the Observatory-sibling Global Growth Command Center runs locally on `127.0.0.1:4949` (or behind staff Zero-Trust access).
-2. **Zero-cash `packages/capital` wall (2026-11-23 rule):** Internal Network Capital stays non-transferable and zero-cash. All marketing budgets, contractor payments, bandit allocations, BD deals, LLM trajectories, and attribution ledgers live inside the isolated `marketing.*` Postgres schema (**21 tables**).
-3. **18+ hard floor for hiring, events, filming, and payouts (`inv_adult_only_paid`):** People aged 13–17 follow the strict platform minor age policy; no person under 18 (or with unknown age) is ever hired for street teams, event activation, or creator shoots, filmed for commercial ads, or paid in any marketing task. Youngest recorded age reading always wins (`minAgeReading`), reinforced cross-schema by `marketing.contact_fence`.
+2. **Zero-cash `packages/capital` wall (2026-11-23 rule):** Internal Network Capital stays non-transferable and zero-cash. All marketing budgets, contractor payments, bandit allocations, BD deals, LLM trajectories, enrichment caches, platform interactions, intake candidates, and attribution ledgers live inside the isolated `marketing.*` Postgres schema (**25 tables**).
+3. **18+ hard floor for hiring, events, filming, and payouts (`inv_adult_only_paid`):** People aged 13–17 follow the strict platform minor age policy; no person under 18 (or with unknown age) is ever hired for street teams, event activation, or creator shoots, filmed for commercial ads, or paid in any marketing task. Youngest recorded age reading always wins (`minAgeReading`), reinforced cross-schema by `marketing.contact_fence` (including `platform.external_prospect_suppressions`).
 4. **Zero gimmicky hardware:** Street execution relies on real humans, clean serialized printed fliers with unique batch QR codes, in-person event activators, and street-interview YouTubers/creators generating verifiable social video proof.
-5. **Unified Contact Hygiene & Core Backpressure (`inv_stop_fence_respected`):** Any contact marked `STOP`, suppressed in `marketing.contact_suppression`, or flagged by `NetworkCoreBridge.checkContactFence()` is blocked across all channels and agents immediately. Cold outreach enforces proved cooldowns (`14d`, max `2/30d`, max `2` unanswered), and core review/outbound backpressure (`queuePressurePaused`) pauses cold intake automatically.
-6. **Two-level formal verification (Vibestack/Dafny + Quint):** Pure policy and device safety decisions are specified in Vibestack ([spec/marketingPolicy.md](../../spec/marketingPolicy.md) — **23 Dafny-proved obligations**; [spec/marketingDevice.md](../../spec/marketingDevice.md) — **4 Dafny-proved obligations**; **27 total**) and published as generated TypeScript (`packages/core/src/generated/marketingPolicy.ts` and `packages/core/src/generated/marketingDevice.ts`) via `pnpm run spec:sync`. End-to-end state transitions and all safety invariants are checked in the whole-flow Quint model ([spec/models/marketing_campaign.md](../../spec/models/marketing_campaign.md)).
+5. **Unified Contact Hygiene & Core Backpressure (`inv_stop_fence_respected`):** Any contact marked `STOP`, suppressed in `marketing.contact_suppression`, or flagged by `NetworkCoreBridge.checkContactFence()` is blocked across all channels and agents immediately (and immediately purges cached enrichment rows). Cold outreach enforces proved cooldowns (`14d`, max `2/30d`, max `2` unanswered) and city-local quiet hours (`isLocalQuietHours`), and core review/outbound backpressure (`queuePressurePaused`) pauses cold intake automatically.
+6. **Two-level formal verification (Vibestack/Dafny + Quint):** Pure policy and device safety decisions are specified in Vibestack ([spec/marketingPolicy.md](../../spec/marketingPolicy.md) — **26 Dafny-proved obligations**; [spec/marketingDevice.md](../../spec/marketingDevice.md) — **4 Dafny-proved obligations**; **30 total**) and published as generated TypeScript (`packages/core/src/generated/marketingPolicy.ts` and `packages/core/src/generated/marketingDevice.ts`) via `pnpm run spec:sync`. End-to-end state transitions and all safety invariants are checked in the whole-flow Quint model ([spec/models/marketing_campaign.md](../../spec/models/marketing_campaign.md)).
 7. **`slop.cash` stays OFF by default (`inv_slop_cash_disabled`):** The `slop.cash` integration is researched and specified for future `oss_dev_bounty` tasks only. It stays compiled as a fail-closed stub (`MARKETING_SLOP_CASH_ENABLED=0`) until explicit written founder approval.
 
 ---
@@ -24,6 +24,7 @@ Every workflow, agent, adapter, and human hiring pipeline in `apps/marketing` ob
 
 | Document | Purpose |
 | :--- | :--- |
+| [APOLLO-AND-OUTREACH-PLAYBOOK.md](APOLLO-AND-OUTREACH-PLAYBOOK.md) | Pass-4 Apollo.io dual-mode enrichment adapter (`0`-credit search -> `1`-credit match, 30d cache, Dafny credit caps), 28 high-status/high-agency VIP archetypes & bilateral offers, 10-platform zero-annoyance playbooks (`reddit`, `x`, `linkedin`, `tinder`, `bumble`, `hinge`, `meetup`, `eventbrite`, `luma`, `partiful`) with report-risk gate (`<= 24`) & circuit breakers, and Out-of-Network -> In-Network Quality Intake Bridge. |
 | [CITY-LAUNCH-PLAYBOOK.md](CITY-LAUNCH-PLAYBOOK.md) | Step-by-step global city-by-city expansion guide: `CityPack` registry, 5-stage launch readiness, statutory labor/fliering matrix (NYC/CA AB5/UK Schedule 3A), Universal `DesireLane` taxonomy & air-gaps, `NetworkCoreBridge` (`contact_fence` + `supply_demand_k5`), LLM `PromptCache`/caps, and offline `pnpm run sim --only marketing`. |
 | [STRATEGY.md](STRATEGY.md) | City-by-city global growth strategy (NYC first), Universal Desire & Experience Graph, `$10,000` Month-1 street-team and creator budget, 5-agent brand roster, 3-zone risk dial, Contextual Bandit, Anti-Fraud vesting, Zero-Human BD, 18-Archetype VIP salon outreach, and 5-Agent Short-Form Video Factory. |
 | [PRD.md](PRD.md) | Complete technical specification for `apps/marketing`: 4-tier architecture, canonical foundation (`types`, `constants`, `policy`, `validation`, `sse`, `desire-lanes`, `city-registry`, `city-launch-engine`, `network-bridge`, `llm-cache`, `sim`), 21-table `marketing.*` Postgres schema + 2 guarded RPCs, 5-agent subscription lifecycle coordinator, single-MacBook + Android + iPhone physical bridge, Command Center UI, REST API, CLI, and 27-obligation Vibestack/Dafny + Quint formal verification contract. |
@@ -54,11 +55,15 @@ pnpm run marketing:cli -- bandit
 pnpm run marketing:cli -- hire-batch --role street_fliering --city nyc --budget 25000
 pnpm run marketing:cli -- bd-list
 pnpm run marketing:cli -- vip-invite
+pnpm run marketing:cli -- apollo-search --city nyc --archetype startup_founder
+pnpm run marketing:cli -- apollo-enrich --name "Elena Vance" --domain heliossystems.io
+pnpm run marketing:cli -- playbook-lint --platform reddit --text "Happy to intro you to two local regulars."
+pnpm run marketing:cli -- intake-audit --city nyc
 pnpm run marketing:cli -- video-lint
 pnpm run marketing:cli -- slop-cash-preview
 pnpm run marketing:cli -- serve --port 4949
 
-# 4. Run offline 30-day multi-city deterministic marketing simulation (12 blocking gates, <1.5s)
+# 4. Run offline 30-day multi-city deterministic marketing simulation (15 blocking gates, <1s)
 pnpm run sim --only marketing
 pnpm run sim --only marketing --quick
 
@@ -96,4 +101,4 @@ By default, all Tier 3 and Tier 4 paid adapters run in **safe dry-run mode** (`b
 | **Sloane** | `slop.date` | `soulmate_dating` | `claude` -> `chatgpt` | Razor-sharp red-flag auditor | Street-interview YouTuber/TikTok collabs, Nominate-a-Friend loops, unsent-draft & case-file shorts |
 | **Peon** | `peon.biz` | `money_work` | `gemini` -> `claude` | Deadpan anti-LinkedIn fixer | Open-web GitHub/arXiv/Form-D/HN scouting, VC & employer BD, MCP/skill directory SEO, corporate jargon parodies |
 | **Venn** | `friends.help` | `ideal_friends` | `claude` -> `gemini` | Warm local social director | Ticket-funded neighborhood dinners, Luma host partnerships, relocation & run-club activation (strict platonic framing) |
-| **The Operator / Eliza** | `ntwrk.party` + `eliza.app` (Cross-App Ops) | `elite_serendipity` | `chatgpt` -> `claude` | Quiet high-trust concierge & ops coordinator | 18-archetype VIP salon outreach (`< 75` words), applicant screening, clickwrap contracting, proof verification & agency RFPs |
+| **The Operator / Eliza** | `ntwrk.party` + `eliza.app` (Cross-App Ops) | `elite_serendipity` | `chatgpt` -> `claude` | Quiet high-trust concierge & ops coordinator | 28-archetype VIP bilateral & salon outreach (`< 75` words), Apollo enrichment, 10-platform playbooks, quality intake bridge, clickwrap contracting & proof verification |

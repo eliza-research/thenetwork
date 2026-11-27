@@ -1,4 +1,4 @@
-import { parseReply } from "@thenetwork/core";
+import { clampSms, parseReply } from "@thenetwork/core";
 import {
   confirmationAfterAnswer, countAfterPrompt, initial, nextQuestionReason, readbackAffirmed, readbackReason, step,
 } from "../../../../core/src/generated/slopOnboarding.ts";
@@ -65,7 +65,9 @@ export function readBack(p: SlopOnboarding): string | undefined {
   const head = [who, where].filter(Boolean).join(" ");
   const mid = [into, goal ? (head || into ? `looking for ${goal}` : `you want ${goal}`) : undefined].filter(Boolean).join(", ");
   const parts = [[head, mid].filter(Boolean).join(", "), get("dealbreakers")].filter(Boolean);
-  return `so: ${parts.join("; ")}. right?`;
+  const full = `so: ${parts.join("; ")}. right?`;
+  const compact = `so: ${[who, where].filter(Boolean).join(" ") || parts[0]}. right?`;
+  return clampSms(full, compact);
 }
 
 export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptions = {}): SlopOnboarding {
@@ -73,16 +75,21 @@ export function applyCorrection(p: SlopOnboarding, text: string, o: ExtractOptio
   const changed = JSON.stringify(view(next)) !== JSON.stringify(view(p));
   const reply = parseReply(text);
   const affirmed = readbackAffirmed(reply.answer === "yes", reply.answer === "no",
-    reply.constraints.length > 0 || readbackQualified(text), BARE_AFFIRMATION.test(text));
+    reply.constraints.length > 0 || readbackQualified(text, p.age?.value), BARE_AFFIRMATION.test(text));
   return finalize({ ...next, confirmed: confirmationAfterAnswer(changed, affirmed, next.minor || next.declined) });
 }
-const BARE_AFFIRMATION = /^\s*(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|yup|yep|ya|ye|100|👍)[.!\s]*$/i;
+const BARE_AFFIRMATION = /^\s*(?:(?:yes|yeah|yep|yup|ya|ye)[,!\s]+)?(?:right|correct|exactly|that['’]?s (?:it|right)|you got it|perfect|spot on|nailed it|looks? (?:good|right)|sounds? (?:good|right)|pretty much|mostly|basically|yup|yep|ya|ye|bet|indeed|certainly|absolutely|of course|s[ií]|claro|vale|dale|perfecto|100%?|👍)[.!\s]*$/i;
 const BENIGN_READBACK_NEGATION = /\b(?:why (?:the (?:hell|heck) )?not|not a problem|no (?:problem|probs?|worries|doubt|question))\b/g;
-const READBACK_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|almost|mostly|nearly|close|pretty much|more or less|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on|both|a mix|my age)\b/;
-function readbackQualified(raw: string): boolean {
+const READBACK_QUALIFIER = /\?|\b(?:but|except|though|tho|although|however|actually|instead|other than|apart from|besides|minus|change|make it|more like|meant|almost|nearly|close|more or less|maybe|mayb|perhaps|possibly|probably|prob|might|idk|dunno|unsure|uncertain|kinda|kind of|sort of|i guess|guess so|i think(?:\s+so)?|think so|i suppose|suppose so|let me (?:check|see|think)|if|unless|wait|hold on|both|a mix|my age)\b/;
+function readbackQualified(raw: string, priorAge?: number): boolean {
   const t = normText(raw);
   if (READBACK_QUALIFIER.test(t) || coarsePlace(t)) return true;
-  const stripped = t.replace(BENIGN_READBACK_NEGATION, " ").replace(/\b100%(?=\s|$|[.!?,])/g, " ").replace(/^\s*100(?=\s*[.!]*$)/, " ");
+  let stripped = t.replace(BENIGN_READBACK_NEGATION, " ").replace(/\b100%(?=\s|$|[.!?,])/g, " ").replace(/^\s*100(?=\s*[.!]*$)/, " ");
+  if (priorAge !== undefined && priorAge >= 18) {
+    stripped = stripped.replace(/\b(?:i'?m|im|i am)\s+(\d{2})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o))?(?=\s*(?:$|[,.!]))/g, (m, digits) =>
+      Number(digits) === priorAge ? " " : m
+    );
+  }
   return /\b(?:not|no|neither|nor|without)\b|\d/.test(stripped);
 }
 const view = (p: SlopOnboarding) => ({
@@ -95,14 +102,14 @@ const view = (p: SlopOnboarding) => ({
 export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text: string }> = {
   slop_age: { field: "age", text: "First, how old are you?" },
   slop_orientation: { field: "orientation", text: SLOP_ASK_QUESTIONS.slop_orientation! },
-  slop_seeks: { field: "seeks", text: "Who are you hoping to meet: women, men, nonbinary people, or a mix? Name them so I get it right." },
+  slop_seeks: { field: "seeks", text: "Which genders are you open to dating: women, men, or nonbinary people? Name all that fit (for example, women and men)." },
   slop_seeks_genders: { field: "seeks", text: "Which genders are you open to dating: women, men, nonbinary people? You can name more than one." },
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },
   slop_distance: { field: "distance", text: SLOP_ASK_QUESTIONS.slop_distance! },
   slop_location: { field: "location", text: SLOP_ASK_QUESTIONS.slop_location! },
   slop_zip: { field: "location", text: SLOP_ASK_QUESTIONS.slop_zip! },
-  slop_trans_openness: { field: "transOpenness", text: "Some members share that they are trans. Are you open to dating trans people? Yes, no, or skip: if you skip, I read it as no." },
+  slop_trans_openness: { field: "transOpenness", text: "Quick preference check so I only suggest good fits: some members share that they are trans. Are you open to dating trans people? You can reply yes, no, or skip (skipping counts as no)." },
   slop_shown_to: { field: "shownTo", text: "Do you also want to be shown to people who are looking for women, for men, both, or neither?" },
   slop_basics: { field: "dealbreakers", text: SLOP_ASK_QUESTIONS.slop_basics! },
   slop_goal: { field: "goal", text: "And what are you looking for right now: something casual, something long-term, or not sure yet?" },

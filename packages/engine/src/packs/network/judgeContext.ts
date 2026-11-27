@@ -29,11 +29,20 @@ export type Visibility = "public" | "compact" | "matchable" | "private";
 
 const bucketDays = (days: number): number => {
   const d = Math.round(days) || 0;
-  if (Math.abs(d) <= 7) return d;
-  if (Math.abs(d) <= 30) return Math.round(d / 7) * 7;
+  const abs = Math.abs(d);
+  if (abs <= 2) return d;
+  if (abs <= 7) return Math.sign(d) * 7;
+  if (abs <= 30) return Math.round(d / 7) * 7;
   return Math.round(d / 30) * 30;
 };
 const bucketAgeDays = (days: number): number => bucketDays(Math.max(0, days));
+const bucketOverlapHours = (hours: number): number => {
+  if (hours <= 0) return 0;
+  if (hours < 4) return 2;
+  if (hours < 12) return 8;
+  if (hours < 24) return 16;
+  return Math.round(hours / 24) * 24;
+};
 const CONNECTOR_ROLE = "connector (introduces the others, does not attend)";
 
 /** Pseudonymous refs: participants in order, then the connector. */
@@ -45,7 +54,7 @@ function refsFor(ids: MemberId[]): { refs: Record<string, MemberId>; refOf: Map<
 }
 
 const presenceOf = (p: Presence, now: number) => ({
-  city: p.city, type: p.type, areas: [...p.areas],
+  city: p.city, type: p.type, areas: [...p.areas].sort((a, b) => a.localeCompare(b)),
   ...(p.from !== undefined ? { from_day: bucketDays((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: bucketDays((p.to - now) / DAY) } : {}),
 });
 const joinedDaysAgo = (joinedAt: number, now: number) => bucketAgeDays((now - joinedAt) / DAY);
@@ -395,7 +404,9 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       .sort((a, b) => (a.visibility === b.visibility ? 0 : a.visibility === "shareable" ? -1 : 1) || (b.confidence - a.confidence) || ((a.age_days ?? 0) - (b.age_days ?? 0)))
       .slice(0, MAX_FACTS);
     const budget = w.cfg.budgets[m.state];
-    const declines = [...(w.memberCategoryDeclines.get(id)?.entries() ?? [])].map(([category, at]) => ({ category, days_ago: daysAgo(at) }));
+    const declines = [...(w.memberCategoryDeclines.get(id)?.entries() ?? [])]
+      .map(([category, at]) => ({ category, days_ago: daysAgo(at) }))
+      .sort((a, b) => a.category.localeCompare(b.category) || a.days_ago - b.days_ago);
     const sources = (m as Record<string, any>).connectedSources ?? (snap as Record<string, any>).connectedSources?.[id];
     return {
       ref: refOf.get(id)!, role: roleOf(id, c), attending: id !== c.via,
@@ -458,7 +469,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
   const attending = c.participants;
   const ov = w.overlap(attending, Math.max(window.start, now), window.end, c.city);
   const areaSets = attending.map(id => new Set((w.get(id)?.presence ?? []).filter(p => !c.city || p.city === c.city).flatMap(p => p.areas)));
-  const shared = areaSets.length ? [...areaSets[0]!].filter(a => areaSets.every(s => s.has(a))) : [];
+  const shared = areaSets.length ? [...areaSets[0]!].filter(a => areaSets.every(s => s.has(a))).sort((a, b) => a.localeCompare(b)) : [];
   const evidence_summary: DeepContext["evidence_summary"] = {};
   for (const p of people) {
     const s = { facts: p.facts.length, stated: 0, confirmed: 0, observed: 0, inferred: 0, vouched: 0, older_than_180_days: 0 };
@@ -475,7 +486,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       },
       people, pairs,
       logistics: {
-        overlap_hours_in_window: ov ? Math.round(ov.hours) : 0, ...(ov ? { overlap_city: ov.city } : {}),
+        overlap_hours_in_window: ov ? bucketOverlapHours(ov.hours) : 0, ...(ov ? { overlap_city: ov.city } : {}),
         shared_areas: shared, tightest_travel_limit_minutes: Math.min(...attending.map(id => w.get(id)?.m.prefs.maxTravelMinutes ?? 30)),
         anyone_traveling: attending.some(id => (w.get(id)?.presence ?? []).some(p => p.type === "temporary" && (p.to ?? Infinity) > now)),
       },

@@ -50,7 +50,7 @@ const YES_EMOJI = /[👍👌✅🙌💯🔥🥳🎉🤙✔😍🤩🙋]|❤|♥/
 const NO_EMOJI = /[👎❌🙅🚫⛔✋]/u;
 const UNSURE_EMOJI = /[🤔🤷😬😐🫤]/u;
 
-function normalize(s: string): string {
+export function normalizeReplyText(s: string): string {
   return s
     .normalize("NFKC")
     .replace(/[‘’ʼ`´]/g, "'")
@@ -63,6 +63,116 @@ function normalize(s: string): string {
     .replace(/([a-z])\1{2,}/g, "$1") // "yesss" → "yes", "nooo" → "no"
     .replace(/[…]/g, "...");
 }
+
+const normalize = normalizeReplyText;
+
+export const SPANISH_MONTHS: Readonly<Record<string, number>> = {
+  enero: 1, ene: 1,
+  febrero: 2, feb: 2,
+  marzo: 3, mar: 3,
+  abril: 4, abr: 4,
+  mayo: 5,
+  junio: 6, jun: 6,
+  julio: 7, jul: 7,
+  agosto: 8, ago: 8,
+  septiembre: 9, setiembre: 9, sep: 9, sept: 9,
+  octubre: 10, oct: 10,
+  noviembre: 11, nov: 11,
+  diciembre: 12, dic: 12,
+};
+
+export const REPLY_LEXICON = {
+  spanishPositive: [
+    "si claro", "claro que si", "por supuesto que si", "claro", "dale", "vale", "orale",
+    "por supuesto", "de acuerdo", "me apunto", "cuenta conmigo", "me encantaria", "con gusto",
+    "perfecto", "genial", "listo", "excelente", "encantado", "encantada", "hecho",
+  ],
+  spanishNegative: [
+    "no gracias", "para nada", "de ninguna manera", "ni loco", "ni loca", "ni hablar",
+    "mejor no", "no puedo", "no me interesa", "no quiero", "no voy", "no creo",
+    "imposible", "paso", "esta vez no", "no podre", "no podria",
+  ],
+  spanishHedge: [
+    "tal vez", "talvez", "quizas", "quiza", "a lo mejor", "no se", "puede ser",
+    "depende", "lo pienso", "dejame ver", "dejame pensar", "ya veremos", "no estoy seguro", "no estoy segura",
+  ],
+  spanishCounter: [
+    "otro dia", "otra fecha", "otra hora", "mas adelante", "la proxima", "otra vez",
+    "la semana que viene", "la proxima semana",
+  ],
+  slangPositive: [
+    "bet", "down", "i'm down", "im down", "i am down", "so down", "totally down",
+    "fs", "for sure", "fosho", "ofc", "yessir", "lessgo", "lesgo", "lfg",
+    "say less", "aight", "i'm game", "im game", "i'm in", "im in",
+  ],
+  slangNegative: [
+    "nah", "nope", "naw", "i'm good", "im good", "pass", "hard pass", "i'm out", "im out",
+  ],
+  formalPositive: [
+    "i would be delighted", "i'd be delighted", "would be delighted", "delighted to", "delighted",
+    "certainly", "indeed", "by all means", "i accept", "absolutely", "of course",
+    "i would be happy to", "i'd be happy to", "i would be glad to", "i'd be glad to",
+    "that sounds wonderful", "sounds wonderful", "splendid", "gladly", "with pleasure",
+    "yes sir", "yes ma'am", "yes maam",
+  ],
+  formalNegative: [
+    "i'm afraid not", "i am afraid not", "afraid not", "regrettably",
+    "i shall have to decline", "shall have to decline", "i must decline", "must decline",
+    "i have to decline", "have to decline", "i'll have to decline", "i will have to decline",
+    "i cannot attend", "cannot attend", "unable to attend", "i will not be able to",
+    "i won't be able to", "unfortunately not", "sadly not", "i must pass", "i shall pass",
+  ],
+  doubleNegativeHedge: [
+    "not not interested", "not not down", "not not in", "not not up for it",
+    "wouldn't say no", "would not say no", "i wouldn't say no", "i would not say no",
+    "not opposed", "not against it",
+  ],
+  positive: [
+    "yes please", "yes", "yeah", "yea", "yah", "ya", "ye", "yep", "yup", "aye",
+    "sure", "sure thing", "surely", "ok", "okay", "okie", "okey", "alright", "all right",
+    "i'm in", "i am in", "count me in", "sign me up", "i'm down", "i am down", "so down", "totally down",
+    "i'm game", "absolutely", "definitely", "def", "for sure", "fs", "fosho", "of course", "ofc",
+    "totally", "100%", "love to", "i'd love", "i would love", "would love", "love that",
+    "i'd like that", "i would like that", "sounds good", "sounds great", "sounds fun",
+    "sounds lovely", "sounds perfect", "sounds wonderful", "that works", "works for me",
+    "say less", "let's do it", "let's go", "lfg", "lessgo", "yessir", "aight", "bet",
+    "happy to", "glad to", "can do", "i can", "i will", "i'll be there", "looking forward",
+    "go for it", "go ahead", "please do", "do it", "agreed", "intro me",
+    "i would be delighted", "i'd be delighted", "would be delighted", "delighted",
+    "certainly", "indeed", "by all means", "i accept", "splendid", "gladly", "with pleasure",
+    "si", "si claro", "claro que si", "claro", "dale", "vale", "orale", "por supuesto",
+    "de acuerdo", "me apunto", "cuenta conmigo", "me encantaria", "con gusto", "perfecto", "genial", "listo",
+  ],
+  negative: [
+    "no thanks", "no thank you", "no ty", "no gracias", "no way", "hard pass", "pass",
+    "i'll pass", "i will pass", "i'd pass", "gonna pass", "going to pass", "i pass",
+    "count me out", "i'm out", "not interested", "no interest", "not for me", "not my thing",
+    "not my scene", "not really", "rather not", "i'd rather not", "prefer not", "don't think so",
+    "don't want to", "do not want", "not feeling it", "not up for", "not in the mood",
+    "no can do", "i can't", "can't", "cannot", "won't", "will not", "i guess not",
+    "doesn't work", "does not work", "i'm busy", "too busy", "i'm swamped", "booked up",
+    "not available", "not free", "unavailable", "unable", "i decline", "decline",
+    "probably not", "prob not", "likely not", "doubt it", "nope", "nah", "naw", "nay",
+    "i'm good", "all good, thanks", "i'm all set", "all set",
+    "i'm afraid not", "afraid not", "regrettably", "i shall have to decline", "i must decline",
+    "i have to decline", "i cannot attend", "unable to attend", "unfortunately not", "sadly not",
+    "para nada", "de ninguna manera", "ni loco", "ni loca", "ni hablar", "mejor no",
+    "no puedo", "no me interesa", "no quiero", "no voy", "no creo", "imposible", "paso",
+  ],
+  hedge: [
+    "not sure", "not certain", "unsure", "uncertain", "maybe", "perhaps", "possibly",
+    "might", "probably", "prob", "potentially", "idk", "i don't know", "don't know", "dunno",
+    "let me check", "let me see", "let me think", "get back to you", "depends", "it depends",
+    "we'll see", "tbd", "kinda", "kind of", "sort of", "hmm",
+    "tal vez", "talvez", "quizas", "quiza", "a lo mejor", "no se", "puede ser", "depende",
+    "lo pienso", "dejame ver", "dejame pensar", "ya veremos", "no estoy seguro", "no estoy segura",
+  ],
+  counter: [
+    "different day", "different time", "another day", "another time", "some other day",
+    "some other time", "other day", "next week instead", "instead", "reschedule", "rain check",
+    "raincheck", "later in the week", "otro dia", "otra fecha", "otra hora", "mas adelante", "la proxima",
+  ],
+} as const;
 
 const WITHDRAWAL_WORDS = String.raw`\b(?:deal\s+me\s+out|go\s+ahead\s+without\s+me)\b`;
 const WITHDRAWAL_MENTION = new RegExp(WITHDRAWAL_WORDS);
@@ -113,31 +223,57 @@ const TIME_WORD = new RegExp(`\\b(?:${DAY})\\b|\\b(?:after|before|by|until|till|
 
 const r = (kind: Kind, src: string, strong = false): Rule => ({ kind, re: new RegExp(src, "g"), strong });
 
+const DOUBLE_NEGATIVE_HEDGE_SRC =
+  "\\b(?:not not (?:interested|down|in|up for it|opposed)|(?:i )?(?:wouldn't|would not) say no|not opposed|not against it)\\b";
+const SHARED_STRONG_NO_SRC =
+  "\\b(?:no thanks?|no thank you|no ty|no gracias|no way|hard pass|i'll pass|i will pass|i'd pass|ill pass|gonna pass|going to pass|pass on (?:this|that|it)|i pass|count me out|i'm out|not interested|no interest|not for me|not my thing|not my scene|not really|rather not|i'd rather not|prefer not|i don't think so|don't think so|i don't want|don't want to|do not want|not feeling it|not up for|not in the mood|no can do|i can't|can't|cannot|can not|won't|will not|i guess not|doesn't work|does not work|not work(?:ing)? for me|bail|i'm not (?:in|down|interested|up for it|available|free|going|coming)|i'm busy|too busy|i'm swamped|booked up|not available|not free|unavailable|unable(?: to attend)?|i (?:shall|must|have|'ll|will) (?:have to )?decline|i must pass|i shall pass|i cannot attend|cannot attend|i (?:will not|won't) be able to|(?:i'm |i am )?afraid not|i decline|decline|leave me alone|stop texting|unsubscribe|probably not|prob not|likely not|i doubt it|doubt it|para nada|de ninguna manera|ni loco|ni loca|ni hablar|mejor no|no puedo|no me interesa|no quiero|no voy|no creo|esta vez no|no podr(?:e|ia)|imposible|paso)\\b";
+const SHARED_HEDGE_SRC =
+  "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|unsure|uncertain|maybe|mayb|perhaps|possibly|might|probably|prob|potentially|idk|i don't know|don't know|dunno|let me (?:check|see|think|get back)|lemme (?:check|see|think)|i'll (?:think|check|see|let you know|get back)|think about it|get back to you|depends|it depends|we'll see|tbd|kinda|kind of|sort of|hmm+|hm+|who is it|who's (?:coming|going|it)|who else|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\\b";
+const SHARED_COUNTER_SRC =
+  "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima|otra vez)\\b";
+const SHARED_YES_SRC =
+  "\\b(?:yes please|yes sir|yes ma'?am|yes|yess+|yesh|yessir|yeah|yea|yah|ya|ye|yep|yup|yas+|aye|sure|sure thing|surely|ok+|okay|okie|okey|k+|alright|all right|aight|i'm in|i am in|im in|count me in|please count me in|sign me up|i'm down|i am down|im down|so down|totally down|down for (?:it|that|this)|i'm game|i am game|im game|absolutely|definitely|def|deff|for sure|fs|fosho|of course|ofc|totally|100%|certainly|indeed|by all means|i accept|(?:i(?:'d| would)|would) be delighted|delighted(?: to)?|splendid|gladly|with pleasure|love to|i'd love|i would love|would love|love that|i'd like that|i would like that|sounds (?:good|great|fun|lovely|perfect|wonderful|amazing|awesome|nice|like a plan|like fun)|that works|works for me|say less|let's do it|lets do it|let's go|lessgo|lesgo|lfg|happy to|i(?:'d| would) be happy to|glad to|i(?:'d| would) be glad to|can do|i can|i will|i'll be there|looking forward|go for it|go ahead|please do|do it|agreed|i guess|guess so|i think so|think so|intro me|in!|si claro|claro que si|por supuesto que si|claro|dale|vale|orale|por supuesto|de acuerdo|me apunto|cuenta conmigo|me encantaria|con gusto|encantad[oa]|excelente|perfecto)\\b";
+
+export const SHARED_DOUBLE_NEGATIVE_RE = new RegExp(DOUBLE_NEGATIVE_HEDGE_SRC);
+export const SHARED_POSITIVE_RE = new RegExp(
+  `${SHARED_YES_SRC}|(?<=^|[\\s,.!])si(?= *(?:$|[.,!;]|claro|gracias|porfa|por favor|me apunto|dale|va|perfecto|pero))`,
+);
+export const SHARED_NEGATIVE_RE = new RegExp(
+  `${SHARED_STRONG_NO_SRC}|\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously|unfortunately|sadly|regrettably) (?:not|no)\\b|\\b(?:claro|por supuesto|obvio|desde luego) que no\\b|\\bregrettably\\b|\\b(?:nope|nop|nah|naw|nay|nel|negative)\\b`,
+);
+export const SHARED_HEDGE_RE = new RegExp(SHARED_HEDGE_SRC);
+export const SHARED_COUNTER_RE = new RegExp(SHARED_COUNTER_SRC);
+
 const RULES: Rule[] = [
-  // Positive idioms that contain a negation word.
-  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the hell not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|don't see why not|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no)\\b", true),
+  // Positive idioms that contain a negation word (incl. colloquial "no yeah" / "nah yeah").
+  r("yes", "\\b(?:no problem|no prob(?:lem)?s?|not a problem|no doubt|no question|why not|why the hell not|por que no|can't wait|cannot wait|can not wait|wouldn't miss it|would not miss it|don't see why not|i don't mind|don't mind|no reason not to|how could i say no|never say no|not gonna say no|(?:no|nah),?\\s+yeah(?!\\s*,?\\s*(?:no|nah|nope)\\b))\\b", true),
+  // Double negatives ("not not interested", "I wouldn't say no"): hedge/clarify, NEVER hard no.
+  r("unsure", DOUBLE_NEGATIVE_HEDGE_SRC),
   // Reversals: what follows replaces what came before.
   r("reversal", "\\b(?:actually|on second thought|second thoughts|wait|jk|just kidding|nvm|never ?mind|scratch that|changed my mind|pensandolo bien|espera)\\b"),
   r("neutral", "\\b(?:no worries|no pressure|no rush|no stress|no biggie|no te preocupes|sin problema)\\b"),
-  // "I'm good" / "I'm all set" = no thanks (but "I'm good with that" = yes).
+  // "I'm good" / "I'm all set" / "all good, thanks" = no thanks (but "I'm good with that" = yes).
   r("yes", "\\bi'm (?:good|ok|okay|fine|cool) with (?:that|it|this|either|both|whatever)\\b", true),
   r("no", "\\bi'm (?:good|ok|okay|fine|all set|set)(?= *(?:$|[.,!?;)]|thanks|thank|tho|though|for now|for this|this time|on this))", true),
+  r("no", "\\ball (?:good|set)(?= *(?:,? *(?:thanks|thank you|ty|thx)|for now|for this|this time|tho|though))", true),
+  r("no", "^all set[.! ]*$", true),
   // Negated hedges ("not sure", "really not sure") before refusals.
   r("unsure", "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|no estoy segur[oa])\\b"),
   // Time refusals: "not thursday", "can't do tonight", "except fridays", "pero no el jueves".
   r("timeNeg", `(?:\\b(?:not(?: around| in town| free)?|no|except|excepto|menos|never|nunca)|\\b(?:can't|cannot|can not|won't|don't|no puedo)(?: do| make| make it)?)(?: on| the| el| los| la| this)?\\s+${DAY}\\b`),
   // Strong refusals (multi-word first).
-  r("no", "\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously) (?:not|no)\\b", true),
+  r("no", "\\b(?:absolutely|definitely|certainly|totally|hell|heck|of course|obviously|surely|honestly|really|seriously|unfortunately|sadly|regrettably) (?:not|no)\\b", true),
   r("no", "\\b(?:claro|por supuesto|obvio|desde luego) que no\\b", true),
-  r("no", "\\b(?:no thanks?|no thank you|no ty|no gracias|no way|hard pass|i'll pass|i will pass|i'd pass|ill pass|gonna pass|going to pass|pass on (?:this|that|it)|i pass|count me out|i'm out|not interested|no interest|not for me|not my thing|not my scene|not really|rather not|i'd rather not|prefer not|i don't think so|don't think so|i don't want|don't want to|do not want|not feeling it|not up for|not in the mood|no can do|i can't|can't|cannot|can not|won't|will not|i guess not|doesn't work|does not work|not work(?:ing)? for me|bail|i'm not (?:in|down|interested|up for it|available|free|going|coming)|i'm busy|too busy|i'm swamped|booked up|not available|not free|unavailable|unable|i decline|decline|leave me alone|stop texting|unsubscribe|probably not|prob not|likely not|i doubt it|doubt it|para nada|de ninguna manera|ni loco|ni loca|ni hablar|mejor no|no puedo|no me interesa|no quiero|no voy|no creo|imposible|paso)\\b", true),
+  r("no", `\\bregrettably\\b(?!,?\\s+(?:not|can't|cannot|no puedo)\\b[^.!?]*\\b(?:${DAY})\\b)`, true),
+  r("no", SHARED_STRONG_NO_SRC, true),
   // Hedges.
-  r("unsure", "\\b(?:not (?:sure|certain|100%|positive|definitely|decided)|unsure|uncertain|maybe|mayb|perhaps|possibly|might|probably|prob|potentially|idk|i don't know|don't know|dunno|let me (?:check|see|think|get back)|lemme (?:check|see|think)|i'll (?:think|check|see|let you know|get back)|think about it|get back to you|depends|it depends|we'll see|tbd|kinda|kind of|sort of|hmm+|hm+|who is it|who's (?:coming|going|it)|who else|tal vez|talvez|quizas|quiza|a lo mejor|no se|puede ser|depende|lo pienso|dejame (?:ver|pensar)|ya veremos|no estoy segur[oa])\\b"),
+  r("unsure", SHARED_HEDGE_SRC),
   // Counter-offers.
-  r("counter", "\\b(?:different (?:day|time|date|week)|another (?:day|time|date|week)|some ?other (?:day|time)|other day|next week instead|instead|reschedule|rain ?check|raincheck|later in the week|otro dia|otra fecha|otra hora|mas adelante|la proxima)\\b"),
+  r("counter", SHARED_COUNTER_SRC),
   // Conditions.
   r("cond", "\\b(?:only if|if|as long as|provided|assuming|unless|only with|only on|only after|only before|only|solo si|solo con|siempre que|siempre y cuando|con tal (?:de )?que)\\b"),
   // Yes.
-  r("yes", "\\b(?:yes please|yes|yess+|yesh|yeah|yea|yah|ya|ye|yep|yup|yas+|aye|sure|sure thing|surely|ok+|okay|okie|okey|k+|alright|all right|i'm in|i am in|im in|count me in|sign me up|i'm down|im down|absolutely|definitely|def|deff|for sure|fs|of course|ofc|totally|100%|love to|i'd love|i would love|would love|love that|i'd like that|i would like that|sounds (?:good|great|fun|lovely|perfect|amazing|awesome|nice|like a plan|like fun)|that works|works for me|say less|let's do it|lets do it|let's go|lfg|happy to|glad to|can do|i can|i will|i'll be there|looking forward|go for it|go ahead|please do|do it|agreed|i guess|guess so|i think so|think so|intro me|in!|si claro|claro|dale|vale|orale|por supuesto|de acuerdo|me apunto|cuenta conmigo|me encantaria|con gusto)\\b"),
+  r("yes", SHARED_YES_SRC),
   // Weak yes words count only at the start of a sentence or comma part, after at most two filler
   // words ("Great!", "oh perfect", "but friday works"), not inside a statement ("it was nice",
   // "honestly this is great timing").
@@ -273,7 +409,7 @@ export function parseReply(text: string): ParsedReply {
     return done("no", "time_refusal", { counter });
   }
   if (first.kind === "unsure") {
-    const leanYes = sig.some(s => s.kind === "yes"), leanNo = sig.some(s => s.kind === "no");
+    const leanYes = sig.some(s => s.kind === "yes") || SHARED_DOUBLE_NEGATIVE_RE.test(first.text), leanNo = sig.some(s => s.kind === "no");
     if (counter) return done("unsure", "hedge_counter", { counter: true });
     return done("unsure", "hedge", leanYes && !leanNo ? { leaning: "yes" } : leanNo && !leanYes ? { leaning: "no" } : {});
   }

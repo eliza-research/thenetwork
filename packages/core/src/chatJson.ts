@@ -7,7 +7,7 @@
 // content (llm.ts chatCompletions); `grow` is an additional, per-attempt budget change on top.
 import { RealClock, type Clock } from "./clock.ts";
 import { deadlineExpired, hasDeadline, initial, isFinalCode, step } from "./generated/chatRetry.ts";
-import { LLMError, parseJson, type ChatMessage, type ChatOptions, type LLM } from "./llm.ts";
+import { LLMError, parseJson, type ChatMessage, type ChatOptions, type LLM, type ReasoningEffort } from "./llm.ts";
 
 export interface ChatJsonOptions {
   /** Total attempts (default 2). A thrown parse or validation error, or a failed call, uses one. */
@@ -15,6 +15,8 @@ export interface ChatJsonOptions {
   maxTokens?: number;
   /** Sent only when set (reasoning models ignore it; some sites pin it for older providers). */
   temperature?: number;
+  reasoningEffort?: ReasoningEffort;
+  promptCacheKey?: string;
   /** Completion budget for the next attempt after a failed one (default: unchanged). */
   grow?: (maxTokens: number) => number;
   /** Called before each attempt. If it throws, the loop stops with that error (e.g. a spend guard). */
@@ -49,6 +51,7 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
   const after = (attempt: number, ok: boolean) => { try { o.afterAttempt?.(attempt, ok); } catch { /* observer errors never discard a result */ } };
   let maxTokens = o.maxTokens;
   let error: unknown;
+  let activeMessages: ChatMessage[] = messages;
   // spec/chatRetry.md, "The configured attempt budget limits how many requests start"
   const unbounded = attempts === Infinity;
   const attemptLimit = attempts > 0 && !unbounded ? Math.ceil(attempts) : 0;
@@ -73,13 +76,20 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
       break;
     }
     let value: T;
+    let rawReply: string | undefined;
     try {
       const client = typeof llm === "function" ? llm(attempt) : llm;
       const opts: ChatOptions = {
-        maxTokens, ...(o.temperature !== undefined ? { temperature: o.temperature } : {}), json: true,
-        ...(left !== undefined ? { deadlineMs: left } : {}), ...(o.signal ? { signal: o.signal } : {}),
+        maxTokens,
+        ...(o.temperature !== undefined ? { temperature: o.temperature } : {}),
+        json: true,
+        ...(o.reasoningEffort !== undefined ? { reasoningEffort: o.reasoningEffort } : {}),
+        ...(o.promptCacheKey !== undefined ? { promptCacheKey: o.promptCacheKey } : {}),
+        ...(left !== undefined ? { deadlineMs: left } : {}),
+        ...(o.signal ? { signal: o.signal } : {}),
       };
-      value = parse(parseJson(await client.chat(messages, opts)));
+      rawReply = await client.chat(activeMessages, opts);
+      value = parse(parseJson(rawReply));
     } catch (e) {
       error = e;
       after(attempt, false);
@@ -87,6 +97,15 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
       run = step(run, { type: "rejectReply", terminal: e instanceof LLMError && isFinalCode(e.code) });
       if (run.phase !== "TerminalFailure" && o.grow && maxTokens !== undefined) {
         try { maxTokens = o.grow(maxTokens); } catch { /* keep the current budget */ }
+      }
+      if (run.phase === "Ready" && rawReply !== undefined) {
+        const snippet = rawReply.trim().slice(0, 600) || "(empty)";
+        const reason = (e instanceof Error ? e.message : String(e)).trim().slice(0, 400) || "invalid JSON";
+        activeMessages = [
+          ...messages,
+          { role: "assistant", content: snippet },
+          { role: "user", content: `Previous reply failed JSON/schema validation (${reason}). Reply with valid JSON only, fixing that error.` },
+        ];
       }
       continue;
     }

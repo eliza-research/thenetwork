@@ -542,7 +542,7 @@ test("signed solo concierge uses the trip city while the member is away", async 
   await service.close();
   await start(undefined, true);
   try {
-    const visitor = "+12125550161", away = "+12125550162";
+    const visitor = "+12125550261", away = "+12125550262";
     const join = async (phone: string, homeCity: "nyc" | "chicago") => {
       await service.accounts.invite(APPS.friends, phone);
       const person = (await service.accounts.personFor(phone))!;

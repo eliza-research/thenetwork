@@ -157,12 +157,46 @@ export interface NetworkEvent {
   listing?: { url: string; venue: string; lat: number; lng: number };
 }
 
+export interface ReliabilityEvidence {
+  readonly noShows: number;
+  readonly completedSinceLastNoShow: number;
+  readonly strikes?: number;
+  readonly lateCancels4h?: number;
+  readonly lateCancels24h?: number;
+  readonly rescheduleChurn?: number;
+  readonly resolved90d?: number;
+  readonly completed90d?: number;
+  readonly provisionalNoShow?: boolean;
+}
+
+export interface QualitySignals {
+  readonly provenanceScore: number;
+  readonly specificityScore: number;
+  readonly hygieneScore: number;
+  readonly completionScore: number;
+  readonly voipOrPumping: boolean;
+  readonly sybilFlagged: boolean;
+  readonly chronicLowEffort: boolean;
+  readonly unverifiedHype: boolean;
+  readonly newcomerDays: number;
+}
+
+export interface VampireTelemetry {
+  readonly introsReceived90d: number;
+  readonly positiveCounterpartVotes90d: number;
+  readonly asymmetricNegativeVotes90d: number;
+  readonly pitchSignals90d: number;
+  readonly distinctSelfPromoReports90d: number;
+}
+
 /** Snapshot the engine reads. Built from Postgres in production, from the simulator in tests. */
 export interface WorldSnapshot {
   now: number; members: Member[]; facets: Facet[]; intents: Intent[];
   presence: Presence[]; edges: Edge[]; recentProposals: Proposal[];
   events?: NetworkEvent[];
   teenIntros?: boolean;
+  qualityByMember?: Record<MemberId, QualitySignals>;
+  vampireByMember?: Record<MemberId, VampireTelemetry>;
 }
 
 // ---- Five-city registry, curated venues, arrival coordination, follow-ups and work intros ----

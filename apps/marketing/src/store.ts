@@ -37,6 +37,9 @@ import type {
   AgentStatus,
   AntiFraudClaim,
   AntiFraudClaimStatus,
+  ApolloCreditLedgerEntry,
+  ApolloCreditUsageSummary,
+  ApolloOperationKind,
   AppId,
   AttributionEvent,
   BanditArm,
@@ -47,6 +50,7 @@ import type {
   BudgetEntry,
   BudgetEntryType,
   Campaign,
+  CanonicalOutreachPlatform,
   ChannelAccount,
   CityLaunchStage,
   CityPackOverride,
@@ -61,9 +65,13 @@ import type {
   DevicePlatform,
   DeviceStatus,
   DeviceWarmupStage,
+  EnrichmentCacheEntry,
   HumanPartner,
   HumanRole,
   ImplementationTier,
+  IntakeCandidateRecord,
+  IntakeCandidateStatus,
+  IntakeScoreBreakdown,
   LlmTrajectoryRecord,
   LlmTrajectoryStatus,
   MarketingAgent,
@@ -74,6 +82,8 @@ import type {
   PayoutRail,
   PersonaId,
   PhoneLineType,
+  PlatformInteractionOutcome,
+  PlatformInteractionRecord,
   ProofKind,
   ProofSubmission,
   ProofVerdict,
@@ -336,7 +346,7 @@ export interface CreateOutreachInput {
   subject?: string | null;
   bodySummary: string;
   leakCheckPass: boolean;
-  desiredStatus?: "queued" | "sent" | "delivered";
+  desiredStatus?: "queued" | "sent" | "delivered" | "blocked_stop" | "blocked_policy";
   externalRef?: string | null;
   dailyOutreachCap?: number;
 }
@@ -905,6 +915,51 @@ export interface MarketingStore {
   ): Promise<CityPackOverride>;
   listCityPacksOverrides(): Promise<CityPackOverride[]>;
 
+  // Pass-4 Apollo enrichment cache, credit ledger, 10-platform interactions, and quality intake
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null>;
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry>;
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number>;
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry>;
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary>;
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord>;
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]>;
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord>;
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null>;
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null>;
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]>;
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord>;
+
   resetDailyCounters(): Promise<void>;
   getOverview(campaignId?: string): Promise<MarketingOverview>;
 }
@@ -1216,6 +1271,12 @@ export class MemoryMarketingStore implements MarketingStore {
   private readonly contactSuppressions = new Map<string, ContactSuppressionRecord>();
   private readonly contactTouchpoints: ContactTouchpoint[] = [];
   private readonly cityPackOverrides = new Map<string, CityPackOverride>();
+  private readonly enrichmentCache = new Map<string, EnrichmentCacheEntry>();
+  private readonly apolloCreditLedger: ApolloCreditLedgerEntry[] = [];
+  private readonly apolloCreditByKey = new Map<string, ApolloCreditLedgerEntry>();
+  private readonly platformInteractions: PlatformInteractionRecord[] = [];
+  private readonly intakeCandidates = new Map<string, IntakeCandidateRecord>();
+  private readonly intakeByContactHash = new Map<string, string>();
 
   constructor(
     opts: {
@@ -3197,6 +3258,11 @@ export class MemoryMarketingStore implements MarketingStore {
       suppressedAt: existing?.suppressedAt ?? isoNow(this.clock),
     };
     this.contactSuppressions.set(record.contactHash, record);
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === record.contactHash) {
+        this.enrichmentCache.delete(key);
+      }
+    }
     return Promise.resolve({ ...record });
   }
 
@@ -3343,6 +3409,251 @@ export class MemoryMarketingStore implements MarketingStore {
         .sort((a, b) => a.code.localeCompare(b.code))
         .map((c) => ({ ...c, config: { ...c.config } })),
     );
+  }
+
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const existing = this.enrichmentCache.get(cacheKey);
+    if (!existing) return Promise.resolve(null);
+    const expiresMs = Date.parse(existing.expiresAt);
+    if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
+      this.enrichmentCache.delete(cacheKey);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ ...existing, payload: { ...existing.payload } });
+  }
+
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const stored: EnrichmentCacheEntry = {
+      ...entry,
+      payload: { ...entry.payload },
+    };
+    this.enrichmentCache.set(stored.cacheKey, stored);
+    trimMapFifo(this.enrichmentCache, MAX_MEMORY_APPEND_ITEMS);
+    return Promise.resolve({ ...stored, payload: { ...stored.payload } });
+  }
+
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    let removed = 0;
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === contactHash) {
+        this.enrichmentCache.delete(key);
+        removed += 1;
+      }
+    }
+    return Promise.resolve(removed);
+  }
+
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const existing = this.apolloCreditByKey.get(input.idempotencyKey);
+    if (existing) return Promise.resolve({ ...existing });
+    const entry: ApolloCreditLedgerEntry = {
+      id: String(this.apolloCreditLedger.length + 1),
+      campaignId: input.campaignId ?? null,
+      operation: input.operation,
+      credits: Math.max(0, Math.round(input.credits)),
+      costCents: Math.max(0, Math.round(input.costCents)),
+      cacheHit: Boolean(input.cacheHit),
+      dryRun: Boolean(input.dryRun),
+      idempotencyKey: input.idempotencyKey,
+      createdAt: isoNow(this.clock),
+    };
+    this.apolloCreditLedger.push(entry);
+    this.apolloCreditByKey.set(entry.idempotencyKey, entry);
+    if (this.apolloCreditLedger.length > MAX_MEMORY_APPEND_ITEMS) {
+      const dropped = this.apolloCreditLedger.shift();
+      if (dropped) this.apolloCreditByKey.delete(dropped.idempotencyKey);
+    }
+    return Promise.resolve({ ...entry });
+  }
+
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const dayPrefix = new Date(nowMs).toISOString().slice(0, 10);
+    const monthPrefix = dayPrefix.slice(0, 7);
+    let creditsUsedToday = 0;
+    let creditsUsedMonth = 0;
+    let searchCallsToday = 0;
+    let cacheHitsToday = 0;
+    let totalCallsToday = 0;
+
+    for (const row of this.apolloCreditLedger) {
+      const rowMonth = row.createdAt.slice(0, 7);
+      const rowDay = row.createdAt.slice(0, 10);
+      if (rowMonth === monthPrefix) {
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedMonth += row.credits;
+        }
+      }
+      if (rowDay === dayPrefix) {
+        totalCallsToday += 1;
+        if (row.cacheHit) cacheHitsToday += 1;
+        if (row.operation === "people_search" && !row.cacheHit) {
+          searchCallsToday += 1;
+        }
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedToday += row.credits;
+        }
+      }
+    }
+
+    return Promise.resolve({
+      day: dayPrefix,
+      month: monthPrefix,
+      creditsUsedToday,
+      creditsUsedMonth,
+      searchCallsToday,
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    });
+  }
+
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const record: PlatformInteractionRecord = {
+      id: this.idGen(),
+      campaignId: input.campaignId ?? null,
+      platform: input.platform,
+      channelAccountId: input.channelAccountId ?? null,
+      contactHash: input.contactHash,
+      direction: input.direction,
+      interactionKind: input.interactionKind,
+      reportRiskScore: Math.max(0, Math.min(100, Math.round(input.reportRiskScore))),
+      outcome: input.outcome,
+      createdAt: isoNow(this.clock),
+    };
+    this.platformInteractions.push(record);
+    if (this.platformInteractions.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.platformInteractions.splice(0, this.platformInteractions.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const matching = this.platformInteractions
+      .filter((r) => !filter?.campaignId || r.campaignId === filter.campaignId)
+      .filter((r) => !filter?.platform || r.platform === filter.platform)
+      .filter((r) => !filter?.channelAccountId || r.channelAccountId === filter.channelAccountId)
+      .filter((r) => !filter?.contactHash || r.contactHash === filter.contactHash)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, safeLimit)
+      .map((r) => ({ ...r }));
+    return Promise.resolve(matching);
+  }
+
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const now = isoNow(this.clock);
+    const existingId = this.intakeByContactHash.get(input.contactHash);
+    const existing = existingId ? this.intakeCandidates.get(existingId) : undefined;
+    const minAge = minAgeReading(existing?.statedAge, input.statedAge);
+    const record: IntakeCandidateRecord = {
+      id: existing?.id ?? input.id ?? this.idGen(),
+      campaignId: input.campaignId ?? existing?.campaignId ?? null,
+      city: input.city,
+      targetAppId: input.targetAppId,
+      desireLane: input.desireLane ?? existing?.desireLane ?? null,
+      sourcePlatform: input.sourcePlatform,
+      contactHash: input.contactHash,
+      statedAge: minAge,
+      qualityScore: Math.max(0, Math.min(100, Math.round(input.qualityScore))),
+      scoreBreakdown: { ...input.scoreBreakdown },
+      valueDelivered: Boolean(existing?.valueDelivered || input.valueDelivered),
+      explicitPositiveSignal: Boolean(existing?.explicitPositiveSignal || input.explicitPositiveSignal),
+      inviteAttempts: Math.max(existing?.inviteAttempts ?? 0, input.inviteAttempts),
+      status: input.status,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.intakeCandidates.set(record.id, record);
+    this.intakeByContactHash.set(record.contactHash, record.id);
+    return Promise.resolve({ ...record, scoreBreakdown: { ...record.scoreBreakdown } });
+  }
+
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const found = this.intakeCandidates.get(id);
+    return Promise.resolve(
+      found ? { ...found, scoreBreakdown: { ...found.scoreBreakdown } } : null,
+    );
+  }
+
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const id = this.intakeByContactHash.get(contactHash);
+    if (!id) return Promise.resolve(null);
+    return this.getIntakeCandidate(id);
+  }
+
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    return Promise.resolve(
+      [...this.intakeCandidates.values()]
+        .filter((c) => !filter?.campaignId || c.campaignId === filter.campaignId)
+        .filter((c) => !filter?.city || c.city === filter.city)
+        .filter((c) => !filter?.status || c.status === filter.status)
+        .sort((a, b) => b.qualityScore - a.qualityScore || b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, safeLimit)
+        .map((c) => ({ ...c, scoreBreakdown: { ...c.scoreBreakdown } })),
+    );
+  }
+
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = this.intakeCandidates.get(id);
+    if (!existing) return Promise.reject(new Error(`Intake candidate not found: ${id}`));
+    const next: IntakeCandidateRecord = {
+      ...existing,
+      qualityScore:
+        patch.qualityScore !== undefined
+          ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+          : existing.qualityScore,
+      scoreBreakdown: patch.scoreBreakdown ? { ...patch.scoreBreakdown } : existing.scoreBreakdown,
+      valueDelivered:
+        patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered,
+      explicitPositiveSignal:
+        patch.explicitPositiveSignal !== undefined
+          ? Boolean(patch.explicitPositiveSignal)
+          : existing.explicitPositiveSignal,
+      inviteAttempts:
+        patch.inviteAttempts !== undefined
+          ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+          : existing.inviteAttempts,
+      status: patch.status ?? existing.status,
+      statedAge:
+        patch.statedAge !== undefined
+          ? minAgeReading(existing.statedAge, patch.statedAge)
+          : existing.statedAge,
+      updatedAt: isoNow(this.clock),
+    };
+    this.intakeCandidates.set(id, next);
+    return Promise.resolve({ ...next, scoreBreakdown: { ...next.scoreBreakdown } });
   }
 }
 
@@ -6448,6 +6759,10 @@ export class PgMarketingStore implements MarketingStore {
         is_minor = (marketing.contact_suppression.is_minor or excluded.is_minor)
       returning *
     `;
+    await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${input.contactHash}
+    `;
     return this.mapContactSuppression(firstRow(rows)!);
   }
 
@@ -6606,5 +6921,364 @@ export class PgMarketingStore implements MarketingStore {
       order by code asc
     `;
     return allRows(rows).map((r) => this.mapCityPackOverride(r));
+  }
+
+  private parseJsonRecord(v: unknown): Record<string, unknown> {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+    if (typeof v === "string") {
+      try {
+        const parsed: unknown = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  private mapEnrichmentCache(r: Row): EnrichmentCacheEntry {
+    return {
+      cacheKey: asStr(r.cache_key),
+      provider: asStr(r.provider, "apollo"),
+      operation: asStr(r.operation, "people_match") as EnrichmentCacheEntry["operation"],
+      contactHash: asOptStr(r.contact_hash),
+      payload: this.parseJsonRecord(r.payload),
+      verifiedEmail: asBool(r.verified_email),
+      creditsSpent: asNum(r.credits_spent),
+      fetchedAt: toIso(r.fetched_at),
+      expiresAt: toIso(r.expires_at),
+    };
+  }
+
+  private mapApolloCredit(r: Row): ApolloCreditLedgerEntry {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      operation: asStr(r.operation, "people_match") as ApolloOperationKind,
+      credits: asNum(r.credits),
+      costCents: asNum(r.cost_cents),
+      cacheHit: asBool(r.cache_hit),
+      dryRun: asBool(r.dry_run),
+      idempotencyKey: asStr(r.idempotency_key),
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapPlatformInteraction(r: Row): PlatformInteractionRecord {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      platform: asStr(r.platform, "email") as CanonicalOutreachPlatform | "email",
+      channelAccountId: asOptStr(r.channel_account_id),
+      contactHash: asStr(r.contact_hash),
+      direction: (asStr(r.direction, "outbound") === "inbound" ? "inbound" : "outbound"),
+      interactionKind: asStr(r.interaction_kind),
+      reportRiskScore: asNum(r.report_risk_score),
+      outcome: asStr(r.outcome, "sent") as PlatformInteractionOutcome,
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapIntakeCandidate(r: Row): IntakeCandidateRecord {
+    const rawBreakdown = this.parseJsonRecord(r.score_breakdown);
+    const scoreBreakdown: IntakeScoreBreakdown = {
+      specificityEffort: asNum(rawBreakdown["specificityEffort"]),
+      proofOfWorkAnchoring: asNum(rawBreakdown["proofOfWorkAnchoring"]),
+      reliabilityFollowThrough: asNum(rawBreakdown["reliabilityFollowThrough"]),
+      bilateralValueFit: asNum(rawBreakdown["bilateralValueFit"]),
+      disqualifiers: Array.isArray(rawBreakdown["disqualifiers"])
+        ? rawBreakdown["disqualifiers"].filter((x: unknown): x is string => typeof x === "string")
+        : [],
+    };
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      city: asStr(r.city, "nyc"),
+      targetAppId: asStr(r.target_app_id, "ntwrk") as BrandAppId,
+      desireLane: asOptStr(r.desire_lane),
+      sourcePlatform: asStr(r.source_platform),
+      contactHash: asStr(r.contact_hash),
+      statedAge: r.stated_age === null || r.stated_age === undefined ? null : asNum(r.stated_age),
+      qualityScore: asNum(r.quality_score),
+      scoreBreakdown,
+      valueDelivered: asBool(r.value_delivered),
+      explicitPositiveSignal: asBool(r.explicit_positive_signal),
+      inviteAttempts: asNum(r.invite_attempts),
+      status: asStr(r.status, "spotted") as IntakeCandidateStatus,
+      createdAt: toIso(r.created_at),
+      updatedAt: toIso(r.updated_at),
+    };
+  }
+
+  async getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const now = new Date(nowMs);
+    const rows = await this.sql`
+      select * from marketing.enrichment_cache
+      where cache_key = ${cacheKey}
+        and expires_at > ${now}
+      limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapEnrichmentCache(r) : null;
+  }
+
+  async upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const payload = JSON.stringify(entry.payload);
+    const rows = await this.sql`
+      insert into marketing.enrichment_cache (
+        cache_key, provider, operation, contact_hash, payload,
+        verified_email, credits_spent, fetched_at, expires_at
+      ) values (
+        ${entry.cacheKey}, ${entry.provider}, ${entry.operation}, ${entry.contactHash},
+        ${payload}::text::jsonb, ${entry.verifiedEmail}, ${entry.creditsSpent},
+        ${new Date(entry.fetchedAt)}, ${new Date(entry.expiresAt)}
+      )
+      on conflict (cache_key) do update set
+        provider = excluded.provider,
+        operation = excluded.operation,
+        contact_hash = coalesce(excluded.contact_hash, marketing.enrichment_cache.contact_hash),
+        payload = excluded.payload,
+        verified_email = excluded.verified_email,
+        credits_spent = excluded.credits_spent,
+        fetched_at = excluded.fetched_at,
+        expires_at = excluded.expires_at
+      returning *
+    `;
+    return this.mapEnrichmentCache(firstRow(rows)!);
+  }
+
+  async purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    const rows = await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${contactHash}
+      returning cache_key
+    `;
+    return allRows(rows).length;
+  }
+
+  async recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.apollo_credit_ledger (
+        campaign_id, operation, credits, cost_cents, cache_hit, dry_run, idempotency_key, created_at
+      ) values (
+        ${input.campaignId ?? null}, ${input.operation}, ${Math.max(0, Math.round(input.credits))},
+        ${Math.max(0, Math.round(input.costCents))}, ${Boolean(input.cacheHit)},
+        ${Boolean(input.dryRun)}, ${input.idempotencyKey}, ${now}
+      )
+      on conflict (idempotency_key) do update set
+        idempotency_key = marketing.apollo_credit_ledger.idempotency_key
+      returning *
+    `;
+    return this.mapApolloCredit(firstRow(rows)!);
+  }
+
+  async getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const day = new Date(nowMs).toISOString().slice(0, 10);
+    const month = day.slice(0, 7);
+    const dayStart = new Date(`${day}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+    const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+    const rows = await this.sql`
+      select
+        coalesce(sum(credits) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_credits,
+        coalesce(sum(credits) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_credits,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and operation = 'people_search' and not cache_hit)::int as daily_searches,
+        coalesce(sum(cost_cents) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_cost_cents,
+        coalesce(sum(cost_cents) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_cost_cents,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and cache_hit)::int as cache_hits_today,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd})::int as total_calls_today
+      from marketing.apollo_credit_ledger
+      where created_at >= ${monthStart} and created_at < ${dayEnd}
+    `;
+    const r = firstRow(rows);
+    const cacheHitsToday = asNum(r?.cache_hits_today);
+    const totalCallsToday = asNum(r?.total_calls_today);
+    return {
+      day,
+      month,
+      creditsUsedToday: asNum(r?.daily_credits),
+      creditsUsedMonth: asNum(r?.monthly_credits),
+      searchCallsToday: asNum(r?.daily_searches),
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    };
+  }
+
+  async recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const id = this.idGen();
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.platform_interactions (
+        id, campaign_id, platform, channel_account_id, contact_hash,
+        direction, interaction_kind, report_risk_score, outcome, created_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.platform}, ${input.channelAccountId ?? null},
+        ${input.contactHash}, ${input.direction}, ${input.interactionKind},
+        ${Math.max(0, Math.min(100, Math.round(input.reportRiskScore)))}, ${input.outcome}, ${now}
+      )
+      returning *
+    `;
+    return this.mapPlatformInteraction(firstRow(rows)!);
+  }
+
+  async listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.platform_interactions
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.platform ?? null}::text is null or platform = ${filter?.platform ?? null})
+        and (${filter?.channelAccountId ?? null}::text is null or channel_account_id = ${filter?.channelAccountId ?? null})
+        and (${filter?.contactHash ?? null}::text is null or contact_hash = ${filter?.contactHash ?? null})
+      order by created_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapPlatformInteraction(r));
+  }
+
+  async upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const id = input.id ?? this.idGen();
+    const now = new Date(this.clock.now());
+    const breakdownJson = JSON.stringify(input.scoreBreakdown);
+    const rows = await this.sql`
+      insert into marketing.intake_candidates (
+        id, campaign_id, city, target_app_id, desire_lane, source_platform,
+        contact_hash, stated_age, quality_score, score_breakdown,
+        value_delivered, explicit_positive_signal, invite_attempts, status,
+        created_at, updated_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.city}, ${input.targetAppId},
+        ${input.desireLane ?? null}, ${input.sourcePlatform}, ${input.contactHash},
+        ${input.statedAge ?? null}, ${Math.max(0, Math.min(100, Math.round(input.qualityScore)))},
+        ${breakdownJson}::text::jsonb, ${Boolean(input.valueDelivered)},
+        ${Boolean(input.explicitPositiveSignal)}, ${Math.max(0, Math.round(input.inviteAttempts))},
+        ${input.status}, ${now}, ${now}
+      )
+      on conflict (contact_hash) do update set
+        campaign_id = coalesce(excluded.campaign_id, marketing.intake_candidates.campaign_id),
+        city = excluded.city,
+        target_app_id = excluded.target_app_id,
+        desire_lane = coalesce(excluded.desire_lane, marketing.intake_candidates.desire_lane),
+        stated_age = case
+          when marketing.intake_candidates.stated_age is null then excluded.stated_age
+          when excluded.stated_age is null then marketing.intake_candidates.stated_age
+          else least(marketing.intake_candidates.stated_age, excluded.stated_age)
+        end,
+        quality_score = excluded.quality_score,
+        score_breakdown = excluded.score_breakdown,
+        value_delivered = (marketing.intake_candidates.value_delivered or excluded.value_delivered),
+        explicit_positive_signal = (marketing.intake_candidates.explicit_positive_signal or excluded.explicit_positive_signal),
+        invite_attempts = greatest(marketing.intake_candidates.invite_attempts, excluded.invite_attempts),
+        status = excluded.status,
+        updated_at = excluded.updated_at
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
+  }
+
+  async getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where id = ${id} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where contact_hash = ${contactHash} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.intake_candidates
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.city ?? null}::text is null or city = ${filter?.city ?? null})
+        and (${filter?.status ?? null}::text is null or status = ${filter?.status ?? null})
+      order by quality_score desc, updated_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapIntakeCandidate(r));
+  }
+
+  async updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = await this.getIntakeCandidate(id);
+    if (!existing) throw new Error(`Intake candidate not found: ${id}`);
+    const now = new Date(this.clock.now());
+    const nextAge =
+      patch.statedAge !== undefined
+        ? minAgeReading(existing.statedAge, patch.statedAge)
+        : existing.statedAge;
+    const nextScore =
+      patch.qualityScore !== undefined
+        ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+        : existing.qualityScore;
+    const nextBreakdown = patch.scoreBreakdown ?? existing.scoreBreakdown;
+    const nextValueDelivered =
+      patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered;
+    const nextPositive =
+      patch.explicitPositiveSignal !== undefined
+        ? Boolean(patch.explicitPositiveSignal)
+        : existing.explicitPositiveSignal;
+    const nextAttempts =
+      patch.inviteAttempts !== undefined
+        ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+        : existing.inviteAttempts;
+    const nextStatus = patch.status ?? existing.status;
+
+    const rows = await this.sql`
+      update marketing.intake_candidates set
+        stated_age = ${nextAge},
+        quality_score = ${nextScore},
+        score_breakdown = ${JSON.stringify(nextBreakdown)}::text::jsonb,
+        value_delivered = ${nextValueDelivered},
+        explicit_positive_signal = ${nextPositive},
+        invite_attempts = ${nextAttempts},
+        status = ${nextStatus},
+        updated_at = ${now}
+      where id = ${id}
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
   }
 }

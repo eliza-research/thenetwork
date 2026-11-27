@@ -1,0 +1,42 @@
+{"kind":"probe","style":"genz_terse","text":"bet thursday works","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"genz_terse","text":"fr fr sat works for me","answer":"yes","keys":["b"]}
+{"kind":"probe","style":"genz_terse","text":"thursdy works for me","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"genz_terse","text":"ngl super busy rn pass","answer":"no","keys":[]}
+{"kind":"probe","style":"genz_terse","text":"how about Friday at 6pm instead?","answer":"unclear","keys":[],"counterTime":true}
+{"kind":"probe","style":"formal_exec","text":"Yes, Thursday 7pm works well for my calendar.","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"formal_exec","text":"No, I must decline this week.","answer":"no","keys":[]}
+{"kind":"probe","style":"formal_exec","text":"Might we consider Friday at 6pm instead?","answer":"unclear","keys":[],"counterTime":true}
+{"kind":"probe","style":"voice_rambler","text":"yeah so um i checked my calendar and thursday 7pm works for me","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"voice_rambler","text":"uh no sorry i have my sister visiting all weekend so i gotta pass on this one","answer":"no","keys":[]}
+{"kind":"probe","style":"esl_polite","text":"Yes, Saturday morning is good for me, thank you.","answer":"yes","keys":["b"]}
+{"kind":"probe","style":"esl_polite","text":"Sorry, I cannot come this week because work is very busy.","answer":"no","keys":[]}
+{"kind":"probe","style":"skeptical","text":"Wait who is this? Not comfortable saying yes yet.","answer":"unclear","keys":[]}
+{"kind":"probe","style":"skeptical","text":"Hard pass, don't set anything up.","answer":"no","keys":[]}
+{"kind":"probe","style":"one_word","text":"a","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"one_word","text":"b","answer":"yes","keys":["b"]}
+{"kind":"probe","style":"one_word","text":"nah","answer":"no","keys":[]}
+{"kind":"probe","style":"one_word","text":"pass","answer":"no","keys":[]}
+{"kind":"probe","style":"emoji","text":"👍 Thursday","answer":"yes","keys":["a"]}
+{"kind":"probe","style":"typo","text":"saturdy morning works great","answer":"yes","keys":["b"]}
+{"kind":"feedback","style":"genz_terse","text":"vibes were immaculate, definitely down again","sentiment":"positive","again":true}
+{"kind":"feedback","style":"genz_terse","text":"lowkey great night, would love to hang again","sentiment":"positive","again":true}
+{"kind":"feedback","style":"genz_terse","text":"deadass great time, super chill","sentiment":"positive"}
+{"kind":"feedback","style":"genz_terse","text":"that was fire, 10/10 coffee hang","sentiment":"positive"}
+{"kind":"feedback","style":"genz_terse","text":"kinda mid tbh wouldn't go back","sentiment":"negative","again":false}
+{"kind":"feedback","style":"genz_terse","text":"super awkward, kinda weird vibes","sentiment":"negative"}
+{"kind":"feedback","style":"formal_exec","text":"It went well and I really enjoyed the conversation; I would gladly meet again.","sentiment":"positive","again":true}
+{"kind":"feedback","style":"voice_rambler","text":"yeah so we talked for like two hours and really clicked totally down to hang again","sentiment":"positive","again":true}
+{"kind":"feedback","style":"one_word","text":"10/10!!","sentiment":"positive"}
+{"kind":"feedback","style":"skeptical","text":"honestly terrible experience, never again","sentiment":"negative","again":false}
+{"kind":"pitch","style":"vampire","text":"Book a 15-min demo to see our SaaS platform!","pitch":true}
+{"kind":"pitch","style":"vampire","text":"Here's my pitch deck — looking for b2b leads and agency clients.","pitch":true}
+{"kind":"pitch","style":"vampire","text":"Sign up for my coaching program, use my discount code for 20% off for members!","pitch":true}
+{"kind":"pitch","style":"benign_founder","text":"I work at a SaaS company in Mission and love bouldering on weekends.","pitch":false}
+{"kind":"pitch","style":"benign_founder","text":"Would love to grab coffee with other founders in SF, just trading notes.","pitch":false}
+{"kind":"pitch","style":"benign_founder","text":"I'm building a small developer tool and looking for hiking buddies.","pitch":false}
+{"kind":"age_and_area","style":"adult_sf","text":"I'm 29, based in Hayes Valley","age":29,"minor":false,"area":"Hayes Valley"}
+{"kind":"age_and_area","style":"adult_la","text":"I'm 34, living in Silver Lake","age":34,"minor":false,"area":"Silver Lake"}
+{"kind":"age_and_area","style":"adult_chicago","text":"I'm 27 and live in Lincoln Park","age":27,"minor":false,"area":"Lincoln Park"}
+{"kind":"age_and_area","style":"adult_miami","text":"I'm 31, based in Brickell","age":31,"minor":false,"area":"Brickell"}
+{"kind":"age_and_area","style":"teen_friends","text":"I'm 16 years old in Williamsburg, looking for chess buddies","age":16,"minor":true,"area":"Williamsburg"}
+{"kind":"age_and_area","style":"under13","text":"I'm 12 years old and live in Astoria","age":12,"minor":true,"area":"Astoria"}

@@ -23,10 +23,13 @@ import { HYPOTHESIS_CONFIDENCE, STALE_DAYS } from "./judgeConstants.ts";
 
 // ---- runner, cache, pass loop ---------------------------------------------------------------------
 
+export const DEFAULT_JUDGE_CACHE_MAX_ENTRIES = 4096;
+const DEFAULT_PASS_DEADLINE_MS = 30_000;
+
 /** System prompt + nonce-fenced context object as the user message (the prompt bytes every pass sends). */
 export const passMessages = (system: string, context: unknown): ChatMessage[] => [
   { role: "system", content: system.includes(UNTRUSTED_NOTE) ? system : `${system}\n${UNTRUSTED_NOTE}` },
-  { role: "user", content: fenceUntrusted(JSON.stringify(context), "context") },
+  { role: "user", content: fenceUntrusted(stableStringify(context), "context") },
 ];
 
 export interface JudgeRequest<V> {
@@ -34,18 +37,31 @@ export interface JudgeRequest<V> {
   version: string;
   messages: ChatMessage[];
   refs: Record<string, MemberId>;
-  settings: Pick<ChatJsonOptions, "maxTokens" | "temperature">;
+  settings: Pick<ChatJsonOptions, "maxTokens" | "temperature" | "deadlineMs" | "reasoningEffort" | "promptCacheKey">;
   parse(raw: unknown): V;
 }
 
 /** The same prepared messages and settings are used for the key and the provider call. */
 export function runPass<V>(llm: LLM, request: JudgeRequest<V>): Promise<V> {
-  return chatJson(llm, request.messages, request.parse, { attempts: 2, ...request.settings });
+  const defaultEffort = request.pass === "screen" || request.pass === "rubric" ? "low" as const : undefined;
+  return chatJson(llm, request.messages, request.parse, {
+    attempts: 2,
+    deadlineMs: DEFAULT_PASS_DEADLINE_MS,
+    promptCacheKey: `judge_${request.pass}_${request.version}`,
+    ...(defaultEffort ? { reasoningEffort: defaultEffort } : {}),
+    ...request.settings,
+  });
+}
+
+function sameProvider(entry: { llm?: LLM; cacheId?: string }, llm?: LLM): boolean {
+  if (entry.llm === llm) return true;
+  const nextId = llm?.cacheId;
+  return entry.cacheId !== undefined && nextId !== undefined && entry.cacheId === nextId;
 }
 
 export class JudgeCache<V = JudgeVerdict> {
-  private readonly entries = new Map<string, { verdict: V; at: number; llm?: LLM }>();
-  constructor(public ttlMs: number) {}
+  private readonly entries = new Map<string, { verdict: V; at: number; llm?: LLM; cacheId?: string }>();
+  constructor(public ttlMs: number, public readonly maxEntries = DEFAULT_JUDGE_CACHE_MAX_ENTRIES) {}
   get(key: string, now: number, llm?: LLM): V | undefined {
     const entry = this.entries.get(key);
     if (!entry) return undefined;
@@ -54,13 +70,24 @@ export class JudgeCache<V = JudgeVerdict> {
       if (!rewound) this.entries.delete(key);
       return undefined;
     }
-    if (entry.llm === llm) return structuredClone(entry.verdict);
+    if (sameProvider(entry, llm)) {
+      this.entries.delete(key);
+      this.entries.set(key, entry);
+      return structuredClone(entry.verdict);
+    }
   }
   set(key: string, verdict: V, now: number, llm?: LLM): void {
     const current = this.entries.get(key);
     // An older asynchronous run cannot overwrite a verdict from a later run.
     if (current && current.at > now) return;
-    this.entries.set(key, { verdict: structuredClone(verdict), at: now, llm });
+    if (this.maxEntries <= 0) return;
+    this.entries.delete(key);
+    this.entries.set(key, { verdict: structuredClone(verdict), at: now, llm, cacheId: llm?.cacheId });
+    while (this.entries.size > this.maxEntries) {
+      const oldest = this.entries.keys().next().value;
+      if (oldest === undefined) break;
+      this.entries.delete(oldest);
+    }
   }
   prune(now: number): void {
     for (const [key, entry] of this.entries) {
@@ -280,6 +307,7 @@ function leakReasons(text: string, privateVocab: Set<string>, extraForbidden: st
     else if (r.startsWith("forbidden:")) reasons.add("forbidden_phrase");
     else if (r.startsWith("contact:")) reasons.add("contact");
     else if (r.startsWith("canary:")) reasons.add("canary");
+    else if (r.startsWith("internal:")) reasons.add("internal_ranking_leak");
   }
   return [...reasons];
 }

@@ -24,6 +24,7 @@
     "clef": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/clef-fit.ts",
     "relay-eval": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/relay-eval.ts",
     "review-eval": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/review-eval.ts",
+    "journey-eval": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/journey-eval.ts",
     "check:mirror": "node --import tsx --env-file-if-exists=.env scripts/check-contract-mirror.ts",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p sites/tsconfig.json && tsc --noEmit -p apps/observatory/tsconfig.json && tsc --noEmit -p apps/observatory/deploy && corepack pnpm@10.24.0 --filter @thenetwork/site --filter @thenetwork/ui run typecheck && tsc --noEmit -p apps/marketing/tsconfig.json",
     "marketing": "node --import tsx --env-file-if-exists=.env apps/marketing/src/server.ts",

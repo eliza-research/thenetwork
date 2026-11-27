@@ -17,6 +17,7 @@ import { SLOP_LANE } from "./rules.ts";
 export interface DateStandingValidity { positives: number; negatives: number; concordantTwice: number; predicts: boolean }
 
 export const UNKNOWN_DATE_STANDING: EntityStanding = { standing: standingMiddle, uncertainty: standingUncertaintyCeiling };
+export const UNRATED_PREDICTIVE_DATE_STANDING: EntityStanding = { standing: standingMiddle, uncertainty: 10 };
 
 const poolKey = (market: City, p: SlopProfile): string => `${market}|${p.is ?? "unstated"}`;
 
@@ -73,8 +74,9 @@ export class DateStandings {
   }
 
   standing(p: SlopProfile, market: City): EntityStanding {
-    const placed = this.validity.predicts ? this.percentileIn(p, market) : undefined;
-    if (!placed) return UNKNOWN_DATE_STANDING;
+    if (!this.validity.predicts) return UNKNOWN_DATE_STANDING;
+    const placed = this.percentileIn(p, market);
+    if (!placed) return UNRATED_PREDICTIVE_DATE_STANDING;
     const { rating, pool } = placed;
     const r = p.appearance!;
     const spread = r.spread === undefined ? { low: 0, high: standingCeiling }

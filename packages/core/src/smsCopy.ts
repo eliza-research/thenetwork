@@ -1,6 +1,18 @@
 import { LeakGuard } from "./guard.ts";
+import { cityTimezone } from "./time.ts";
 
 export const SMS_MAX_CHARS = 360;
+
+export function cityTzLabel(city?: string | null): string {
+  const key = city?.trim().toLowerCase();
+  if (!key || key === "nyc") return "New York time";
+  const tz = cityTimezone(key);
+  if (tz === "America/Los_Angeles") return "Pacific time";
+  if (tz === "America/Chicago") return "Central time";
+  if (tz === "America/Denver") return "Mountain time";
+  if (tz === "America/New_York") return "Eastern time";
+  return tz ? `${tz} time` : "local time";
+}
 
 export function cleanPhrase(text: string): string {
   return text.replace(/_/g, " ").replace(/\?/g, "").replace(/\s+/g, " ").trim();
@@ -126,8 +138,8 @@ export function formatCrowdExpectation(
   const brand = cleanPhrase(opts.brandName || "the Network");
   if (mode === "network_curated") {
     return clampSms(
-      `This is a curated ${brand} meetup — everyone coming is a vetted member.`,
-      "This is a curated meetup — everyone coming is a vetted member."
+      `This is a small ${brand} meetup — everyone coming is a confirmed member of the group.`,
+      "This is a small meetup — everyone coming is a confirmed member of the group."
     );
   }
   const interest = cleanPhrase(opts.interest || "this meetup");
@@ -135,13 +147,13 @@ export function formatCrowdExpectation(
   if (opts.sparseAnchor) {
     const cityBit = opts.cityName ? ` in ${cleanPhrase(opts.cityName)}` : "";
     return clampSms(
-      `Heads up: you'll help anchor ${interest}${cityBit} with local guests screened from ${platforms}. If RSVPs stay under 3 by 24h out, I'll call it early so you don't waste a trip.`,
-      "Heads up: this is an open meetup with screened local guests. If RSVPs stay under 3 by 24h out, I'll call it early."
+      `Heads up: you'll help host ${interest}${cityBit} with local guests we checked from ${platforms}. If fewer than 3 people confirm 24 hours before, I'll cancel early so you don't waste a trip.`,
+      "Heads up: this is an open meetup with local guests we checked. If fewer than 3 people confirm 24 hours before, I'll cancel early."
     );
   }
   return clampSms(
-    `Heads up: this is an open ${interest} meetup with ${brand} members plus local ${platforms} guests we screened. Free public events can see last-minute drops, so we invite a few extra.`,
-    "Heads up: this is an open meetup with members plus screened local guests, so we invite a few extra."
+    `Heads up: this is an open ${interest} meetup with regulars from ${brand} plus local guests from ${platforms} we checked beforehand. Free public meetups sometimes have last-minute changes, so we invite a few extra.`,
+    "Heads up: this is an open meetup with regulars from the group plus local guests we checked beforehand, so we invite a few extra."
   );
 }
 

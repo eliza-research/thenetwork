@@ -424,12 +424,47 @@ function merge<T>(base: T, over: any): T {
   return out;
 }
 
+export const POST_SELECTION_JUDGE_DEFAULTS = {
+  enabled: true,
+  minConfidence: 0.35,
+  maxConfidence: 0.72,
+  backups: 1,
+} as const;
+
+export function withPostSelectionJudge(
+  base: EngineConfigInput = {},
+  overrides: { enabled?: boolean; minConfidence?: number; maxConfidence?: number; backups?: number } = {},
+): EngineConfigInput {
+  return {
+    ...base,
+    judge: {
+      ...base.judge,
+      postSelection: {
+        ...POST_SELECTION_JUDGE_DEFAULTS,
+        ...(typeof base.judge?.postSelection === "object" ? base.judge.postSelection : {}),
+        ...overrides,
+      },
+    },
+  };
+}
+
 export function resolveConfig(input: EngineConfigInput = {}): EngineConfig {
   const cfg = merge(DEFAULT_CONFIG, input);
   if (cfg.exploration.rate < 0 || cfg.exploration.rate > cfg.exploration.maxShare)
     throw new Error(`exploration.rate must be within [0, maxShare=${cfg.exploration.maxShare}]`);
   if (cfg.group.minSize < 3 || cfg.group.maxSize > 6 || cfg.group.minSize > cfg.group.maxSize)
     throw new Error("group size must be within 3..6 (Section 33.4)");
+  if (cfg.judge.postSelection && typeof cfg.judge.postSelection === "object") {
+    const { minConfidence, maxConfidence, backups } = cfg.judge.postSelection;
+    if (minConfidence !== undefined && (!Number.isFinite(minConfidence) || minConfidence < 0 || minConfidence > 1))
+      throw new Error("judge.postSelection.minConfidence must be within [0, 1]");
+    if (maxConfidence !== undefined && (!Number.isFinite(maxConfidence) || maxConfidence < 0 || maxConfidence > 1))
+      throw new Error("judge.postSelection.maxConfidence must be within [0, 1]");
+    if (minConfidence !== undefined && maxConfidence !== undefined && minConfidence > maxConfidence)
+      throw new Error("judge.postSelection.minConfidence must be <= maxConfidence");
+    if (backups !== undefined && (!Number.isInteger(backups) || backups < 0 || backups > 3))
+      throw new Error("judge.postSelection.backups must be an integer within 0..3");
+  }
   return cfg;
 }
 

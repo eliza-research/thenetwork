@@ -2,7 +2,7 @@
 // Nothing here is about a person. The join mode and the ages come from the platform registry
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
 import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
-import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
+import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, LAUNCH_CITIES, type AppId as McpAppId, type CityId } from "../../core/src/types.ts";
 import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appListed, appOffered, hostBindsApp } from "../../core/src/generated/connectorTools.ts";
 import { appEndpointPath, appOpenAiEndpointPath } from "../../core/src/generated/agentEntry.ts";
 import { teenFriendApp } from "../../core/src/generated/matchLane.ts";
@@ -29,6 +29,8 @@ export interface McpApp {
   ages: { join: number; match: number };
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
+  consent: { text: string; version: string };
+  cities: readonly CityId[];
   links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; support: string };
   openai: boolean;
 }
@@ -45,6 +47,8 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     joinMode: p.joinMode,
     ages: { join: p.minJoinAge, match: p.minMatchAge },
     adultsOnly: [teenFriendApp(id) ? TEEN_FRIEND_RULE : DATING_AGE_RULE, ...(extra.adultsOnly ?? [])],
+    consent: { text: p.consent.text, version: p.consent.version },
+    cities: LAUNCH_CITIES,
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,
@@ -62,7 +66,7 @@ export function defaultApps(): Record<McpAppId, McpApp> {
       adultsOnly: ["Photos and any rating of looks are for adults (18+) only; the stated age counts (no ID check). They are never asked of, stored for or shown to anyone under 18."],
     }),
     peon: app("peon", "peon.biz", "peon.biz", "Work and hiring by text message. It introduces people looking for work to people hiring, and a person makes every decision.", "peon", {}),
-    friends: app("friends", "friends.help", "friends.help", "Friends and plans in New York City by text message, in small groups at public places.", "friends", {}),
+    friends: app("friends", "friends.help", "friends.help", "Friends and plans in NYC, SF, LA, Chicago and Miami by text message, in small groups at public places.", "friends", {}),
   };
 }
 

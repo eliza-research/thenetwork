@@ -25,9 +25,19 @@ export interface BrowserSignup {
 
 type BrowserSignupResult = { ok: true; membership: Membership; created: boolean } | { ok: false; error: JoinError };
 
-export type AssistantKind = "chatgpt" | "claude" | "grok" | "web";
+export type AssistantKind = "chatgpt" | "claude" | "grok" | "local_agent" | "web";
 
-export interface PublicUpdate { summary: string; at: string; kind: string }
+export interface PublicUpdate {
+  summary: string;
+  at: string;
+  kind: string;
+  actionRequired?: boolean;
+  deadlineAt?: string;
+  crowdType?: string;
+  venueName?: string;
+  pivotStatus?: string;
+  city?: string;
+}
 
 export interface SavedProfileFields {
   firstName: string | null;
@@ -35,6 +45,13 @@ export interface SavedProfileFields {
   interests: unknown;
   neighborhood: unknown;
   homeCity: unknown;
+  redLines?: unknown;
+}
+
+export interface LeakContext {
+  forbidden?: string[];
+  facts?: string[];
+  allow?: string[];
 }
 
 export interface LookingForEntry {
@@ -92,7 +109,8 @@ export interface PlatformHooks {
   minorMember(personId: string, phoneKey: string): Promise<boolean>;
   minorNotice?(personId: string, app: McpAppId, phoneKey: string): Promise<MinorNotice | undefined>;
   readProfile(personId: string, app: McpAppId, phoneKey: string): Promise<SavedProfileFields | undefined>;
-  submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped">;
+  leakContext?(personId: string, app: McpAppId, phoneKey: string): Promise<LeakContext | undefined>;
+  submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped" | { status: "accepted"; nextQuestion?: string }>;
   lookingFor?(personId: string, app: McpAppId, phoneKey: string): Promise<LookingForView | undefined>;
   changeLookingFor?(personId: string, app: McpAppId, phoneKey: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult>;
   photoHoldings?(personId: string, app: McpAppId, phoneKey: string): Promise<PhotoHoldingsView | undefined>;
@@ -128,7 +146,8 @@ export interface PlatformParts {
   cookieName?(id: McpAppId): string;
   sessionMaxAge?: number;
   secureCookie?: boolean;
-  submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member">;
+  submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member" | { status: "accepted"; nextQuestion?: string }>;
+  leakContext?: (personId: string, app: McpAppId, e164: string) => Promise<LeakContext | undefined>;
   lookingFor?: (personId: string, app: McpAppId, e164: string) => Promise<LookingForView | undefined>;
   minorNotice?: (personId: string, app: McpAppId, e164: string) => Promise<MinorNotice | undefined>;
   changeLookingFor?: (personId: string, app: McpAppId, e164: string, grantId: string, ref: string, change: LookingForChange) => Promise<LookingForResult>;
@@ -259,6 +278,15 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       if (!who || who.person.id !== personId) return true;
       return !canBeMatched(await p.accounts.lowestAge(who.e164, who.person));
     },
+    async leakContext(personId, id, key) {
+      const e164 = await ownerE164(personId, key);
+      const extra = e164 && p.leakContext ? await p.leakContext(personId, id, e164) : undefined;
+      return {
+        forbidden: [key, personId, ...(e164 ? [e164] : []), ...(extra?.forbidden ?? [])],
+        ...(extra?.facts?.length ? { facts: extra.facts } : {}),
+        ...(extra?.allow?.length ? { allow: extra.allow } : {}),
+      };
+    },
     async readProfile(personId, id, key) {
       const app = p.app(id);
       const e164 = await ownerE164(personId, key);
@@ -266,7 +294,10 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
       const own = await p.accounts.activeMembership(app, { e164, personId });
       if (!own || await p.memberHeld?.(app.id, own.membership.memberId)) return;
       const { firstName, profile } = own.membership;
-      return { firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity };
+      return {
+        firstName, about: profile.about, interests: profile.interests, neighborhood: profile.neighborhood, homeCity: profile.homeCity,
+        ...(profile.redLines !== undefined ? { redLines: profile.redLines } : {}),
+      };
     },
     async signupEnrollment(id, who) {
       const app = p.app(id);
