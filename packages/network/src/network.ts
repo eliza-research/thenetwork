@@ -165,7 +165,7 @@ import { draftUsesMatchingSlot, newMatchCategoryAllowed, newMatchParticipationAl
 import { DESIRES, desireById, INTERESTS, skillFirstPerson, SKILLS, type DesireDef } from "@thenetwork/engine/src/packs/network/vocabulary.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { birthdayRecorded, minorNoticeFor, minorScopeNoticeDue, scopeNoticeTurnOpens, soloTeenApp, statedAgeNow, teenBirthDateContradicted, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
-import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, extractRedLineTags, feedbackOf, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, plansPlaceQuestionForCity, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
+import { ageAnswer, agesStated, availabilityTags, birthDateAnswer, birthDateStated, classify, explicitlyBusyThisWeek, explicitRepeatRequest, extractProfile, extractRedLineTags, feedbackOf, ownDietaryTags, isCompleteParticipationRefusal, isNamedProbeTime, isProbeCounterTime, NOBODY_CAME, consentOf, parseProbeReply, planAgainOf, plansPlaceQuestionFor, plansPlaceQuestionForCity, publicPlanLocation, sentencesOf, statedAge, unclearBirthDateAnswer, type Classified, type TimeOption } from "./classify.ts";
 import { mergeConsent, type Understand, type Understood } from "./extract.ts";
 import {
   directInviteVouch, inviteReviewContactToken, inviteReviewReference, inviteVouchEvidence, inviteVouchRisk, isMemberInvitationLink,
@@ -2136,6 +2136,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (this.opts.onboardingRequests && c.kind === "people_request" && c.desireId && c.category !== "social" && !m.minor) this.openRequest(m, c, { quiet: true });
       return;
     }
+    if (this.learnDietary(m, body, !isRequest) && !isRequest) return;
     if (!isRequest && m.stage !== "active") this.activate(m); // onboarding stalled; carry on
     if (isRequest && m.stage !== "active") { this.activate(m); m.awaiting = undefined; }
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
@@ -2659,6 +2660,20 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private minorNoticeText(m: MemberState): string {
     return this.copy.minorScopeNotice(this.minorNoticeKind(m));
+  }
+
+  /** A dietary or allergen fact the member states in their own text joins the stored red lines the engine reads. */
+  private learnDietary(m: MemberState, body: string, readBack: boolean): boolean {
+    const tags = ownDietaryTags(body);
+    if (!tags.length) return false;
+    m.learned.redLines ??= new Set();
+    const fresh = tags.filter(t => !m.learned.redLines!.has(t));
+    if (!fresh.length) return false;
+    fresh.forEach(t => m.learned.redLines!.add(t));
+    this.dirty = true;
+    if (readBack) this.send(m, "Got it — I saved that to your profile and I'll keep it in mind for places I suggest.", { type: "info" }, "reply");
+    this.ctx.log("learned", { memberId: m.id, interests: [], skills: [], desires: [], redLines: fresh });
+    return true;
   }
 
   private learnFrom(m: MemberState, body: string, reasons: readonly string[] = []) {
