@@ -19,7 +19,7 @@ import {
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { canReceiveProposalAnswer, canSubmitProposal, groupProposal, initial as initialWorkspace, proposalFormShown, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { signInView } from "../../../packages/core/src/generated/staffSignIn.ts";
-import type { EnvInfo, Mode, SearchHit } from "../src/types.ts";
+import type { ClockInfo, EnvInfo, Mode, SearchHit } from "../src/types.ts";
 import { AppPage } from "./apps.tsx";
 import { Drawer } from "./drawer.tsx";
 import { EDGE_STYLE, GraphView } from "./graph.ts";
@@ -35,6 +35,9 @@ const SPEEDS: [string, number][] = [["1h/s", HOUR], ["6h/s", 6 * HOUR], ["1d/s",
 const CATEGORIES: Category[] = ["social", "professional", "hobby", "help", "romance", "growth", "events"];
 const TOAST_VARIANT = { info: "info", good: "ok", bad: "destructive" } as const;
 
+// The simulator already caps its clock at the configured period end.
+const periodComplete = (clock?: ClockInfo) => clock?.end !== undefined && clock.now >= clock.end;
+
 export function App() {
   const s = useStore();
   const [token, setToken] = useState("");
@@ -48,7 +51,7 @@ export function App() {
       const field = (e.target as Element | null)?.closest?.("input, textarea, select");
       if (e.key === "Escape") { store.escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
       if (field || e.metaKey || e.ctrlKey || e.altKey) return;
-      const canStep = !!store.env?.capabilities.canStep && store.canSim();
+      const canStep = !!store.env?.capabilities.canStep && store.canSim() && !periodComplete(store.clock);
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
       else if (e.key === "?") store.toggleHelp();
       else if (e.key === "g") store.showStage(store.ui.view === "map" ? "graph" : "map");
@@ -153,17 +156,19 @@ function Transport() {
   const busy = c?.busy ? <span className="animate-pulse text-sm whitespace-nowrap text-primary">{c.busy}…</span> : null;
   if (env.capabilities.canStep && c) {
     if (!s.canSim()) return busy;
+    const complete = periodComplete(c);
     return (
       <div className="flex flex-wrap items-center gap-2">
-        <Button size="icon" aria-label={c.playing ? "Pause" : "Play"} title="Play or pause (space)" onClick={() => store.control({ type: c.playing ? "pause" : "play" })}>
+        <Button size="icon" disabled={complete} aria-label={c.playing ? "Pause" : "Play"} title="Play or pause (space)" onClick={() => store.control({ type: c.playing ? "pause" : "play" })}>
           <svg {...icon} fill="currentColor">{c.playing ? <path d="M4 3h3v10H4zM9 3h3v10H9z" /> : <path d="M4 2.5v11L13 8z" />}</svg>
         </Button>
-        <Button variant="outline" size="sm" title="Step one hour (n)" onClick={() => store.control({ type: "step", ms: HOUR })}>+1h</Button>
-        <Button variant="outline" size="sm" title="Step one day (d)" onClick={() => store.control({ type: "step", ms: DAY })}>+1d</Button>
+        <Button variant="outline" size="sm" disabled={complete} title="Step one hour (n)" onClick={() => store.control({ type: "step", ms: HOUR })}>+1h</Button>
+        <Button variant="outline" size="sm" disabled={complete} title="Step one day (d)" onClick={() => store.control({ type: "step", ms: DAY })}>+1d</Button>
         <Select className="h-8 w-24" aria-label="Speed" value={String(c.speed)} onValueChange={v => store.control({ type: "speed", speed: Number(v) })}>
           {SPEEDS.map(([l, v]) => <SelectItem key={l} value={String(v)}>{l}</SelectItem>)}
         </Select>
         {busy}
+        {complete && <span role="status" className="text-sm whitespace-nowrap text-muted-foreground">Simulation period complete</span>}
         {c.waitingForPlayer && <span className="animate-pulse text-sm whitespace-nowrap text-warn">waiting for you</span>}
       </div>
     );
