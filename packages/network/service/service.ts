@@ -11,7 +11,7 @@ import {
   type City, type CityId, type Clock, type Intent, type LLM, type MemberId, type PersonaHealthStatus, type VenueStatus,
 } from "@thenetwork/core";
 import { modelReviewJudge, REVIEW_JUDGE_REVIEWER, type ReviewJudge } from "../../engine/src/reviewJudge.ts";
-import { engineJudgeLimitsFromEnv, llmSpentMicros, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
+import { engineJudgeLimitsFromEnv, llmUsageForDay, ReviewJudgeWorker, reviewJudgeLimitsFromEnv } from "./review-judge.ts";
 import { pendingReportReplyNames, storedInviterCurrent, type ActionResult, type AgentStandingResult, type NetworkOptions, type NetworkState, type PendingReportChoice, type ReviewDecision, type ReviewOptions, type StandingView } from "../src/network.ts";
 import { brandOf, copy as ntwrkCopy, copyFor, ELIZA_NOTICE, type Copy } from "../src/copy.ts";
 import { personDailyCap } from "../../core/src/generated/outreachPolicy.ts";
@@ -929,7 +929,7 @@ export class NetworkService implements RuntimeHost {
     const [envRow] = await this.sql`select value from platform.settings where key = 'environment'`;
     if (declared && envRow?.value !== declared) throw new Error(`PLATFORM_ENV is ${declared} but platform.settings.environment is ${envRow ? envRow.value : "missing"}: fix one of them`);
     const injected = this.relayClassifier;
-    this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost);
+    this.relayHookFor = injected ? () => injected : relayClassifierFromEnv(this.env, this.log, this.cost, { now: () => this.clock.now() });
     await replayPrivacyAtStart(this);
     for (const app of this.engineBudgets.keys()) await this.refreshEngineBudget(app);
     for (const rt of this.runtimes.values()) await rt.start();
@@ -938,6 +938,7 @@ export class NetworkService implements RuntimeHost {
   /** One tick on every network, each under its own lock. True when any network ran (one network: whether it ran). */
   async tick(): Promise<boolean> {
     await this.inboxTick();
+    await this.refreshEngineBudgets();
     const ran: NetworkRuntime[] = [];
     for (const rt of this.runtimes.values()) if (await rt.tick()) ran.push(rt);
     if (ran.length) await this.reviewJudgeTick(ran);
@@ -945,10 +946,14 @@ export class NetworkService implements RuntimeHost {
     return ran.length > 0;
   }
 
-  async reviewJudgeTick(runtimes: readonly NetworkRuntime[] = [...this.runtimes.values()]): Promise<void> {
+  async refreshEngineBudgets(): Promise<void> {
     for (const app of this.engineBudgets.keys()) {
       await this.refreshEngineBudget(app).catch(e => this.log(`[engine-judge] the budget refresh waits for the next tick (${app}): ${(e as Error).message}`));
     }
+  }
+
+  async reviewJudgeTick(runtimes: readonly NetworkRuntime[] = [...this.runtimes.values()]): Promise<void> {
+    await this.refreshEngineBudgets();
     await Promise.all(runtimes.map(rt => this.reviewJudgeWorker.run(rt, this.judgeAbort.signal)
       .catch(e => this.log(`[review-judge] the judge pass waits for the next tick (${rt.id}): ${(e as Error).message}`))));
   }
@@ -957,14 +962,14 @@ export class NetworkService implements RuntimeHost {
     const entry = this.engineBudgets.get(app);
     if (!entry) return;
     const day = dayOf(this.clock.now());
-    const [spentMicro, reqRows] = await Promise.all([
-      llmSpentMicros(this.sql, app, day, "engine_judge"),
-      this.sql<{ n: number }[]>`select count(*)::int as n from network.cost_ledger
-        where app_id = ${app} and day = ${day} and kind = 'llm' and detail->>'purpose' = 'engine_judge'`,
-    ]);
-    entry.budget.spentMicro = spentMicro;
-    entry.budget.requests = Number(reqRows[0]?.n ?? 0);
-    entry.day = day;
+    const { spentMicros, requests } = await llmUsageForDay(this.sql, app, day, "engine_judge");
+    entry.budget.spentMicro = spentMicros;
+    if (entry.day !== day) {
+      entry.budget.requests = requests;
+      entry.day = day;
+    } else {
+      entry.budget.requests = Math.max(entry.budget.requests, requests);
+    }
   }
 
   /**
@@ -3056,7 +3061,7 @@ export class NetworkService implements RuntimeHost {
         floorRefused: floor !== undefined && !canJoinApp(floor, app) },
     });
     const requestHome = async (): Promise<InboundOutcome> => {
-      await this.direct(rt, ev.from, "Tell me your home city: New York or San Francisco / Bay Area. Include your first name and birthday (month, day and year).", `sys:${rowId}`, "reply");
+      await this.direct(rt, ev.from, "Tell me your home city: New York, San Francisco / Bay Area, Los Angeles, Chicago, or Miami. Include your first name and birthday (month, day and year).", `sys:${rowId}`, "reply");
       return "join_asked";
     };
     const declineAge = async (stated: boolean): Promise<InboundOutcome> => {

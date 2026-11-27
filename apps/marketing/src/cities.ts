@@ -1,3 +1,4 @@
+import { getCity, LAUNCH_CITIES } from "@thenetwork/core";
 import {
   CITY_LAUNCH_STAGES,
   UnknownCityError,
@@ -27,6 +28,8 @@ import {
 } from "./city-registry.ts";
 
 import type { BrandAppId } from "./types.ts";
+
+const LAUNCH_CITY_SET = new Set<string>(LAUNCH_CITIES);
 
 export const SUPPORTED_CITIES = [
   "nyc",
@@ -156,7 +159,12 @@ function withLaunchStatus(pack: CityPack): CityLaunchConfig {
       : pack.stage === "waitlist_kindling" || pack.stage === "liquidity_seeding"
         ? "waitlist"
         : "planned";
-  return { ...pack, launchStatus };
+  const core = LAUNCH_CITY_SET.has(pack.code) ? getCity(pack.code) : undefined;
+  return {
+    ...pack,
+    ...(core ? { label: core.name, timezone: core.tz } : {}),
+    launchStatus,
+  };
 }
 
 export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {

@@ -15,7 +15,7 @@ import { NEIGHBORHOOD, SF_NEIGHBORHOOD } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
-  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsCitySummary, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, ObsVenue, OpportunityDetail, ParticipantStatus,
+  JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, ObsVenue, OpportunityDetail, ParticipantStatus,
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
@@ -319,7 +319,6 @@ class ObsStore {
   truth?: Record<string, MemberTruth>;
   network?: NetworkInfo;
   requests: ObsRequest[] = [];
-  citiesList: ObsCitySummary[] = [];
   venuesList: ObsVenue[] = [];
   selectedCity: City | "all" = "all";
   /** The signed-in staff member (GET /api/me). Undefined until it answers. */
@@ -489,7 +488,7 @@ class ObsStore {
       });
       if (next === this.sync) throw new Error("Invalid state for the selected view");
       this.loadReveals();
-      void this.loadCitiesAndVenues(generation);
+      void this.loadVenues(generation);
       if (this.filtersMode !== this.mode) { this.filtersMode = this.mode; this.ui = { ...this.ui, filters: loadFilters(this.mode) }; }
       this.applyFull(state);
       this.sync = next;
@@ -741,15 +740,11 @@ class ObsStore {
   runDiff(a: string, b: string) { return this.fetch<RunDiff>(`/api/runs/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`); }
   lab() { return this.fetch<{ enabled: boolean; running: number; runs: LabRun[] }>("/api/lab"); }
   appsHealth() { return this.fetch<{ mode: Mode; apps: AppHealth[] }>("/api/apps/health"); }
-  cities() { return this.fetch<{ cities: ObsCitySummary[] }>("/api/cities"); }
   venues(city?: City) { return this.fetch<{ city: string; venues: ObsVenue[] }>(city ? `/api/venues?city=${encodeURIComponent(city)}` : "/api/venues"); }
-  private async loadCitiesAndVenues(generation: number) {
-    const [c, v] = await Promise.all([this.cities(), this.venues()]);
+  private async loadVenues(generation: number) {
+    const v = await this.venues();
     if (generation !== this.sync.generation) return;
-    let changed = false;
-    if (c.data?.cities) { this.citiesList = c.data.cities; changed = true; }
-    if (v.data?.venues) { this.venuesList = v.data.venues; changed = true; }
-    if (changed) this.notify();
+    if (v.data?.venues) { this.venuesList = v.data.venues; this.notify(); }
   }
   setCity(city: City | "all") {
     this.selectedCity = city;

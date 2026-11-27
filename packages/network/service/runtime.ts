@@ -242,6 +242,7 @@ export class NetworkRuntime {
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
+  private memberToEmail = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
@@ -288,6 +289,7 @@ export class NetworkRuntime {
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
+      workIntroEmailOf: o.network?.workIntroEmailOf ?? (id => this.emailOf(id)),
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: this.engineConfig,
       app: o.app, city: o.city, inlineJudge: undefined, store: this.store,
@@ -1141,7 +1143,7 @@ export class NetworkRuntime {
    * platform keep their channel_identities rows (one per app and address).
    */
   async identities() {
-    const [legacy, platform] = await this.scoped(async tx => [
+    const [legacy, platform, emails] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
         where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.person_id is null
@@ -1150,8 +1152,12 @@ export class NetworkRuntime {
       // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
+      await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
+        join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
+        where ci.app_id = ${this.app.id} and ci.channel = 'email'
+          and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
     ]);
-    this.addrToMember.clear(); this.memberToAddr.clear();
+    this.addrToMember.clear(); this.memberToAddr.clear(); this.memberToEmail.clear();
     for (const r of [...platform, ...legacy] as any[]) {
       if (!this.cities.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
@@ -1159,11 +1165,17 @@ export class NetworkRuntime {
       if (!this.addrToMember.has(a)) this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
     }
+    for (const r of emails as any[]) {
+      if (!this.cities.includes(r.home_city)) continue;
+      const email = typeof r.address === "string" ? r.address.trim() : "";
+      if (email.includes("@") && !this.memberToEmail.has(r.member_id)) this.memberToEmail.set(r.member_id, email);
+    }
   }
 
   /** Address to member of this app (E.164 or Apple ID, normalized), from the last refresh. */
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
+  emailOf = (id: MemberId): string | undefined => this.memberToEmail.get(id);
 
   signedMemberTurn(memberId: MemberId, messageId?: string): boolean {
     const turn = this.host.inboundTurn?.();

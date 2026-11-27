@@ -8,6 +8,7 @@
 //   pnpm run sim --only slop          one block (repeatable or comma-separated: --only network,peon)
 //   pnpm run sim --skip matching     run the default blocks except matching, which CI runs in parallel
 //   pnpm run sim --only matching --matching-pack friends  run one matching pack with the pinned workload
+//   pnpm run sim --jobs 4             run independent blocks (and matching packs) in parallel child processes
 //   pnpm run sim --quick              fewer seeds and shorter runs; quality gates become tracked
 //   pnpm run sim --with-capital       also the network-capital block (slow: 32 paired seeds; nightly)
 //   pnpm run sim --json out.json      write every gate to a file
@@ -45,6 +46,11 @@
 //   marketing global multi-city marketing growth engine: 30-day NYC+SF deterministic world, 7 adversarial storms,
 //             Dafny policy invariants, LLM cache/budget, core queue backpressure, and paired Bandit vs Uniform CPA
 //   capital   network capital: 32 paired seeds, 90 days (--with-capital or --only capital)
+import { spawn } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { availableParallelism, tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { writePath } from "../packages/core/src/runtime/files.ts";
 import { Block, type Gate } from "./sim/gate.ts";
 
@@ -71,6 +77,31 @@ const BLOCKS: Record<string, (b: Block, o: Opts) => Promise<void>> = {
   capital: async (b, o) => (await import("./sim/capital.ts")).capitalBlock(b, o),
 };
 const DEFAULT = ["evals", "onboard", "network", "matching", "slop", "relay", "peon", "peon-seats", "friends", "meetup", "clef", "five-city", "safety", "ops", "pipeline", "pipeline-slop", "audit", "marketing"];
+const DISPATCH_WEIGHT: Readonly<Record<string, number>> = {
+  capital: 100,
+  "matching:ntwrk": 95,
+  "matching:slop": 92,
+  "matching:friends": 88,
+  "matching:peon": 84,
+  matching: 95,
+  network: 70,
+  slop: 65,
+  friends: 60,
+  peon: 55,
+  "pipeline-slop": 50,
+  audit: 45,
+  safety: 40,
+  pipeline: 35,
+  ops: 30,
+  meetup: 28,
+  "five-city": 25,
+  marketing: 22,
+  onboard: 20,
+  relay: 15,
+  "peon-seats": 12,
+  clef: 10,
+  evals: 5,
+};
 
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
@@ -83,11 +114,25 @@ const run = only.length ? only : [...DEFAULT, ...(argv.includes("--with-capital"
 if (!run.length) { console.error("Select at least one simulation block."); process.exit(2); }
 const matchingPacks = values("matching-pack").filter(Boolean);
 const matchingPack = matchingPacks[0];
+const workerOut = values("sim-worker").find(Boolean);
+const hasJobsFlag = argv.some(arg => arg === "--jobs" || arg.startsWith("--jobs="));
+let jobs = 1;
+if (hasJobsFlag) {
+  const rawJobs = values("jobs").map(s => s.trim()).filter(Boolean);
+  if (rawJobs.length === 0 || (rawJobs.length === 1 && rawJobs[0]!.startsWith("-"))) {
+    jobs = Math.min(4, availableParallelism());
+  } else if (rawJobs.length === 1 && /^\d+$/.test(rawJobs[0]!) && Number(rawJobs[0]!) >= 1) {
+    jobs = Number(rawJobs[0]!);
+  } else {
+    console.error(`--jobs requires a positive integer (got: ${rawJobs.join(", ")}).`);
+    process.exit(2);
+  }
+}
 const opts: Opts = { quick: argv.includes("--quick"), llm: argv.includes("--llm"), transcripts: argv.includes("--transcripts"), matchingPack };
 
 // Simulations never call a model: fail fast if any code path tries. The one exception is the
 // onboarding LLM arm, which runs only with --llm (and only in the onboard block).
-if (opts.llm) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)");
+if (opts.llm) { if (!workerOut) console.log("--llm: provider keys kept for the onboarding LLM arm (tracked gates only)"); }
 else for (const k of ["OPENAI_API_KEY", "SURPLUS_API_KEY", "CLOUDFLARE_AI_TOKEN"]) delete process.env[k];
 
 if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pack="))) {
@@ -98,18 +143,149 @@ if (argv.some(arg => arg === "--matching-pack" || arg.startsWith("--matching-pac
   }
 }
 
-const all: Gate[] = [];
-const timings: Record<string, number> = {};
-const t0 = performance.now();
-for (const name of run) {
-  console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
+if (workerOut) {
+  const name = run[0]!;
   const b = new Block(name);
   const t = performance.now();
   try { await BLOCKS[name]!(b, opts); } catch (e) { b.gate(`${name} block ran to completion`, false, (e as Error)?.stack ?? String(e)); }
-  timings[name] = Math.round((performance.now() - t) / 100) / 10;
-  all.push(...b.gates);
-  const failed = b.gates.filter(g => g.blocking && !g.pass).length, tracked = b.gates.filter(g => !g.blocking).length;
-  console.log(`-- ${name}: ${b.gates.length - tracked - failed}/${b.gates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+  const durationMs = performance.now() - t;
+  await writePath(workerOut, JSON.stringify({ block: name, pack: opts.matchingPack ?? null, durationMs, gates: b.gates }));
+  process.exit(b.gates.some(g => g.blocking && !g.pass) ? 1 : 0);
+}
+
+interface WorkerTask {
+  readonly id: string;
+  readonly block: string;
+  readonly pack?: string;
+}
+
+interface WorkerResult {
+  readonly task: WorkerTask;
+  readonly gates: Gate[];
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly startMs: number;
+  readonly endMs: number;
+}
+
+function runWorkerTask(scriptPath: string, task: WorkerTask, outFile: string): Promise<WorkerResult> {
+  return new Promise(resolve => {
+    const args = [...process.execArgv, scriptPath, "--only", task.block, "--sim-worker", outFile];
+    if (task.pack) args.push("--matching-pack", task.pack);
+    if (opts.quick) args.push("--quick");
+    if (opts.llm) args.push("--llm");
+    if (opts.transcripts) args.push("--transcripts");
+
+    const startMs = performance.now();
+    const child = spawn(process.execPath, args, { env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const outChunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    child.stdout.on("data", (chunk: Buffer) => outChunks.push(chunk));
+    child.stderr.on("data", (chunk: Buffer) => errChunks.push(chunk));
+
+    const finish = (code: number | null, signal: NodeJS.Signals | null, spawnErr?: Error) => {
+      const endMs = performance.now();
+      const stdout = Buffer.concat(outChunks).toString("utf8");
+      const stderr = Buffer.concat(errChunks).toString("utf8");
+      let gates: Gate[] = [];
+      if (existsSync(outFile)) {
+        try {
+          const parsed = JSON.parse(readFileSync(outFile, "utf8")) as { gates?: Gate[] };
+          if (Array.isArray(parsed.gates)) gates = parsed.gates;
+        } catch (e) {
+          gates = [{ block: task.block, name: `${task.id} worker produced valid output`, pass: false, blocking: true, detail: (e as Error)?.message ?? String(e) }];
+        }
+      } else {
+        const why = spawnErr ? spawnErr.message : signal ? `killed by ${signal}` : `exited with code ${code}`;
+        gates = [{ block: task.block, name: `${task.id} block ran to completion`, pass: false, blocking: true, detail: why }];
+      }
+      resolve({ task, gates, stdout, stderr, startMs, endMs });
+    };
+
+    child.on("error", err => finish(null, null, err));
+    child.on("close", (code, signal) => finish(code, signal));
+  });
+}
+
+const all: Gate[] = [];
+const timings: Record<string, number> = {};
+const t0 = performance.now();
+
+const shouldParallelize = jobs > 1 && (run.length > 1 || (run.length === 1 && run[0] === "matching" && !opts.matchingPack));
+
+if (!shouldParallelize) {
+  for (const name of run) {
+    console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
+    const b = new Block(name);
+    const t = performance.now();
+    try { await BLOCKS[name]!(b, opts); } catch (e) { b.gate(`${name} block ran to completion`, false, (e as Error)?.stack ?? String(e)); }
+    timings[name] = Math.round((performance.now() - t) / 100) / 10;
+    all.push(...b.gates);
+    const failed = b.gates.filter(g => g.blocking && !g.pass).length, tracked = b.gates.filter(g => !g.blocking).length;
+    console.log(`-- ${name}: ${b.gates.length - tracked - failed}/${b.gates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+  }
+} else {
+  const { MATCHING_PACKS } = run.includes("matching") && !opts.matchingPack
+    ? await import("./sim/matching.ts")
+    : { MATCHING_PACKS: [] as readonly string[] };
+  const tasksByBlock = new Map<string, WorkerTask[]>();
+  const tasks: WorkerTask[] = [];
+  for (const name of run) {
+    const group: WorkerTask[] = name === "matching" && !opts.matchingPack
+      ? MATCHING_PACKS.map(pack => ({ id: `matching:${pack}`, block: "matching", pack }))
+      : [{ id: name, block: name, ...(name === "matching" && opts.matchingPack ? { pack: opts.matchingPack } : {}) }];
+    tasksByBlock.set(name, group);
+    tasks.push(...group);
+  }
+
+  const queue = [...tasks].sort((a, b) => (DISPATCH_WEIGHT[b.id] ?? 10) - (DISPATCH_WEIGHT[a.id] ?? 10));
+  const results = new Map<string, WorkerResult>();
+  const scriptPath = fileURLToPath(import.meta.url);
+  const tmpDir = mkdtempSync(join(tmpdir(), "thenetwork-sim-"));
+  let nextPrintIdx = 0;
+
+  const flushReadyBlocks = () => {
+    while (nextPrintIdx < run.length) {
+      const name = run[nextPrintIdx]!;
+      const group = tasksByBlock.get(name)!;
+      if (!group.every(t => results.has(t.id))) break;
+      const done = group.map(t => results.get(t.id)!);
+      console.log(`\n== ${name}${opts.quick ? " (quick)" : ""}`);
+      const blockGates: Gate[] = [];
+      let minStart = Infinity, maxEnd = 0;
+      for (const r of done) {
+        if (r.stdout) process.stdout.write(r.stdout);
+        if (r.stderr) process.stderr.write(r.stderr);
+        blockGates.push(...r.gates);
+        if (r.startMs < minStart) minStart = r.startMs;
+        if (r.endMs > maxEnd) maxEnd = r.endMs;
+      }
+      timings[name] = Math.round(Math.max(0, maxEnd - minStart) / 100) / 10;
+      all.push(...blockGates);
+      const failedCount = blockGates.filter(g => g.blocking && !g.pass).length;
+      const tracked = blockGates.filter(g => !g.blocking).length;
+      console.log(`-- ${name}: ${blockGates.length - tracked - failedCount}/${blockGates.length - tracked} blocking gates pass${tracked ? `, ${tracked} tracked` : ""} (${timings[name]}s)`);
+      nextPrintIdx++;
+    }
+  };
+
+  try {
+    let cursor = 0;
+    const workerCount = Math.min(jobs, queue.length);
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (cursor < queue.length) {
+        const idx = cursor++;
+        const task = queue[idx]!;
+        const outFile = join(tmpDir, `${idx}-${task.id.replace(/[^a-z0-9_-]/gi, "_")}.json`);
+        const res = await runWorkerTask(scriptPath, task, outFile);
+        results.set(task.id, res);
+        flushReadyBlocks();
+      }
+    }));
+    flushReadyBlocks();
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
+  }
 }
 
 const failed = all.filter(g => g.blocking && !g.pass);

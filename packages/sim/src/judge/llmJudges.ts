@@ -75,7 +75,7 @@ const strings = (j: Record<string, unknown>, k: string): string[] => {
 const text = (j: Record<string, unknown>, k: string) => (typeof j[k] === "string" ? (j[k] as string) : "");
 
 export async function judgeMessageQuality(llm: LLM | undefined, input: { message: string; context?: string }, o?: JudgeOptions): Promise<QualityVerdict> {
-  return ask(llm, `${RUBRICS.messageQuality}\nReturn ONLY JSON: {"score": 1-5, "pass": boolean, "issues": string[], "reasoning": "one sentence"}`,
+  return ask(llm, `${RUBRICS.messageQuality}\nReturn ONLY JSON: {"reasoning": "one sentence", "score": 1-5, "pass": boolean, "issues": string[]}`,
     `${input.context ? `Context:\n${fenceUntrusted(input.context, "context")}\n` : ""}Message:\n${fenceUntrusted(input.message, "message")}`, j => {
       const score = score15(j);
       return { score, pass: score >= 4, issues: strings(j, "issues"), reasoning: text(j, "reasoning") };
@@ -83,19 +83,19 @@ export async function judgeMessageQuality(llm: LLM | undefined, input: { message
 }
 
 export async function judgeExplanationShareability(llm: LLM | undefined, input: { explanation: string; recipient?: string; privateFacts: string[] }, o?: JudgeOptions): Promise<ShareabilityVerdict> {
-  return ask(llm, `${RUBRICS.shareability}\nReturn ONLY JSON: {"shareable": boolean, "leakedFacts": string[], "reasoning": "one sentence"}`,
+  return ask(llm, `${RUBRICS.shareability}\nReturn ONLY JSON: {"reasoning": "one sentence", "shareable": boolean, "leakedFacts": string[]}`,
     `Agent-private facts (never shareable):\n${fenceUntrusted(input.privateFacts.map(f => `- ${f}`).join("\n") || "- (none listed)", "private facts")}\n\nExplanation shown to ${input.recipient ?? "the recipient"}:\n${fenceUntrusted(input.explanation, "explanation")}`,
     j => ({ shareable: bool(j, "shareable"), leakedFacts: strings(j, "leakedFacts"), reasoning: text(j, "reasoning") }), o);
 }
 
 export async function judgeTiming(llm: LLM | undefined, input: { message: string; localTime: string; situation: string; proactive: boolean }, o?: JudgeOptions): Promise<TimingVerdict> {
-  return ask(llm, `${RUBRICS.timing}\nReturn ONLY JSON: {"appropriate": boolean, "score": 1-5, "reasoning": "one sentence"}`,
+  return ask(llm, `${RUBRICS.timing}\nReturn ONLY JSON: {"reasoning": "one sentence", "appropriate": boolean, "score": 1-5}`,
     `Recipient local time: ${input.localTime}\nProactive (not a reply): ${input.proactive}\nSituation:\n${fenceUntrusted(input.situation, "situation")}\nMessage:\n${fenceUntrusted(input.message, "message")}`,
     j => ({ appropriate: bool(j, "appropriate"), score: score15(j), reasoning: text(j, "reasoning") }), o);
 }
 
 export async function privacyAudit(llm: LLM | undefined, input: { privateFacts: { owner: string; fact: string }[]; messages: { to: string; text: string }[] }, o?: JudgeOptions): Promise<PrivacyAuditVerdict> {
-  return ask(llm, `${RUBRICS.privacyAudit}\nReturn ONLY JSON: {"leaks": [{"index": number, "owner": string, "fact": string, "kind": "direct"|"inference", "quote": string, "reasoning": string}]} (empty array if none).`,
+  return ask(llm, `${RUBRICS.privacyAudit}\nReturn ONLY JSON: {"leaks": [{"reasoning": string, "index": number, "owner": string, "fact": string, "kind": "direct"|"inference", "quote": string}]} (empty array if none).`,
     `Agent-private facts:\n${fenceUntrusted(input.privateFacts.map(f => `- [${f.owner}] ${f.fact}`).join("\n"), "private facts")}\n\nOutputs sent to other members:\n${input.messages.map((m, i) => `${i}. to ${m.to}:\n${fenceUntrusted(m.text, `output ${i}`)}`).join("\n")}`, j => {
       if (!Array.isArray(j.leaks)) throw new Error("judge: leaks must be an array");
       const leaks = (j.leaks as unknown[]).map(l => {

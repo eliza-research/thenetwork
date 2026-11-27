@@ -1,7 +1,7 @@
 import type { City, Facet, LLM, ChatMessage } from "@thenetwork/core";
 import { precedingBirthdayAge } from "../../../../core/src/generated/memberAge.ts";
 import { slopRadiusContextAllowed, slopRadiusMilesInBounds, slopSelfShorthandAllowed } from "../../../../core/src/generated/slopOnboarding.ts";
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, NOT_DISTANT_BIRTHDAY, UNTRUSTED_NOTE, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, fenceUntrusted, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_NUMBER_END, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITY_IDS, NOT_DISTANT_BIRTHDAY, UNTRUSTED_NOTE, ageBeforeConjunction, agePartEvidenceOf, canBeMatched, canJoin, fenceUntrusted, maskPii, MIN_MEMBER_AGE, normalizeAgeInitialism, ownYouthCue, tryChatJson, unquotedOwnAgeEvidence } from "@thenetwork/core";
 import { INTERESTS } from "../network/vocabulary.ts";
 import type { Gender, Goal, Slot } from "./profile.ts";
 import { SLOTS } from "./profile.ts";
@@ -1062,7 +1062,7 @@ export function slopReaderPrompt(text: string, ctx: { asked?: OnboardField; miss
       "Every field you report is {\"value\": ..., \"quote\": \"<exact words from the message that state it>\"}.",
       "Fields: gender (\"woman\"|\"man\"|\"nonbinary\", the sender's own); seeks (array of those, who the sender wants to date);",
       "Location means the member's home, never an office or a place where they only visited.",
-      "ageRange ([lo, hi] integers 18-99); distance ({\"mode\":\"city\"} or {\"mode\":\"radius\",\"miles\":n} or {\"mode\":\"multi\",\"markets\":[\"nyc\",\"sf\"],\"miles\":n}); multi needs at least two distinct markets from nyc/sf/la; omit optional miles unless explicitly stated, 1-200; location ({\"zip\":\"5 digits\"} or {\"area\":\"neighborhood name\"});",
+      `ageRange ([lo, hi] integers 18-99); distance ({"mode":"city"} or {"mode":"radius","miles":n} or {"mode":"multi","markets":["nyc","sf"],"miles":n}); multi needs at least two distinct markets from ${CITY_IDS.join("/")}; omit optional miles unless explicitly stated, 1-200; location ({"zip":"5 digits"} or {"area":"neighborhood name"});`,
       `goal ("casual"|"long_term"|"unsure"); dealbreakers (array of ${DEALBREAKER_IDS.join(", ")}); interests (array of ${[...INTEREST_TAGS].join(", ")});`,
       `activities (first-date ideas, array of ${DATE_ACTIVITY_IDS.join(", ")}); selfAge (the sender's own age now, integer).`,
       "Reply with only one JSON object holding the fields you found.",
@@ -1092,7 +1092,7 @@ export function validateSlopReading(raw: unknown, text: string): SlopLlmReading 
         || ((value as Distance).mode === "radius" && isMiles((value as { miles: unknown }).miles))
         || ((value as Distance).mode === "multi" && Array.isArray((value as { markets: unknown }).markets)
           && (value as { markets: unknown[] }).markets.length >= 2
-          && (value as { markets: unknown[] }).markets.every(m => ["nyc", "sf", "la", "chicago", "miami"].includes(m as string))
+          && (value as { markets: unknown[] }).markets.every(m => (CITY_IDS as readonly unknown[]).includes(m))
           && new Set((value as { markets: unknown[] }).markets).size === (value as { markets: unknown[] }).markets.length
           && ((value as { miles?: unknown }).miles === undefined || isMiles((value as { miles: unknown }).miles))))
       : k === "location" ? !!value && typeof value === "object" && ((typeof (value as Location).zip === "string" && /^\d{5}$/.test((value as Location).zip!)) || (typeof (value as Location).area === "string" && AREA_INDEX.has(ALIAS.get(areaNorm((value as Location).area!)) ?? areaNorm((value as Location).area!))))
@@ -1132,7 +1132,7 @@ export async function extractSlopProfileLLM(
     const missing = LLM_FIELDS.filter(k =>
       k === "gender" ? low(p.gender) : k === "seeks" ? p.seeks?.source !== "llm" && low(p.seeks) : k === "ageRange" ? low(p.ageRange) : k === "distance" ? low(p.distance)
       : k === "location" ? !p.location?.value.known : k === "goal" ? low(p.goal) : k === "dealbreakers" ? !hasField(p, "dealbreakers")
-      : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge" ? (!p.age || SELF_AGE_CUE.test(text)) : false);
+      : k === "interests" ? !p.interests.length : k === "activities" ? !p.activities.length : k === "selfAge" ? (!p.age || p.age.confidence < LLM_FILL_BELOW || SELF_AGE_CUE.test(text)) : false);
     if (!missing.length) continue;
     const r = await o.llm.reader(text, { asked, missing });
     if (!r) continue;

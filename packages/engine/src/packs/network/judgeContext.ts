@@ -108,13 +108,71 @@ export interface PublicViewOptions { version?: "v2" | "v3" }
 export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: PublicViewOptions = {}): PublicView {
   const v3 = (o.version ?? "v2") === "v3";
   const now = snap.now;
-  const { refs, refOf, scrub } = refsFor(everyone(cfg));
+  const ids = everyone(cfg);
+  const { refs, refOf, scrub } = refsFor(ids);
   const line = (f: Facet) => scrub(`${f.kind}: ${f.value}`) + (v3 ? ` ${evidenceTag(f, now)}` : "");
 
-  const people = everyone(cfg).map((id): PublicPerson => {
-    const m = snap.members.find(x => x.id === id);
+  const membersById = new Map<MemberId, WorldSnapshot["members"][number]>();
+  for (let i = 0; i < snap.members.length; i++) {
+    const m = snap.members[i]!;
+    if (refOf.has(m.id) && !membersById.has(m.id)) membersById.set(m.id, m);
+  }
+  const publicFacetsById = new Map<MemberId, Facet[]>();
+  const boundaryFacetsById = v3 ? new Map<MemberId, string[]>() : undefined;
+  for (let i = 0; i < snap.facets.length; i++) {
+    const f = snap.facets[i]!;
+    if (!refOf.has(f.memberId)) continue;
+    if (PUBLIC_SCOPES.has(f.scope) && validityIncludes(f, now)) {
+      let list = publicFacetsById.get(f.memberId);
+      if (!list) { list = []; publicFacetsById.set(f.memberId, list); }
+      list.push(f);
+    }
+    if (boundaryFacetsById && f.kind === "boundary") {
+      let list = boundaryFacetsById.get(f.memberId);
+      if (!list) { list = []; boundaryFacetsById.set(f.memberId, list); }
+      list.push(f.value);
+    }
+  }
+  const liveIntentsById = new Map<MemberId, WorldSnapshot["intents"][number][]>();
+  for (let i = 0; i < snap.intents.length; i++) {
+    const it = snap.intents[i]!;
+    if (refOf.has(it.memberId) && standingIntentLive(it, now)) {
+      let list = liveIntentsById.get(it.memberId);
+      if (!list) { list = []; liveIntentsById.set(it.memberId, list); }
+      list.push(it);
+    }
+  }
+  const presenceById = new Map<MemberId, Presence[]>();
+  for (let i = 0; i < snap.presence.length; i++) {
+    const p = snap.presence[i]!;
+    if (refOf.has(p.memberId)) {
+      let list = presenceById.get(p.memberId);
+      if (!list) { list = []; presenceById.set(p.memberId, list); }
+      list.push(p);
+    }
+  }
+
+  const participantSet = v3 ? new Set(cfg.participants) : undefined;
+  const directTieIds = v3 ? new Set<MemberId>() : undefined;
+  const relationships: PublicView["relationships"] = [];
+  const seen = new Set<string>();
+  for (const e of snap.edges) {
+    if (directTieIds && participantSet && e.type !== "blocked" && e.type !== "avoid") {
+      if (refOf.has(e.from) && participantSet.has(e.to)) directTieIds.add(e.from);
+      if (refOf.has(e.to) && participantSet.has(e.from)) directTieIds.add(e.to);
+    }
+    const a = refOf.get(e.from), b = refOf.get(e.to);
+    if (!a || !b || a === b) continue;
+    const k = `${a}|${b}|${e.type}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    relationships.push({ a, b, type: e.type === "blocked" ? `${a} blocked ${b}` : e.type });
+  }
+
+  const people = ids.map((id): PublicPerson => {
+    const m = membersById.get(id);
     if (!m) throw new Error(`unknown member ${id}`);
-    const facets = snap.facets.filter(f => f.memberId === id && PUBLIC_SCOPES.has(f.scope) && validityIncludes(f, now));
+    const facets = publicFacetsById.get(id) ?? [];
     return {
       ref: refOf.get(id)!, role: roleOf(id, cfg), attending: id !== cfg.via, age: m.age, home_city: m.homeCity,
       participation_state: m.state, joined_days_ago: joinedDaysAgo(m.joinedAt, now),
@@ -125,30 +183,17 @@ export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: Publi
       },
       shareable: facets.filter(f => f.scope === "shareable").map(line),
       matchable_do_not_quote: facets.filter(f => f.scope === "matchable").map(line),
-      intents: snap.intents.filter(i => i.memberId === id && standingIntentLive(i, now))
+      intents: (liveIntentsById.get(id) ?? [])
         .map(i => ({ objective: scrub(i.objective), category: i.category, ...(v3 ? { created_days_ago: joinedDaysAgo(i.createdAt, now) } : {}) })),
-      presence: snap.presence.filter(p => p.memberId === id).map(p => presenceOf(p, now)),
+      presence: (presenceById.get(id) ?? []).map(p => presenceOf(p, now)),
       ...(v3 && id !== cfg.via ? (() => {
-        // agent_private boundary facets are read here, but only the aspect of this configuration
-        // they touch leaves this function, never their text.
-        const directTie = snap.edges.some(e => e.type !== "blocked" && e.type !== "avoid"
-          && ((e.from === id && cfg.participants.includes(e.to)) || (e.to === id && cfg.participants.includes(e.from))));
-        const rel = boundaryRelevance(snap.facets.filter(f => f.memberId === id && f.kind === "boundary").map(f => f.value),
+        const directTie = directTieIds!.has(id);
+        const rel = boundaryRelevance(boundaryFacetsById!.get(id) ?? [],
           { category: cfg.category, attendingCount: cfg.participants.length, directTie });
         return rel.length ? { private_boundary_relevant_to: rel } : {};
       })() : {}),
     };
   });
-  const relationships: PublicView["relationships"] = [];
-  const seen = new Set<string>();
-  for (const e of snap.edges) {
-    const a = refOf.get(e.from), b = refOf.get(e.to);
-    if (!a || !b || a === b) continue;
-    const k = `${a}|${b}|${e.type}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    relationships.push({ a, b, type: e.type === "blocked" ? `${a} blocked ${b}` : e.type });
-  }
   return {
     configuration: {
       kind: cfg.kind, category: cfg.category, objective: scrub(cfg.objective), city: cfg.city,
@@ -281,6 +326,41 @@ export function summarizeConnectedSources(x: unknown, now: number): unknown {
 /** "v2" = the context pass3-deep-v2 (the engine's pass 3) runs on; "v3" adds hypothesis marks (pass 2 judge-v3). */
 export interface DeepContextOptions { version?: "v2" | "v3" }
 
+interface DeepWorldIndex {
+  readonly facetsByMember: Map<MemberId, Facet[]>;
+  readonly blockingEdges: Map<string, { from: MemberId; to: MemberId }>;
+}
+
+const deepWorldIndexCache = new WeakMap<World, DeepWorldIndex>();
+
+function deepWorldIndexOf(w: World): DeepWorldIndex {
+  let cached = deepWorldIndexCache.get(w);
+  if (cached) return cached;
+  const now = w.now;
+  const snap = w.input;
+  const facetsByMember = new Map<MemberId, Facet[]>();
+  for (let i = 0; i < snap.facets.length; i++) {
+    const f = snap.facets[i]!;
+    if (!validityIncludes(f, now)) continue;
+    const id = w.canonical(f.memberId);
+    let list = facetsByMember.get(id);
+    if (!list) { list = []; facetsByMember.set(id, list); }
+    list.push(f);
+  }
+  const blockingEdges = new Map<string, { from: MemberId; to: MemberId }>();
+  for (let i = 0; i < snap.edges.length; i++) {
+    const e = snap.edges[i]!;
+    if (e.type !== "blocked" && e.type !== "avoid") continue;
+    const from = w.canonical(e.from);
+    const to = w.canonical(e.to);
+    const key = `${pairKey(from, to)}|${e.type}`;
+    if (!blockingEdges.has(key)) blockingEdges.set(key, { from, to });
+  }
+  cached = { facetsByMember, blockingEdges };
+  deepWorldIndexCache.set(w, cached);
+  return cached;
+}
+
 export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions = {}): { context: DeepContext; refs: Record<string, MemberId> } {
   const v3 = (o.version ?? "v2") === "v3";
   const ids = everyone(c);
@@ -290,12 +370,13 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
   const window = c.window ?? { start: now, end: now + w.cfg.windowDays * DAY };
   const anchorIntent = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
   const snap = w.input;
+  const worldIdx = deepWorldIndexOf(w);
 
   const people = ids.map((id): DeepPerson => {
     const mi = w.get(id);
     if (!mi) throw new Error(`unknown member ${id}`);
     const m = mi.m;
-    const all = snap.facets.filter(f => w.canonical(f.memberId) === id && validityIncludes(f, now));
+    const all = worldIdx.facetsByMember.get(id) ?? [];
     const facts: DeepFact[] = all.filter(f => f.scope === "shareable" || f.scope === "matchable")
       .map(f => {
         const x = f as FacetX;
@@ -351,8 +432,8 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     const k = pairKey(a, b);
     const edges = [...(w.edgeTypes.get(k) ?? [])].sort().map(t => {
       if (t !== "blocked" && t !== "avoid") return t;
-      const e = snap.edges.find(x => x.type === t && pairKey(w.canonical(x.from), w.canonical(x.to)) === k);
-      return e ? `${refOf.get(w.canonical(e.from))} ${t} ${refOf.get(w.canonical(e.to))}` : t;
+      const e = worldIdx.blockingEdges.get(`${k}|${t}`);
+      return e ? `${refOf.get(e.from)} ${t} ${refOf.get(e.to)}` : t;
     });
     const pa = w.positive.get(a), pb = w.positive.get(b);
     let mutual = 0;
@@ -367,7 +448,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
         kind: r.kind, category: r.category, outcome: r.outcome, days_ago: daysAgo(r.at),
         declined_by: (r.declinedBy ?? []).map(x => refOf.get(x) ?? "someone else"),
       })),
-      feedback: w.feedback.filter(f => pairKey(f.from, f.about) === k).slice(-6).map(f => ({
+      feedback: (w.feedbackByPair.get(k) ?? []).slice(-6).map(f => ({
         from: refOf.get(f.from)!, about: refOf.get(f.about)!, sentiment: f.sentiment,
         ...(f.wouldMeetAgain !== undefined ? { would_meet_again: f.wouldMeetAgain } : {}), days_ago: daysAgo(f.at),
       })),

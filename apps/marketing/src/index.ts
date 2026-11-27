@@ -261,6 +261,7 @@ export {
 export {
   applyWeeklyDecay,
   computeBanditAllocations,
+  createDefaultBanditArms,
   createDefaultCityBanditArms,
   createDefaultNycBanditArms,
   DEFAULT_BANDIT_POLICY,

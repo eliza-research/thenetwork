@@ -374,12 +374,23 @@ const OFFER = "For future plans, reply CALENDAR to allow free/busy from an autho
 /** The answer request that ends a probe: with time options, which one works; without, yes or no. */
 const tail = (times?: string) => (times ? ` I could do ${times}. Tell me which works, or no is completely fine.` : " Yes or no is all I need, and no is completely fine.");
 
+const WHEN_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function whenFormatter(tz: string): Intl.DateTimeFormat {
+  let fmt = WHEN_FORMATTERS.get(tz);
+  if (!fmt) {
+    fmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "long", hour: "numeric", minute: "2-digit" });
+    WHEN_FORMATTERS.set(tz, fmt);
+  }
+  return fmt;
+}
+
 /** "Thursday 7pm"-style phrasing in a city's timezone (or explicit IANA timezone; defaults to America/New_York). */
 export function whenPhrase(t: number, cityOrTz?: CityId): string {
   const timeZone = cityOrTz
     ? (cityTimezone(cityOrTz) ?? (cityOrTz === "UTC" || cityOrTz.includes("/") ? cityOrTz : "America/New_York"))
     : "America/New_York";
-  return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "long", hour: "numeric", minute: "2-digit" }).format(t).replace(":00", "");
+  return whenFormatter(timeZone).format(t).replace(":00", "");
 }
 
 /**

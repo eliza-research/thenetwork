@@ -1,77 +1,31 @@
 import {
   canBeMatched,
+  evaluateArrivalRelaySafe,
+  evaluateBackupPivotV2,
+  evaluateNoShow,
+  evaluateVenueQuarantine,
   LeakGuard,
   MINUTE,
   type AppId,
   type ArrivalState,
   type ArrivalUpdate,
   type City,
+  type MeetupPhase,
   type MemberId,
   type Owned,
   type VenueRecord,
 } from "@thenetwork/core";
-import {
-  canRelayArrival,
-  meetupPhase,
-  noShowDecision,
-  shouldPivotToBackup,
-  type MeetupPhase,
-  type NoShowAction,
-} from "../../core/src/generated/meetupArrival.ts";
-
-function evaluateMeetupPhase(nowMs: number, startMs: number, allMet = false): MeetupPhase {
-  return meetupPhase(Math.floor((nowMs - startMs) / MINUTE), allMet);
-}
-
-function evaluateArrivalRelay(input: {
-  senderAge: number;
-  recipientAge: number;
-  senderConfirmed: boolean;
-  recipientConfirmed: boolean;
-  blocked: boolean;
-  optedOut: boolean;
-  phase: MeetupPhase;
-  senderMet: boolean;
-  leakClean: boolean;
-  safetyClean: boolean;
-}): boolean {
-  return canRelayArrival(
-    input.senderAge,
-    input.recipientAge,
-    input.senderConfirmed,
-    input.recipientConfirmed,
-    input.blocked,
-    input.optedOut,
-    input.phase,
-    input.senderMet,
-    input.leakClean,
-    input.safetyClean,
-  );
-}
-
-function evaluateNoShow(input: {
-  nowMs: number;
-  arrivedAtMs: number;
-  partnerCheckedIn: boolean;
-  pingedLate: boolean;
-  notifiedWaiting: boolean;
-}): NoShowAction {
-  return noShowDecision(
-    Math.floor((input.nowMs - input.arrivedAtMs) / MINUTE),
-    input.partnerCheckedIn,
-    input.pingedLate,
-    input.notifiedWaiting,
-  );
-}
-
-function evaluateBackupPivot(closureReported: boolean, hasVerifiedBackup: boolean, alreadyPivoted: boolean): boolean {
-  return shouldPivotToBackup(closureReported, hasVerifiedBackup, alreadyPivoted);
-}
+import { meetupPhase } from "../../core/src/generated/meetupCoordination.ts";
 import { RELAY_RULES } from "../../engine/src/relay.ts";
 import { appearanceLeak } from "../../engine/src/packs/slop/appearance.ts";
 import { whenPhrase } from "./copy.ts";
 import { tzForCity } from "./outreach.ts";
 import type { VenueManager } from "./venue-manager.ts";
+
+function evaluateMeetupPhase(nowMs: number, startMs: number, allMet = false): MeetupPhase {
+  if (allMet) return "closed";
+  return meetupPhase(Math.floor((nowMs - startMs) / MINUTE)) as MeetupPhase;
+}
 
 export const GROUP_DIGEST_DEBOUNCE_MS = 75_000;
 
@@ -88,6 +42,7 @@ export interface MeetupCoordHost {
   venues: VenueManager;
   party(meetupId: string, id: MemberId): MeetupPartyInfo | undefined;
   blocked(a: MemberId, b: MemberId): boolean;
+  panicTriggered?(meetupId: string, senderId: MemberId, recipientId: MemberId): boolean;
   privateFacts(): { forbidden: Owned[]; canaries: string[] };
   ratesPhotos: boolean;
   send(
@@ -201,6 +156,12 @@ export function parseArrivalText(body: string, lastNames: readonly string[] = []
   ) {
     state = "venue_closed";
   } else if (
+    /\b(?:(?:it'?s|it is|(?:the\s+)?(?:place|spot|venue|cafe|coffee\s+shop|bar|restaurant|bakery|brewery|shop|patio)\s+(?:is|was))\s+(?:completely\s+|totally\s+|super\s+|too\s+)?(?:full|packed|at\s+capacity|over\s+capacity)|no\s+(?:tables?|seats?|room|space)\s+(?:left|available|open)|(?:long|huge|\d+\s*(?:min|mins|minute|minutes|hour|hours))\s+wait(?:\s+for\s+a\s+table)?|fully\s+booked|packed\s+out|at\s+capacity)\b/.test(
+      t,
+    )
+  ) {
+    state = "venue_full";
+  } else if (
     /\b(?:found\s+(?:each\s+other|them|him|her|everyone|the\s+group)|we\s+met|we'?re\s+together|i\s+see\s+(?:them|him|her|you|everyone)|met\s+up|all\s+here\s+together|sitting\s+together)\b/.test(
       t,
     )
@@ -278,6 +239,8 @@ function formatSingleUpdate(firstName: string, update: ArrivalUpdate): string {
       return `${firstName} checked in that you found each other. Have a great time!`;
     case "venue_closed":
       return `${firstName} reported the spot is closed.`;
+    case "venue_full":
+      return `${firstName} reported the spot is full.`;
     default:
       return `${firstName} sent an arrival update${suffix}.`;
   }
@@ -345,7 +308,7 @@ export class MeetupCoordinator {
       if (m.closed || m.met) continue;
       if (!m.confirmed.includes(memberId)) continue;
       const phase = evaluateMeetupPhase(nowMs, m.startMs, m.met);
-      if (phase === "ActiveArrival" || phase === "PreBrief") return m;
+      if (phase === "active_arrival" || phase === "pre_brief") return m;
     }
     return undefined;
   }
@@ -375,11 +338,27 @@ export class MeetupCoordinator {
     return out;
   }
 
+  private buildSafetyGuards(): { rawGuard: LeakGuard; outGuard: LeakGuard } {
+    const facts = this.host.privateFacts();
+    return {
+      rawGuard: new LeakGuard({
+        forbidden: facts.forbidden,
+        canaries: facts.canaries,
+        contacts: false,
+      }),
+      outGuard: new LeakGuard({
+        forbidden: facts.forbidden,
+        canaries: facts.canaries,
+      }),
+    };
+  }
+
   private passesSafety(
     rawBody: string,
     rendered: string,
     senderId: MemberId,
     recipientId: MemberId,
+    guards: { rawGuard: LeakGuard; outGuard: LeakGuard },
   ): { leakClean: boolean; safetyClean: boolean; reason?: string } {
     for (const rule of RELAY_RULES) {
       if (rule.re.test(rawBody) || rule.re.test(rendered)) {
@@ -389,19 +368,9 @@ export class MeetupCoordinator {
     if (this.host.ratesPhotos && (appearanceLeak(rawBody) || appearanceLeak(rendered))) {
       return { leakClean: true, safetyClean: false, reason: "rating:appearance" };
     }
-    const facts = this.host.privateFacts();
-    const rawGuard = new LeakGuard({
-      forbidden: facts.forbidden,
-      canaries: facts.canaries,
-      contacts: false,
-    });
-    const rawLeaks = rawGuard.check(rawBody, { exceptOwner: senderId });
+    const rawLeaks = guards.rawGuard.check(rawBody, { exceptOwner: senderId });
     if (rawLeaks.length > 0) return { leakClean: false, safetyClean: true, reason: `leak:${rawLeaks[0]}` };
-    const outGuard = new LeakGuard({
-      forbidden: facts.forbidden,
-      canaries: facts.canaries,
-    });
-    const outLeaks = outGuard.check(rendered, { exceptOwner: recipientId });
+    const outLeaks = guards.outGuard.check(rendered, { exceptOwner: recipientId });
     if (outLeaks.length > 0) return { leakClean: false, safetyClean: true, reason: `leak:${outLeaks[0]}` };
     return { leakClean: true, safetyClean: true };
   }
@@ -431,8 +400,8 @@ export class MeetupCoordinator {
       return { handled: false, relayedTo: [] };
     }
     const phase = evaluateMeetupPhase(nowMs, meetup.startMs, meetup.met);
-    if (phase === "Before" || phase === "Closed") {
-      if (phase === "Closed") meetup.closed = true;
+    if (phase === "before" || phase === "closed") {
+      if (phase === "closed") meetup.closed = true;
       return { handled: false, meetupId: meetup.meetupId, phase, relayedTo: [] };
     }
 
@@ -442,7 +411,8 @@ export class MeetupCoordinator {
     const sender = this.host.party(meetup.meetupId, senderId);
     if (!sender || !sender.confirmed) return { handled: false, meetupId: meetup.meetupId, phase, relayedTo: [] };
 
-    if (this.meetupHasMinor(meetup)) {
+    const anyMinorInEvent = this.meetupHasMinor(meetup);
+    if (anyMinorInEvent) {
       return {
         handled: false,
         meetupId: meetup.meetupId,
@@ -471,21 +441,39 @@ export class MeetupCoordinator {
       }
     }
 
-    if (parsed.state === "venue_closed") {
-      this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
+    if (parsed.state === "venue_closed" || parsed.state === "venue_full") {
+      const reportedClosed = parsed.state === "venue_closed";
+      const reportedFull = parsed.state === "venue_full";
+      if (evaluateVenueQuarantine(reportedClosed, reportedFull)) {
+        this.host.venues.quarantineVenue(meetup.activeVenueId, senderId, nowMs);
+      }
       const backup = meetup.backupVenueId ? this.host.venues.getVenue(meetup.backupVenueId) : undefined;
-      const canPivot = evaluateBackupPivot(true, !!backup && backup.status === "active", meetup.pivoted);
+      const canPivot = evaluateBackupPivotV2(
+        reportedClosed,
+        reportedFull,
+        !!backup && backup.status === "active",
+        nowMs,
+        meetup.startMs,
+        meetup.pivoted,
+      );
       if (canPivot && backup) {
         meetup.activeVenueId = backup.id;
         meetup.pivoted = true;
         meetup.pendingDigest = [];
         const relayedTo: MemberId[] = [];
         const primaryName = this.resolveVenue(meetup.primaryVenueId, meetup).name;
-        const msg = `Quick pivot: ${primaryName} is closed, so let's meet at ${backup.name} (${backup.address}). Look for each other ${backup.arrivalLandmark}.`;
+        const reasonText = reportedFull ? "is full" : "is closed";
+        const msg = `Quick pivot: ${primaryName} ${reasonText}, so let's meet at ${backup.name} (${backup.address}). Look for each other ${backup.arrivalLandmark}.`;
         for (const recipientId of meetup.confirmed) {
           const rec = this.host.party(meetup.meetupId, recipientId);
           if (!rec || rec.optedOut || !canBeMatched(rec.age)) continue;
-          if (recipientId !== senderId && this.host.blocked(senderId, recipientId)) continue;
+          if (
+            recipientId !== senderId &&
+            (this.host.blocked(senderId, recipientId) ||
+              this.host.panicTriggered?.(meetup.meetupId, senderId, recipientId))
+          ) {
+            continue;
+          }
           this.host.send(recipientId, msg, { meetupId: meetup.meetupId, kind: "backup_pivot" });
           relayedTo.push(recipientId);
         }
@@ -505,10 +493,10 @@ export class MeetupCoordinator {
       meetup.met = true;
       meetup.closed = true;
       meetup.pendingDigest = [];
-      return { handled: true, meetupId: meetup.meetupId, phase: "Closed", state: "met", relayedTo: [] };
+      return { handled: true, meetupId: meetup.meetupId, phase: "closed", state: "met", relayedTo: [] };
     }
 
-    if (phase !== "ActiveArrival") {
+    if (phase !== "active_arrival") {
       return { handled: false, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: [] };
     }
 
@@ -516,25 +504,33 @@ export class MeetupCoordinator {
     const recipients = meetup.confirmed.filter(id => id !== senderId);
     const allowedRecipients: MemberId[] = [];
     let blockedReason: string | undefined;
+    const guards = this.buildSafetyGuards();
 
     for (const recipientId of recipients) {
       const rec = this.host.party(meetup.meetupId, recipientId);
       if (!rec) continue;
-      const safety = this.passesSafety(body, rendered, senderId, recipientId);
+      const panicTriggered = Boolean(this.host.panicTriggered?.(meetup.meetupId, senderId, recipientId));
+      if (panicTriggered) {
+        blockedReason = "panic_triggered";
+      }
+      const safety = this.passesSafety(body, rendered, senderId, recipientId, guards);
       if (!safety.leakClean || !safety.safetyClean) {
         blockedReason = safety.reason;
       }
-      const allowed = evaluateArrivalRelay({
+      const allowed = evaluateArrivalRelaySafe({
         senderAge: sender.age ?? 0,
         recipientAge: rec.age ?? 0,
+        anyMinorInEvent,
         senderConfirmed: sender.confirmed,
         recipientConfirmed: rec.confirmed,
         blocked: this.host.blocked(senderId, recipientId),
-        optedOut: sender.optedOut || rec.optedOut,
-        phase,
-        senderMet: meetup.met,
-        leakClean: safety.leakClean,
-        safetyClean: safety.safetyClean,
+        panicTriggered,
+        senderOptedOut: sender.optedOut,
+        recipientOptedOut: rec.optedOut,
+        nowMs,
+        startMs: meetup.startMs,
+        alreadyMet: meetup.met,
+        passedSafetyAndLeakCheck: safety.leakClean && safety.safetyClean,
       });
       if (allowed) allowedRecipients.push(recipientId);
     }
@@ -567,12 +563,14 @@ export class MeetupCoordinator {
   }
 
   private flushGroupDigest(meetup: MeetupCoordRecord, nowMs: number): MemberId[] {
-    if (meetup.pendingDigest.length === 0 || meetup.closed || meetup.met || this.meetupHasMinor(meetup)) return [];
+    const anyMinorInEvent = this.meetupHasMinor(meetup);
+    if (meetup.pendingDigest.length === 0 || meetup.closed || meetup.met || anyMinorInEvent) return [];
     const phase = evaluateMeetupPhase(nowMs, meetup.startMs, meetup.met);
-    if (phase !== "ActiveArrival") return [];
+    if (phase !== "active_arrival") return [];
     const batch = meetup.pendingDigest.splice(0, meetup.pendingDigest.length);
     meetup.lastDigestAt = nowMs;
     const sentTo: MemberId[] = [];
+    const guards = this.buildSafetyGuards();
 
     for (const recipientId of meetup.confirmed) {
       const rec = this.host.party(meetup.meetupId, recipientId);
@@ -583,18 +581,22 @@ export class MeetupCoordinator {
         const sender = this.host.party(meetup.meetupId, u.memberId);
         if (!sender) continue;
         const line = formatSingleUpdate(sender.firstName, u);
-        const safety = this.passesSafety(line, line, u.memberId, recipientId);
-        const ok = evaluateArrivalRelay({
+        const panicTriggered = Boolean(this.host.panicTriggered?.(meetup.meetupId, u.memberId, recipientId));
+        const safety = this.passesSafety(line, line, u.memberId, recipientId, guards);
+        const ok = evaluateArrivalRelaySafe({
           senderAge: sender.age ?? 0,
           recipientAge: rec.age ?? 0,
+          anyMinorInEvent,
           senderConfirmed: sender.confirmed,
           recipientConfirmed: rec.confirmed,
           blocked: this.host.blocked(u.memberId, recipientId),
-          optedOut: sender.optedOut || rec.optedOut,
-          phase,
-          senderMet: meetup.met,
-          leakClean: safety.leakClean,
-          safetyClean: safety.safetyClean,
+          panicTriggered,
+          senderOptedOut: sender.optedOut,
+          recipientOptedOut: rec.optedOut,
+          nowMs,
+          startMs: meetup.startMs,
+          alreadyMet: meetup.met,
+          passedSafetyAndLeakCheck: safety.leakClean && safety.safetyClean,
         });
         if (ok) lines.push(line);
       }
@@ -627,7 +629,7 @@ export class MeetupCoordinator {
       if (meetup.closed) continue;
       const phase = evaluateMeetupPhase(nowMs, meetup.startMs, meetup.met);
 
-      if (phase === "Closed" || meetup.met) {
+      if (phase === "closed" || meetup.met) {
         meetup.closed = true;
         meetup.pendingDigest = [];
         summary.closed.push(meetup.meetupId);
@@ -636,7 +638,7 @@ export class MeetupCoordinator {
 
       if (this.meetupHasMinor(meetup)) continue;
 
-      if (proactiveBriefs && phase === "PreBrief" && !meetup.preBriefSent) {
+      if (proactiveBriefs && phase === "pre_brief" && !meetup.preBriefSent) {
         meetup.preBriefSent = true;
         const v = this.resolveVenue(meetup.activeVenueId, meetup);
         const backup = meetup.backupVenueId ? this.host.venues.getVenue(meetup.backupVenueId) : undefined;
@@ -657,26 +659,27 @@ export class MeetupCoordinator {
         summary.preBriefs.push(meetup.meetupId);
       }
 
-      if (phase === "ActiveArrival" && meetup.mode === "group" && meetup.pendingDigest.length > 0) {
+      if (phase === "active_arrival" && meetup.mode === "group" && meetup.pendingDigest.length > 0) {
         if (meetup.lastDigestAt === undefined || nowMs - meetup.lastDigestAt >= this.digestDebounceMs) {
           const sent = this.flushGroupDigest(meetup, nowMs);
           if (sent.length > 0) summary.digestsFlushed.push(meetup.meetupId);
         }
       }
 
-      if (phase === "ActiveArrival" && meetup.confirmed.length >= 2 && meetup.arrivedIds.length > 0) {
+      if (phase === "active_arrival" && meetup.confirmed.length >= 2 && meetup.arrivedIds.length > 0) {
         const missingIds = meetup.confirmed.filter(id => !meetup.checkedInIds.includes(id));
         const partnerCheckedIn = missingIds.length === 0;
         const arrivedAtMs = meetup.firstArrivedAtMs ?? meetup.startMs;
-        const decision = evaluateNoShow({
+        const decision = evaluateNoShow(
           nowMs,
           arrivedAtMs,
+          meetup.arrivedIds.length > 0,
           partnerCheckedIn,
-          pingedLate: meetup.noShowPingSent,
-          notifiedWaiting: meetup.waitingNotified,
-        });
+          meetup.noShowPingSent,
+          meetup.waitingNotified,
+        );
 
-        if (decision === "PingLate") {
+        if (decision === "ping_late") {
           meetup.noShowPingSent = true;
           for (const id of missingIds) {
             const rec = this.host.party(meetup.meetupId, id);
@@ -687,7 +690,7 @@ export class MeetupCoordinator {
             });
           }
           summary.noShowPings.push(meetup.meetupId);
-        } else if (decision === "NotifyWaiting") {
+        } else if (decision === "notify_waiting") {
           meetup.waitingNotified = true;
           for (const id of meetup.arrivedIds) {
             const rec = this.host.party(meetup.meetupId, id);
@@ -714,15 +717,16 @@ export class MeetupCoordinator {
     }
   }
 
-  exportState(): MeetupCoordState {
-    return JSON.parse(JSON.stringify({ meetups: [...this.meetups.values()] })) as MeetupCoordState;
+  exportState(clone = true): MeetupCoordState {
+    const state: MeetupCoordState = { meetups: [...this.meetups.values()] };
+    return clone ? (JSON.parse(JSON.stringify(state)) as MeetupCoordState) : state;
   }
 
-  importState(state: MeetupCoordState | undefined): void {
+  importState(state: MeetupCoordState | undefined, clone = true): void {
     this.meetups.clear();
     if (!state) return;
     for (const m of state.meetups ?? []) {
-      this.meetups.set(m.meetupId, JSON.parse(JSON.stringify(m)) as MeetupCoordRecord);
+      this.meetups.set(m.meetupId, clone ? (JSON.parse(JSON.stringify(m)) as MeetupCoordRecord) : m);
     }
   }
 }
