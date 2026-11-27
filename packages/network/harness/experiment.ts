@@ -23,7 +23,7 @@ export { gini };
 import { parseArgs } from "node:util";
 import { DAY } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
-import { computeMetrics } from "@thenetwork/sim";
+import { computeMetrics, ensurePersonaStrata, type QualityBreakdown } from "@thenetwork/sim";
 import { PolicyPersonaAgent, PRIMED_MODEL, StubNetwork, World, type NetworkUnderTest, type Persona } from "@thenetwork/sim";
 import { loadPersonas } from "../../../scripts/synthetic/load.ts";
 import { DATA_DIR } from "../../../scripts/synthetic/common.ts";
@@ -71,6 +71,7 @@ export interface ArmResult {
    * with no meeting, the Gini of meetings per member and the top 10% share of meetings.
    */
   fairness?: { population: number; zeroProposalShare: number; zeroMeetingShare: number; meetingGini: number; top10Share: number };
+  qualityBreakdown?: QualityBreakdown;
   /** Personas spoke in paraphrases (ParaphraseAgent), not the taxonomy's own sentences. */
   paraphrase?: boolean;
   expected: { perProposal: number; perMember: number };
@@ -93,7 +94,9 @@ export function fairnessOf(population: readonly string[], proposals: ReadonlyMap
 }
 
 export async function nycPersonas(dir = DATA_DIR): Promise<Persona[]> {
-  return (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
+  const ps = (await loadPersonas(dir)).filter(p => p.homeCity === "nyc");
+  for (const p of ps) ensurePersonaStrata(p, "nyc-v1");
+  return ps;
 }
 
 const EXPERIMENT_ARMS = ["push_baseline", "push_v2", "consent"] as const;
@@ -190,8 +193,9 @@ export function summarize(arm: string, days: number, records: RunRecord[], w: Wo
     judge: { invariants: 0, byRule: {}, canaryLeaks: 0, minorContacts: 0 }, scorecard: { worthwhile: 0, optIn: null, completion: 0, firstOutcome14d: 0 },
     expected: { perProposal: 0, perMember: 0 },
   };
-  const jm = computeMetrics(records, consent ? { requireReview: true } : {});
+  const jm = computeMetrics(records, { ...(consent ? { requireReview: true } : {}), personas: w.personaList() });
   res.judge = { invariants: jm.invariants.total, byRule: jm.invariants.byRule, canaryLeaks: jm.privacy.canaryLeaks, minorContacts: jm.safety.minorContacts, examples: jm.invariants.examples };
+  res.qualityBreakdown = jm.qualityBreakdown;
   const firstGood = new Map<string, number>();
   for (const o of outcomes) for (const [id, a] of Object.entries(o.attendance)) if (a.showed && a.enjoyment >= 0.6 && !firstGood.has(id)) firstGood.set(id, o.at);
   const early = [...joinAt].filter(([, t]) => t - runStart <= 7 * DAY);

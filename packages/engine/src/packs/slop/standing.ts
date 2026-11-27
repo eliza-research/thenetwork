@@ -56,9 +56,9 @@ export class DateStandings {
       const rating = ratingOf(p, o);
       if (rating === undefined) continue;
       const key = poolKey(p.homeMarket, p);
-      const list = lists.get(key) ?? [];
+      let list = lists.get(key);
+      if (!list) { list = []; lists.set(key, list); }
       list.push(rating);
-      lists.set(key, list);
     }
     for (const [key, list] of lists) this.pools.set(key, new RatingPool(list.sort((a, b) => a - b)));
     this.validity = this.monitor(w.input.interactions ?? [], w.now, w.canonical);
@@ -87,17 +87,28 @@ export class DateStandings {
   }
 
   private monitor(interactions: readonly InteractionRecord[], now: number, canonical: (id: MemberId) => MemberId): DateStandingValidity {
+    const homeStanding = new Map<MemberId, number | null>();
+    const homeOf = (rawId: MemberId): number | null => {
+      const cid = canonical(rawId);
+      const cached = homeStanding.get(cid);
+      if (cached !== undefined) return cached;
+      const p = this.profiles.get(cid);
+      const placed = p ? this.percentileIn(p, p.homeMarket) : undefined;
+      const val = placed ? placed.pool.percentile(placed.rating) : null;
+      homeStanding.set(cid, val);
+      return val;
+    };
     const outcomes = new Map<string, { positive: boolean; gap: number }>();
     for (const r of interactions) {
       const positive = standingOutcomePositive(r.outcome);
       if (!positive && !standingOutcomeNegative(r.outcome)) continue;
       if (r.category !== SLOP_LANE || r.participants.length !== 2 || r.at > now || r.at < now - biasWindowMs) continue;
-      const id = r.id.split(":fb:")[0]!;
+      const marker = r.id.indexOf(":fb:");
+      const id = marker < 0 ? r.id : r.id.slice(0, marker);
       if (outcomes.get(id)?.positive) continue;
-      const [a, b] = r.participants.map(x => this.profiles.get(canonical(x)));
-      const pa = a && this.percentileIn(a, a.homeMarket), pb = b && this.percentileIn(b, b.homeMarket);
-      if (!pa || !pb) continue;
-      outcomes.set(id, { positive, gap: Math.abs(pa.pool.percentile(pa.rating) - pb.pool.percentile(pb.rating)) });
+      const sa = homeOf(r.participants[0]!), sb = homeOf(r.participants[1]!);
+      if (sa === null || sb === null) continue;
+      outcomes.set(id, { positive, gap: Math.abs(sa - sb) });
     }
     const positive: number[] = [], negative: number[] = [];
     for (const x of outcomes.values()) (x.positive ? positive : negative).push(x.gap);

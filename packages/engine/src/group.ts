@@ -37,6 +37,20 @@ export function groupLane(category: Category): MatchLane {
 
 export const formsGroups = (lane: MatchLane): boolean => laneShape(lane) === "Peers" && laneLimits(lane).circleMaximum > 0;
 
+export function mfhgMemberUtility(sumOther: number, size: number, coordCost = 0): number {
+  if (size < 2 || !Number.isFinite(sumOther)) return 0;
+  const base = sumOther / (size - 1);
+  const pen = Number.isFinite(coordCost) && coordCost > 0 ? coordCost : 0;
+  return Math.max(0, Math.min(1, base - pen));
+}
+
+export function mfhgGeometricNsw(utilities: readonly number[]): number {
+  if (!utilities.length) return 0;
+  let logSum = 0;
+  for (const u of utilities) logSum += Math.log(Math.max(1e-4, Math.min(1, Number.isFinite(u) ? u : 0)));
+  return Math.exp(logSum / utilities.length);
+}
+
 interface PoolGraph {
   readonly lane: MatchLane;
   readonly profiles: ReadonlyMap<MemberId, MatchProfile>;
@@ -142,13 +156,13 @@ export function chooseCircle(searching: Formation, circle: GroupCircle, hasHost:
 
 export function leastMiseryUtility(fit: number, pairs: readonly number[]): number {
   const clamped = pairs.map(p => Math.max(0, Math.min(1, p)));
-  const mean = clamped.length ? clamped.reduce((s, x) => s + x, 0) / clamped.length : 0;
+  const mean = mfhgMemberUtility(clamped.reduce((s, x) => s + x, 0), clamped.length + 1);
   return fit * (0.5 + 0.5 * mean);
 }
 
 export const circleKey = (members: readonly MemberId[]): string => [...members].sort(compareText).join(",");
 
-interface Ranked { circle: GroupCircle; min: number; mean: number; city: City; hours: number; hasHost: boolean }
+interface Ranked { circle: GroupCircle; min: number; nsw: number; mean: number; city: City; hours: number; hasHost: boolean }
 
 export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | null {
   const forced = opts.forced ?? [];
@@ -171,11 +185,21 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
     const ov = w.overlap(ids, opts.window.start, opts.window.end, opts.preferredCity);
     if (!groupLocationAllowed(!!ov, !!(opts.requireCity && opts.preferredCity), ov?.city === opts.preferredCity) || !ov) return [];
     const us = ids.map(id => leastMiseryUtility(Math.max(0, Math.min(1, affinity.get(id) ?? 0)), ids.filter(x => x !== id).map(x => pairOf(id, x))));
+    let warmCount = 0;
+    if (ids.length >= 3 && ids.every(id => !w.minors.has(id))) {
+      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) if (w.isWarm(ids[i]!, ids[j]!)) warmCount++;
+    }
+    const warmBonus = warmCount >= 1 && warmCount <= 2 ? 0.01 : 0;
     return [{
-      circle, min: Math.min(...us), mean: us.reduce((s, u) => s + u, 0) / us.length,
-      city: ov.city, hours: ov.hours, hasHost: ids.some(id => hosts.has(id)),
+      circle,
+      min: Math.min(...us),
+      nsw: mfhgGeometricNsw(us) + warmBonus,
+      mean: us.reduce((s, u) => s + u, 0) / us.length,
+      city: ov.city,
+      hours: ov.hours,
+      hasHost: ids.some(id => hosts.has(id)),
     }];
-  }).sort((x, y) => y.min - x.min || y.mean - x.mean || compareText(circleKey(x.circle.members), circleKey(y.circle.members)));
+  }).sort((x, y) => y.min - x.min || y.nsw - x.nsw || y.mean - x.mean || compareText(circleKey(x.circle.members), circleKey(y.circle.members)));
   const admit = (ranked: readonly Ranked[]): ComposedGroup | null => {
     for (const best of ranked) {
       let formation = chooseCircle(searching, best.circle, best.hasHost);
@@ -212,7 +236,7 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
         else roles[id] = "guest";
       }
       let warm = 0;
-      for (let i = 0; i < primary.length; i++) for (let j = i + 1; j < primary.length; j++) if (w.isWarm(primary[i], primary[j])) warm++;
+      for (let i = 0; i < primary.length; i++) for (let j = i + 1; j < primary.length; j++) if (w.isWarm(primary[i]!, primary[j]!)) warm++;
       const { evidence } = best.circle;
       const stats: GroupStats = {
         avgPairwise: evidence.pairCount ? evidence.pairValueTotal / evidence.pairCount / pairValueScale : 0,

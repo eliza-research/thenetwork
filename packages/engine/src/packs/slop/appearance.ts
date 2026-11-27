@@ -1,6 +1,7 @@
 import { photoSubjectAllowed } from "../../../../core/src/generated/photoPolicy.ts";
 import type { Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
+import { aestheticReadAllowed } from "../../humanVector.ts";
 
 export const BODY_TYPES = ["slim", "athletic", "average", "curvy", "plus_size"] as const;
 export type BodyType = (typeof BODY_TYPES)[number];
@@ -80,7 +81,7 @@ export class VisionLlmAppearanceRater implements AppearanceRater {
   readonly id: string;
   constructor(private llm: VisionChat, model = "vision-llm") { this.id = `vlm-${model}`; }
   async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
-    if (!canRatePhotos(subject)) return null;
+    if (!canRatePhotos(subject) || !subject || !aestheticReadAllowed(true, subject.age, ADULT_AGE)) return null;
     const urls = photos.map(p => p.url).filter((u): u is string => !!u);
     if (!urls.length) return null;
     const raw = await this.llm.chat([
@@ -141,4 +142,78 @@ export function appearanceLeak(text: string, scoreTags: readonly string[] = []):
   for (const re of APPEARANCE_LEAK_PATTERNS) { const m = re.exec(text); if (m) return m[0]; }
   for (const t of scoreTags) if (t && text.includes(t)) return t;
   return null;
+}
+
+export type PhotoReadinessCode =
+  | "add_more_photos"
+  | "ensure_single_adult_visible"
+  | "show_face_clearly"
+  | "improve_photo_quality"
+  | "improve_lighting"
+  | "warmer_expression";
+
+export interface PhotoReadinessDiagnostic {
+  readonly ready: boolean;
+  readonly usablePhotoCount: number;
+  readonly codes: readonly PhotoReadinessCode[];
+  readonly scope: "agent_private";
+}
+
+export interface ClefAuxFeatureRow {
+  readonly photoId?: string;
+  readonly x: Readonly<Record<string, number>>;
+  readonly confidence?: number;
+}
+
+export function photoReadinessDiagnostic(
+  subject: RatingSubject | undefined,
+  featureRows: readonly ClefAuxFeatureRow[],
+  opts: { minPhotos?: number; oneAdultGate?: number } = {},
+): PhotoReadinessDiagnostic | null {
+  if (!canRatePhotos(subject) || !subject || !aestheticReadAllowed(true, subject.age, ADULT_AGE)) return null;
+  const minPhotos = Math.max(1, opts.minPhotos ?? 2);
+  const oneAdultGate = opts.oneAdultGate ?? 0.65;
+  const codes: PhotoReadinessCode[] = [];
+  if (!featureRows.length) {
+    return { ready: false, usablePhotoCount: 0, codes: ["add_more_photos"], scope: "agent_private" };
+  }
+  const usable = featureRows.filter(r => {
+    const g = r.x["gate.one_adult"];
+    return typeof g === "number" && Number.isFinite(g) && g >= oneAdultGate;
+  });
+  if (usable.length < featureRows.length && usable.length === 0) {
+    codes.push("ensure_single_adult_visible");
+  }
+  if (usable.length < minPhotos) {
+    codes.push("add_more_photos");
+  }
+  if (usable.length > 0) {
+    const meanAux = (key: string, fallbackKey?: string): number => {
+      let sum = 0;
+      let count = 0;
+      for (const r of usable) {
+        const raw = r.x[key] ?? (fallbackKey ? r.x[fallbackKey] : undefined);
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+          sum += Math.max(0, Math.min(1, raw));
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : 0.6;
+    };
+    const faceVis = meanAux("gate.face_visible");
+    const quality = meanAux("aux.photo_quality");
+    const lighting = meanAux("aux.lighting", "aux.photo_quality");
+    const expression = meanAux("aux.expression");
+
+    if (faceVis < 0.55) codes.push("show_face_clearly");
+    if (quality < 0.42) codes.push("improve_photo_quality");
+    if (lighting < 0.40) codes.push("improve_lighting");
+    if (expression < 0.38) codes.push("warmer_expression");
+  }
+  return {
+    ready: usable.length >= minPhotos && codes.length === 0,
+    usablePhotoCount: usable.length,
+    codes,
+    scope: "agent_private",
+  };
 }

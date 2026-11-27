@@ -66,6 +66,14 @@ export interface FriendsMetrics {
   };
   selfHangouts: number;
   proposedByOpenness: Record<string, { n: number; share: number }>;
+  strataQuality: {
+    spendMismatchRate: number;
+    reliabilitySpreadMean: number;
+    dunbarAlignedShare: number;
+    crossClassSharedPurposeMeetups: number;
+    leastMiseryMean: number;
+    extractiveDilutionMeetups: number;
+  };
 }
 
 export interface TeenBreaches { adult: number; gap: number; lane: number; unready: number; switchOff: number; group: number; place: number }
@@ -287,6 +295,34 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
     proposedByOpenness[g] = { n: ids.length, share: div(ids.filter(p => invitedEver.has(p.id)).length, ids.length) };
   }
 
+  const paidActs = new Set(["restaurant_dinner", "wine_bar", "comedy_show", "climbing_gym"]);
+  let spendMismatch = 0, crossClassGuilds = 0, leastMiserySum = 0, leastMiseryN = 0, extractiveMeetups = 0;
+  let dunbarAligned = 0, dunbarTotal = 0;
+  for (const m of held) {
+    const paid = paidActs.has(m.activity);
+    const realAtt = m.attendees.filter(id => realIds.has(id));
+    if (paid && realAtt.some(id => O.p(id).hidden.spendComfortTier === "free")) spendMismatch++;
+    if (realAtt.length >= 2) {
+      leastMiserySum += Math.min(...realAtt.map(id => m.enjoy[id]!));
+      leastMiseryN++;
+    }
+    if (!paid && m.good && realAtt.length >= 3 && realAtt.length <= 6) {
+      const econs = realAtt.map(id => O.p(id).hidden.economicCapital ?? 0.5);
+      if (Math.max(...econs) - Math.min(...econs) >= 0.35) crossClassGuilds++;
+    }
+    if (m.attendees.some(id => (O.p(id).hidden.extractionPropensity ?? 0) >= 0.65)) extractiveMeetups++;
+    for (const id of realAtt) {
+      dunbarTotal++;
+      const d = O.p(id).hidden.dunbarOpenSlots;
+      if (!d || d.inner5 || d.sympathy15) dunbarAligned++;
+    }
+  }
+  const bookedGroups = flows.filter(f => f.booked.length >= 3);
+  const relSpreadSum = bookedGroups.reduce((s, f) => {
+    const fl = f.booked.map(id => O.p(id).hidden.flakiness);
+    return s + (Math.max(...fl) - Math.min(...fl));
+  }, 0);
+
   return {
     matcher: res.matcher, seed: world.seed, weeks: world.weeks, members: world.personas.length, real: real.length,
     proposals: proposals.length, probes: proposals.reduce((s, f) => s + f.probed, 0), probeYesRate: div(proposals.reduce((s, f) => s + f.yes, 0), proposals.reduce((s, f) => s + f.probed, 0)),
@@ -312,6 +348,14 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
       opennessViolations, teen: teenSafety(res, proposals, P.good),
     },
     selfHangouts: world.selfHangouts, proposedByOpenness,
+    strataQuality: {
+      spendMismatchRate: div(spendMismatch, held.length),
+      reliabilitySpreadMean: div(relSpreadSum, bookedGroups.length),
+      dunbarAlignedShare: div(dunbarAligned, dunbarTotal),
+      crossClassSharedPurposeMeetups: crossClassGuilds,
+      leastMiseryMean: div(leastMiserySum, leastMiseryN),
+      extractiveDilutionMeetups: extractiveMeetups,
+    },
   };
 }
 

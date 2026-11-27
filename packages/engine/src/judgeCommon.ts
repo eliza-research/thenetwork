@@ -122,14 +122,14 @@ export async function runCachedPass<V>(w: World, cands: Candidate[], llm: LLM, c
     return row;
   };
   const rows = new Map<string, LoggedVerdict<V>>();
-  const queue = [...cands];
+  let cursor = 0;
   const worker = async () => {
-    while (queue.length) {
-      const candidate = queue.shift()!;
+    while (cursor < cands.length) {
+      const candidate = cands[cursor++]!;
       rows.set(candidate.key, await judge(candidate));
     }
   };
-  await Promise.all(Array.from({ length: Math.max(1, w.cfg.judge.concurrency) }, worker));
+  await Promise.all(Array.from({ length: Math.min(cands.length || 1, Math.max(1, w.cfg.judge.concurrency)) }, worker));
   log.push(...[...rows.values()].sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return new Map([...rows].map(([key, row]) => [key, row.verdict]));
 }

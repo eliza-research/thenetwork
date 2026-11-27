@@ -6,7 +6,7 @@ import { requirePositiveSimulationValue } from "./input.ts";
 import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DAY, HOUR, MINUTE, SimClock, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock, canBeMatched, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
 import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
@@ -15,7 +15,7 @@ import { newMemory, type PersonaAgent, type PersonaContext, type PersonaMemory }
 import { detectKeyword, SimChannel, type Reaction, type SimMessage } from "./channel.ts";
 import type { Engine, InboundMessage, MeetingReport, NetworkContext, NetworkUnderTest } from "./network.ts";
 import { Oracle, type OracleOptions, type OracleVerdict } from "./oracle.ts";
-import type { Persona } from "./persona.ts";
+import { ensurePersonaStrata, type Persona } from "./persona.ts";
 import { Rng, hash32 } from "@thenetwork/core";
 import { signature } from "./coins.ts";
 import { Scheduler, type RunMode } from "./scheduler.ts";
@@ -178,13 +178,19 @@ export class World {
         if (o.meta?.proactive && m.status === "delivered") this.unanswered.set(memberId, (this.unanswered.get(memberId) ?? 0) + 1);
         return m;
       },
-      snapshot: () => buildSnapshot([...this.personas.values()], {
-        now: this.clock.now(), worldStart: this.start, joined: this.joined, optedOut: this.optedOut,
-        blocks: this.blocks, unanswered: this.unanswered, recentProposals: [...this.proposals.values()],
-        // The Network's own history (interactions, feedback, open opportunities, unsent proposals).
-        records: this.records,
-        ...(this.opts.plans ? { features: { planAgainEdges: true } } : {}),
-      }),
+      snapshot: () => {
+        const slopOnly = this.opts.app === "slop" || /slop/i.test(this.opts.network.name);
+        const features = {
+          ...(this.opts.plans ? { planAgainEdges: true } : {}),
+          ...(slopOnly ? { strataProjections: false } : {}),
+        };
+        return buildSnapshot([...this.personas.values()], {
+          now: this.clock.now(), worldStart: this.start, joined: this.joined, optedOut: this.optedOut,
+          blocks: this.blocks, unanswered: this.unanswered, recentProposals: [...this.proposals.values()],
+          records: this.records,
+          ...(Object.keys(features).length ? { features } : {}),
+        });
+      },
       recordProposal: (p, source = "network") => {
         this.proposals.set(p.id, p);
         const v = this.oracle.evaluate({ id: p.id, kind: p.kind, participants: p.participants, city: p.city, window: p.window, category: p.category, objective: p.objective });
@@ -346,10 +352,15 @@ export class World {
   /** Add a persona mid-run (growth); they join at `joinAt` (sim ms). */
   spawn(p: Persona, joinAt: number) {
     if (this.personas.has(p.id)) return;
+    ensurePersonaStrata(p, this.opts.seed);
     giveStatedBirthDates([p], this.opts.seed, this.start);
     this.personas.set(p.id, p);
     this.memories.set(p.id, newMemory());
     this.oracle.addPersona(p);
+    const startRec = this.records.find(r => r.type === "run_start") as Extract<RunRecord, { type: "run_start" }> | undefined;
+    if (startRec && startRec.config && typeof startRec.config.memberTiers === "object" && startRec.config.memberTiers !== null && canBeMatched(p.hidden.trueAge)) {
+      (startRec.config.memberTiers as Record<string, number>)[p.id] = p.hidden.compositeTier ?? 0.5;
+    }
     // Rebuild: the newcomer gets the unique-first-name pattern too, and a first name they now
     // share stops resolving to the older persona alone (sim-worlds-21).
     this.namesIn = simulatedNameMatcher(this.personas.values());
@@ -413,9 +424,15 @@ export class World {
     s.on<{ action: WorldAction }>("action", ev => this.onAction(ev.data.action, ctx));
     s.on<{ day: number }>("day", ev => { this.opts.onDay?.(ev.data.day); });
 
+    const memberTiers: Record<string, number> = {};
+    for (const p of this.opts.personas) {
+      const st = ensurePersonaStrata(p, this.opts.seed);
+      if (canBeMatched(p.hidden.trueAge)) memberTiers[p.id] = st.compositeTier;
+    }
     this.rec({ type: "run_start", runId: this.runId, seed: this.opts.seed, start: this.start, config: {
       days, personas: this.opts.personas.length, network: network.name, app: this.opts.app, engine: this.opts.engine?.name ?? null,
       agent: this.agent.mode, mode: this.opts.mode ?? "discrete", tickMinutes: this.opts.tickMinutes ?? 60, replyTracking: true,
+      memberTiers,
     } });
     for (const p of this.opts.personas) {
       this.rec({ type: "persona", persona: {
@@ -449,8 +466,8 @@ export class World {
       events: s.processed, messages: this.channel.all().length, proposals: this.proposals.size, meetings: this.meetings.size,
       joined: this.joined.size, optedOut: this.optedOut.size,
     } });
-    const metrics = computeMetrics(this.records);
     const personas = this.personaList();
+    const metrics = computeMetrics(this.records, { personas });
     let dir: string | undefined;
     if (this.opts.writeLog !== false) dir = await this.write(metrics, personas);
     return { runId: this.runId, dir, records: this.records, metrics, personas, wallMs, events: s.processed, memories: this.memories, channel: this.channel };

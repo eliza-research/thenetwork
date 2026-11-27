@@ -93,6 +93,7 @@ export interface EngineConfig {
     screen: { enabled: boolean; topK: number; groupTopK: number; maxTokens: number };
     /** Pass 3 (deep review, judgeDeep.ts) on the best survivors of passes 1-2. Can only remove candidates. */
     deep: { enabled: boolean; topK: number; maxTokens: number };
+    postSelection?: boolean | { enabled?: boolean; minConfidence?: number; maxConfidence?: number; backups?: number };
   };
   selection: { maxProposalsPerCity: number; runLoadPenalty: number; exposureFloorShare: number; exposureDebtWeight: number; exposureDebtCap: number };
   inviteTtlMs: number; sameDayInviteTtlMs: number;
@@ -381,8 +382,35 @@ export function engineSupplyBudgets(att: AttentionConfig = DEFAULT_ATTENTION): E
   for (const st of Object.keys(att.caps) as ParticipationState[]) out[st] = { limit: att.caps[st].limit * Math.max(1, att.maxItems[st]), periodDays: att.caps[st].periodDays };
   return { budgets: out };
 }
+function stableStringifyConfig(v: unknown): string {
+  if (v === Infinity) return JSON.stringify("Infinity");
+  if (v === null || v === undefined) return "null";
+  const t = typeof v;
+  if (t === "number") return Number.isFinite(v as number) ? JSON.stringify(v) : "null";
+  if (t === "boolean" || t === "string") return JSON.stringify(v);
+  if (t !== "object") return "null";
+  if (Array.isArray(v)) {
+    const parts = new Array<string>(v.length);
+    for (let i = 0; i < v.length; i++) {
+      const el = v[i];
+      parts[i] = el === undefined || typeof el === "function" || typeof el === "symbol" ? "null" : stableStringifyConfig(el);
+    }
+    return `[${parts.join(",")}]`;
+  }
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o).sort();
+  const entries: string[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const k = keys[i]!;
+    const val = o[k];
+    if (val === undefined || typeof val === "function" || typeof val === "symbol") continue;
+    entries.push(`${JSON.stringify(k)}:${stableStringifyConfig(val)}`);
+  }
+  return `{${entries.join(",")}}`;
+}
+
 export function attentionConfigHash(cfg: AttentionConfig): string {
-  return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
+  return sha256(stableStringifyConfig(cfg)).slice(0, 16);
 }
 
 export type DeepPartial<T> = { [K in keyof T]?: T[K] extends (infer U)[] ? U[] : T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -406,8 +434,7 @@ export function resolveConfig(input: EngineConfigInput = {}): EngineConfig {
 }
 
 export function configHash(cfg: EngineConfig): string {
-  // Infinity is not JSON; stringify it explicitly.
-  return sha256(stableStringify(JSON.parse(JSON.stringify(cfg, (_k, v) => (v === Infinity ? "Infinity" : v))))).slice(0, 16);
+  return sha256(stableStringifyConfig(cfg)).slice(0, 16);
 }
 
 // ------------------------------------------------------------------------------------------------

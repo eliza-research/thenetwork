@@ -138,7 +138,9 @@ export class PeonOracle {
   pRetain90(c: Candidate, j: Job): number {
     const P = this.P;
     if (c.truth.fake) return 0.05;
-    return sig(P.retain0 + P.retainQ * this.quality(c, j) + P.retainPay * this.payHead(c, j) + P.retainMode * this.modeFit(c, j) + c.truth.retention + 0.4 * Math.min(0, this.famMatch(c, j)));
+    const paceGap = Math.abs((c.truth.workPacePref ?? 0.55) - (j.hidden.workPace ?? 0.55));
+    const paceTerm = c.truth.planted ? 0 : paceGap > 0.45 ? -0.15 * (paceGap - 0.45) : 0.03;
+    return sig(P.retain0 + P.retainQ * this.quality(c, j) + P.retainPay * this.payHead(c, j) + P.retainMode * this.modeFit(c, j) + c.truth.retention + 0.4 * Math.min(0, this.famMatch(c, j)) + paceTerm);
   }
   qualityOfHire(c: Candidate, j: Job, retained: boolean): number { return retained ? sig(this.quality(c, j)) : 0; }
 

@@ -1,44 +1,49 @@
-// Scoring (Section 33.6). Components are computed and logged separately; NetValue is a
-// transparent weighted sum multiplied by Confidence, with floors and a dealbreaker flag that make
-// a configuration ineligible. The LLM judge is one input: load, interruption, repetition and
-// safety-derived risk always apply (Soulmates pitfall: judge silently replacing them).
 import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
 import { DAY, HOUR } from "@thenetwork/core";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
-import { requiredPairValues } from "./filters.ts";
+import { isMinor, requiredPairValues } from "./filters.ts";
+import { mfhgGeometricNsw } from "./group.ts";
+import { worldStatusPairMultipliers } from "./status.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
 
 export interface Scored {
   c: Candidate; components: ScoreComponents; score: number; threshold: number;
   eligible: boolean; reason?: string; verdict?: JudgeVerdict | null;
-  /** Leak-gated member-facing text from pass 3 (deep review), preferred over pass-2 text. */
   memberWhy?: Record<MemberId, string>;
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, Number.isFinite(x) ? x : lo));
 
-/**
- * Fit and mutual benefit. With two or more participants both come from the lane's required pair
- * values (spec/pairValue.md, "The two utilities combine as an integer harmonic mean"): fit is the
- * lowest, mutual benefit the mean, each over 1000. A missing pair value counts as 0 (screening
- * already refuses it). A single participant keeps the generator's fit and its own benefit.
- */
 function pairTerms(w: World, c: Candidate): { fit: number; mutualBenefit: number } {
   const ids = c.participants;
   if (ids.length < 2) return { fit: clamp(c.fit), mutualBenefit: clamp(ids[0] === undefined ? 0 : c.benefit[ids[0]] ?? 0) };
   const values = (requiredPairValues(w, c) ?? [0]).map(v => Math.max(0, v));
-  return {
-    fit: Math.min(...values) / pairValueScale,
-    mutualBenefit: values.reduce((t, v) => t + v, 0) / values.length / pairValueScale,
-  };
+  const fit = Math.min(...values) / pairValueScale;
+  let mb = values.reduce((t, v) => t + v, 0) / values.length / pairValueScale;
+  const m = ids.length;
+  if (m >= 3 && values.length === (m * (m - 1)) / 2) {
+    const sumOther = new Float64Array(m);
+    let idx = 0;
+    for (let i = 0; i < m; i++) {
+      for (let j = i + 1; j < m; j++) {
+        const v = values[idx++]!;
+        sumOther[i] = sumOther[i]! + v;
+        sumOther[j] = sumOther[j]! + v;
+      }
+    }
+    const denom = (m - 1) * pairValueScale;
+    const us: number[] = [];
+    for (let i = 0; i < m; i++) us.push(sumOther[i]! / denom);
+    mb = clamp(0.5 * mb + 0.5 * mfhgGeometricNsw(us));
+  } else if (m === 2 && !w.minors.has(ids[0]!) && !w.minors.has(ids[1]!) && !isMinor(w, ids[0]!) && !isMinor(w, ids[1]!)) {
+    const { ab, ba } = worldStatusPairMultipliers(w, ids[0]!, ids[1]!);
+    const hMult = (2 * ab * ba) / Math.max(1e-6, ab + ba);
+    mb = clamp(mb * (0.90 + 0.10 * hMult));
+  }
+  return { fit, mutualBenefit: mb };
 }
 
-/**
- * Effective threshold. Default: max(state of any participant, category floor). v1.2 overrides
- * (per generator, then per category) replace the state bar so they can lower it as well as raise
- * it, except that a participant in a stricter-than-Normal state (Quiet, Paused) keeps that bar.
- */
 export function thresholdFor(w: World, c: Candidate): number {
   const T = w.cfg.thresholds;
   let t = 0;
@@ -50,11 +55,6 @@ export function thresholdFor(w: World, c: Candidate): number {
   return t;
 }
 
-/**
- * The bar an exploration pick must clear: the exploration threshold, except that a participant in
- * a stricter-than-Normal state (Quiet) and the romance lane keep their full bar (exploration must
- * never lower what a Quiet member or a romance proposal has to clear).
- */
 export function explorationBar(w: World, c: Candidate, threshold: number): number {
   const T = w.cfg.thresholds;
   if (c.category === "romance" || c.participants.some(id => T.byState[w.get(id)!.m.state] > T.byState.normal)) return threshold;
@@ -72,14 +72,11 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   let warmPath = clamp(c.warm);
   if (!warmPath && pairs.some(([a, b]) => w.isWarm(a, b))) warmPath = ids.length > 2 ? 0.5 : 0.3;
 
-  // Novelty: new people, across clusters; expansion picks are novel by construction.
   let novelty = pairs.length
     ? pairs.reduce((s, [a, b]) => s + (w.isWarm(a, b) ? 0.3 : 1) * (w.get(a)!.cluster !== w.get(b)!.cluster ? 1 : 0.6), 0) / pairs.length
     : 0.3;
-  // Pack hook at the same point (networkPack: expansion >= 0.9, second encounter = 0.4).
   if (S.novelty) novelty = S.novelty(c, novelty);
 
-  // Timing fit: usable overlap in the window; events too soon are harder.
   let timingFit = 0.5;
   if (c.window) {
     const hours = (c.window.end - c.window.start) / HOUR;
@@ -89,7 +86,6 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
     if (c.fixedWindow && lead > 10 * DAY) timingFit *= 0.8;
   }
 
-  // Activation cost: distance (shared area), group coordination, short lead time, travel limits.
   const shareArea = w.pack.geo.sharesArea(w, ids, c.city, c.window);
   let activationCost = ids.length === 1 ? 0.05 : shareArea ? 0.1 : 0.3;
   activationCost += 0.05 * Math.max(0, ids.length - 2);
@@ -97,14 +93,12 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   if (!shareArea && ids.some(id => w.get(id)!.m.prefs.maxTravelMinutes < 20)) activationCost += 0.15;
   activationCost = clamp(activationCost);
 
-  // Interruption cost: share of each participant's proactive budget this would use.
   const interruptionCost = clamp(ids.reduce((s, id) => {
     const mi = w.get(id)!;
     const lim = Math.max(1, cfg.budgets[mi.m.state].limit);
     return s + (mi.recentProactive + 1) / lim;
   }, 0) / ids.length);
 
-  // Load: contributors' recent giving, and everyone's recent exposure (concentration).
   let load = 0;
   for (const id of ids) {
     const mi = w.get(id)!;
@@ -114,7 +108,6 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   }
   load = clamp(load);
 
-  // Repetition: same people recently proposed or met (penalty only; never a block, ME-005).
   let repetition = 0;
   for (const [a, b] of pairs) {
     const k = pairKey(a, b);
@@ -128,16 +121,13 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
   if (ids.length > 2 && clusters.size === 1) repetition = Math.max(repetition, 0.15);
   repetition = clamp(repetition);
 
-  // Social risk: format mismatch, cold groups, safety class.
   const fmt = c.format;
   const mismatch = ids.filter(id => !w.get(id)!.m.prefs.formats.includes(fmt)).length / ids.length;
   let socialRisk = 0.5 * mismatch;
   if (ids.length > 2 && !pairs.some(([a, b]) => w.isWarm(a, b))) socialRisk += 0.1;
   if (c.safetyClass === "medium") socialRisk += 0.2;
-  // Pack hook after the safety-class bump (byte-identity rule 4; networkPack: romance +0.1).
   if (S.socialRisk) socialRisk = S.socialRisk(c, socialRisk);
 
-  // Confidence: evidence quality x retrieval agreement (x judge certainty).
   const evFacets: Facet[] = ids.flatMap(id => (c.evidence[id] ?? []).map(fid => w.get(id)!.match.find(f => f.id === fid)).filter((f): f is Facet => !!f));
   const evidence = c.confidenceHint ?? (evFacets.length ? evFacets.reduce((s, f) => s + provenanceWeight(f), 0) / evFacets.length : 0.7);
   const agreement = clamp(0.75 + 0.1 * (c.channels.size - 1), 0.5, 1);
@@ -149,7 +139,6 @@ export function computeComponents(w: World, c: Candidate, verdict?: JudgeVerdict
     fit = clamp((1 - jw) * fit + jw * verdict.fit);
     mb = clamp((1 - jw) * mb + jw * verdict.mutualValue);
     timingFit = clamp((1 - jw) * timingFit + jw * verdict.timing);
-    // Judge can only add risk, never remove the structural risk computed above.
     socialRisk = Math.max(socialRisk, verdict.redFlags, 0.5 * (1 - verdict.socialComfort));
     confidence = clamp(confidence * (0.7 + 0.3 * verdict.certainty));
   }
@@ -167,7 +156,6 @@ export function netValue(w: World, k: ScoreComponents): number {
   return ((pos - neg) / norm) * k.confidence;
 }
 
-/** Floors and dealbreakers (any violation => ineligible, never compensated by other terms). */
 export function floorViolation(w: World, k: ScoreComponents, verdict?: JudgeVerdict | null): string | undefined {
   const f = w.cfg.floors;
   if (verdict?.dealbreaker) return "dealbreaker";
