@@ -857,6 +857,34 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
+const ACCESSIBILITY_TAGS: ReadonlySet<string> = new Set(["wheelchair"]);
+const OWN_ACCESSIBILITY_CUE = /\b(?:i|i'm|im|i've|ive|my)\b/;
+const ACCESSIBILITY_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
+const ACCESSIBILITY_REPORTED = /\b(?:said|says|told|asked|texted|wrote|posted)\b/;
+const ACCESSIBILITY_NEGATED = /\b(?:don't|do not|doesn't|does not|never|not|no longer)\s+(?:really\s+)?(?:need|use|require)\b|\bno need (?:for|to)\b|\bno accessibility (?:needs|requirements)\b|\bnot (?:in|using) a wheelchair\b/;
+const ACCESSIBILITY_STAIRS_OK = /\bcan (?:do|manage|handle) stairs\b|\bstairs (?:are )?fine\b|\bfine with stairs\b/;
+
+/** Accessibility tags the sender states about themselves in a member-initiated text. */
+export function ownAccessibilityTags(body: string): string[] {
+  const t = normText(body);
+  if (!t.trim()) return [];
+  const tags = new Set<string>();
+  for (const s of sentencesOf(t)) {
+    if (/\?\s*$/.test(s.text.trim())) continue;
+    if (ACCESSIBILITY_REPORTED.test(s.text) || ACCESSIBILITY_STAIRS_OK.test(s.text)) continue;
+    if (/\b(?:joking|kidding)\b/.test(s.text) && !/\bnot (?:joking|kidding)\b/.test(s.text)) continue;
+    let ownCueSeen = false;
+    for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
+      const own = OWN_ACCESSIBILITY_CUE.test(clause);
+      if (own) ownCueSeen = true;
+      const continuation = ownCueSeen && /^\s*(?:and\s+)?(?:need|use|require|am)\b/.test(clause);
+      if ((!own && !continuation) || ACCESSIBILITY_BLOCK.test(clause) || ACCESSIBILITY_NEGATED.test(clause)) continue;
+      for (const tag of extractRedLineTags(clause)) if (ACCESSIBILITY_TAGS.has(tag)) tags.add(tag);
+    }
+  }
+  return [...tags];
+}
+
 export interface Profile {
   interests: string[]; skills: string[]; desireIds: string[];
   /** Canonical venue/dietary/accessibility red-line facet tags extracted from the message. */
