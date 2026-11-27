@@ -172,7 +172,7 @@ export class MapView {
         const focused = f?.kind === "opportunity" && f.id === o.id;
         const faded = !!bright && !focused && !o.participants.some(id => bright.has(id));
         if (o.venue && MEETING_STATES.has(o.state)) {
-          const k = o.venue.name;
+          const k = JSON.stringify([o.venue.name, o.venue.lat, o.venue.lng]);
           const cur = meetings.get(k) ?? { ...o.venue, n: 0, upcoming: 0, opps: [] };
           cur.n++; cur.opps.push(o.id); if (o.state === "SCHEDULED") cur.upcoming++;
           meetings.set(k, cur);
@@ -191,7 +191,7 @@ export class MapView {
           .bindTooltip(textNode(`${v.name}: ${v.n} meeting${v.n > 1 ? "s" : ""}${v.upcoming ? ` (${v.upcoming} upcoming)` : ""}`), { direction: "top" });
         mk.on("click", () => {
           if (v.opps.length === 1) { store.focus({ kind: "opportunity", id: v.opps[0]! }); return; }
-          const venue = VENUES.find(x => x.name === v.name);
+          const venue = VENUES.find(x => x.name === v.name && x.lat === v.lat && x.lng === v.lng);
           if (venue) store.focus({ kind: "neighborhood", id: venue.neighborhood });
         });
         mk.addTo(this.meetLayer);
