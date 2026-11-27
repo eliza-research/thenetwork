@@ -11,6 +11,7 @@ import { panelStaffOf } from "./ops.tsx";
 import { store, useStore } from "./store.ts";
 
 interface Level { id: string; title: string; description: string; days: number }
+interface LevelCheckResult { pass: boolean; checks: { name: string; pass: boolean; detail: string }[] }
 
 /**
  * The analysis panels of the game tab, from the store: the viewer through `panelStaffOf`, then the game through the generated `receiveGame`.
@@ -25,7 +26,9 @@ export function gamePanelsOf(s: typeof store, levelChecked = false): ConsolePane
 export function Levels() {
   const s = useStore();
   const [levels, setLevels] = useState<Level[]>([]);
-  const [result, setResult] = useState<{ pass: boolean; checks: { name: string; pass: boolean; detail: string }[] } | null>(null);
+  const [checked, setChecked] = useState<{ world: number; result: LevelCheckResult }>();
+  const world = s.gameResetEpoch;
+  const result = checked?.world === world ? checked.result : undefined;
   useEffect(() => { store.getJSON<Level[]>("/api/levels").then(setLevels).catch(() => {}); }, []);
   const checkGeneration = useRef(0);
   const current = s.network?.scenario;
@@ -34,7 +37,7 @@ export function Levels() {
     if (!canResetWorld(panels, scenario !== null)) return;
     if (!resetWorld(panels, scenario !== null).game.levelChecked) {
       checkGeneration.current++;
-      setResult(null);
+      setChecked(undefined);
     }
     store.control({ type: "reset", scenario, network: "consent" });
   };
@@ -42,7 +45,9 @@ export function Levels() {
     if (!canCheckLevel(panels)) return;
     const generation = ++checkGeneration.current;
     const r = await store.control({ type: "check_scenario" });
-    if (generation === checkGeneration.current && r.ok && checkLevel(panels).game.levelChecked) setResult(r.data as typeof result);
+    if (generation === checkGeneration.current && world === store.gameResetEpoch && r.ok && checkLevel(panels).game.levelChecked) {
+      setChecked({ world, result: r.data as LevelCheckResult });
+    }
   };
   const choice = "h-auto flex-col items-start gap-1 whitespace-normal p-2 text-left";
   return (

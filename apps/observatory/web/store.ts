@@ -227,6 +227,8 @@ class ObsStore {
   stats?: ObsStats;
   runs: EngineRunSummary[] = [];
   game?: GameState;
+  /** Changes on an explicit simulator reset, not on an ordinary snapshot reload. */
+  gameResetEpoch = 0;
   truth?: Record<string, MemberTruth>;
   network?: NetworkInfo;
   requests: ObsRequest[] = [];
@@ -474,7 +476,11 @@ class ObsStore {
     if (!d.reset && !Number.isSafeInteger(d.version)) return;
     const action = deltaAction(this.sync, d.version, !!d.reset);
     if (action === "BufferDelta") { this.buffered.push(d); return; }
-    if (action === "ReloadSnapshot") { this.load(); return; }
+    if (action === "ReloadSnapshot") {
+      if (d.reset && this.mode === "game") this.gameResetEpoch++;
+      this.load();
+      return;
+    }
     if (action === "DropDelta") return;
     this.clock = d.clock;
     if (d.game) this.game = d.game;
