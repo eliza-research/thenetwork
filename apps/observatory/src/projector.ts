@@ -5,7 +5,7 @@ import { consoleBookingReceiptCurrent } from "../../../packages/core/src/generat
 import { confirmationWindowHours } from "../../../packages/core/src/generated/meetingSettlement.ts";
 import { currentConsentViewChanges } from "../../../packages/core/src/generated/observatoryMemberConsent.ts";
 import { closedProbeUpdate, observatoryMeetingHeld, replacementRosterMode } from "../../../packages/core/src/generated/observatoryRoster.ts";
-import { requestLabel } from "./events.ts";
+import { meetingRescheduleText, requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
 
@@ -190,7 +190,9 @@ export class Projector {
         }
         for (const [id, st] of Object.entries(o.status)) if (st === "pending" || st === "invited" || st === "ignored") o.status[id] = "dropped";
         this.changed(o, r);
-        s.pushFeed({ t: r.t, kind: "meeting", text: `Meeting set: ${this.names(r.participants)}`, members: r.participants, opportunityId: o.id, severity: "good" });
+        const names = this.names(r.participants);
+        const moved = meetingRescheduleText(r.previousAt, r.at);
+        s.pushFeed({ t: r.t, kind: "meeting", text: moved ? `${moved} · ${names}` : `Meeting set: ${names}`, members: r.participants, opportunityId: o.id, severity: "good" });
         return;
       }
       case "outcome": {

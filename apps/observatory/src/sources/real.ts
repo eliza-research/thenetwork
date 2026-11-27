@@ -14,7 +14,7 @@ import { CONNECTION } from "@thenetwork/network";
 import { facetOf, intentOf, loadSnapshot, presenceOf } from "@thenetwork/network/service/snapshot";
 import { confirmedProactiveDeliveryStatuses } from "../../../../packages/core/src/generated/consolePanels.ts";
 import { runEngineSummarized, storedRunSummary, type StoredRunSummary } from "../engineCapture.ts";
-import { describe, onTimeline, requestLabel, type EventRow } from "../events.ts";
+import { describe, meetingRescheduleText, onTimeline, requestLabel, type EventRow } from "../events.ts";
 import { ALERT_WINDOW, growthStats, healthAlerts, hours, reportsFromCases, safetyInfo, scorecard, type MsgMeta } from "../health.ts";
 import { memberFacets } from "../appProfile.ts";
 import { ACCEPTED_PARTICIPATION_STATUSES, countsAsAcceptance } from "../projector.ts";
@@ -790,12 +790,13 @@ export class RealSource implements DataSource {
       this.feedSeen.add(key);
       const p = e.payload ?? {};
       const ids: string[] = p.participants ?? (e.actor_id ? [e.actor_id] : []);
+      const moved = e.type === "meeting_scheduled" ? meetingRescheduleText(p.previousAt, p.at) : undefined;
       const map: Record<string, [FeedKind, string, ObsFeedItem["severity"]?]> = {
         member_joined: ["join", `${nm(e.actor_id)} joined the Network`],
         opportunity_proposed: ["proposal", `${p.source ?? "engine"} proposed ${String(p.kind ?? "an opportunity").replace(/_/g, " ")}: ${(p.participants ?? []).map(nm).join(" & ")}`],
         member_accepted: ["accept", `${nm(e.actor_id)} said yes`, "good"],
         member_declined: ["decline", `${nm(e.actor_id)} passed`],
-        meeting_scheduled: ["meeting", `Meeting set: ${(p.participants ?? []).map(nm).join(" & ")}`, "good"],
+        meeting_scheduled: ["meeting", `${moved ? `${moved} ·` : "Meeting set:"} ${(p.participants ?? []).map(nm).join(" & ")}`, "good"],
         interaction_occurred: ["outcome", `Meeting happened (${Object.values(p.attendance ?? {}).filter((a: any) => a.showed).length} showed)`, "good"],
         feedback_given: ["feedback", this.reveal ? `${nm(e.actor_id)} gave feedback: "${String(p.text ?? "").slice(0, 90)}"` : `${nm(e.actor_id)} gave feedback`],
         member_blocked: ["block", `${nm(e.actor_id)} blocked ${nm(e.object_id)}`, "warn"],

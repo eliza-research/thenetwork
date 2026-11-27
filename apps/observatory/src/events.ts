@@ -22,6 +22,12 @@ export interface EventRow {
   payload: Record<string, unknown>;
 }
 
+/** The same timestamp label is used in activity and opportunity history. */
+export function meetingRescheduleText(previousAt: unknown, at: unknown): string | undefined {
+  if (typeof previousAt !== "number" || !Number.isFinite(previousAt) || typeof at !== "number" || !Number.isFinite(at)) return undefined;
+  return `Meeting rescheduled: ${describeBookingStart(previousAt)} → ${describeBookingStart(at)} (New York time)`;
+}
+
 /** Network log kinds stored as events (packages/network ctx.log). "learned" and "feedback" hold member facts or words: never stored. */
 export const NETWORK_EVENT_KINDS: ReadonlySet<string> = new Set([
   "review_queued", "review_decision", "review_expired", "review_invalidated", "review_refused", "review_mode", "matching_switch",
@@ -158,12 +164,12 @@ export function describe(row: EventRow, name: (id: string) => string = id => id)
     case "opportunity_proposed": text = `${human(p.source ?? "engine")} proposed a ${human(p.kind ?? "opportunity")}`; keep("source", "kind"); break;
     case "member_accepted": text = `${name(row.actor_id ?? "")} said yes`; severity = "good"; break;
     case "member_declined": text = `${name(row.actor_id ?? "")} passed`; break;
-    case "meeting_scheduled":
-      if (typeof p.previousAt === "number" && Number.isFinite(p.previousAt) && Number.isFinite(p.at)) {
-        text = `Meeting rescheduled: ${describeBookingStart(p.previousAt)} → ${describeBookingStart(p.at)} (New York time)`;
-        keep("previousAt", "at");
-      } else text = "Meeting scheduled";
+    case "meeting_scheduled": {
+      const moved = meetingRescheduleText(p.previousAt, p.at);
+      text = moved ?? "Meeting scheduled";
+      if (moved) keep("previousAt", "at");
       severity = "good"; break;
+    }
     case "interaction_occurred": {
       const showed = Object.values(p.attendance ?? {}).filter((a: any) => a?.showed).length;
       text = `Meeting happened (${showed} showed)`; severity = showed >= 2 ? "good" : "warn"; detail.showed = showed; break;
