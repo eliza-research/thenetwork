@@ -784,56 +784,99 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
-const OWN_PREFERENCE_RX = /\b(?:my radius|keep it within|within \d+\s*(?:miles|mi|km|kilometers)|i'?d go up to|go up to \d+|up to \d+\s*(?:miles|mi|km|kilometers)|no (?:more|farther) than \d+|at most \d+\s*(?:miles|mi|km|kilometers)|make it \d+\s*(?:miles|mi|km|kilometers)|change (?:my )?(?:radius|distance)|anywhere in the city|my zip(?: code)? is \d{5}|i live in|looking for (?:men|women)|ages? \d+\s*(?:to|-|–)\s*\d+)\b/i;
 const NEGATIVE_DISTANCE_RX = /(?:-|−|–)\s*\d+\s*(?:miles|mi|km|kilometers)\b|\bminus\s+\d+\s*(?:miles|mi|km|kilometers)\b/i;
+const PREFERENCE_CLAUSE_SPLIT = /(?<=[.!?;])\s+|,\s+|\s+but\s+|\s+and\s+(?!(?:women|men|guys|girls|ladies|dudes)\b)|\s+since\s+|\s+so\s+|\s+[-—]\s+/i;
+const UNIT_RX = "(?:miles|mi|km|kilometers|kilometres)";
+const FILLER_RX = /^(?:actually|please|oh|well|so|now|just|ok|okay|hey|sorry|wait|oops|hmm|um|uh|lol|tbh)[,\s]+/i;
 
-export function statesOwnPreference(body: string): boolean {
-  return OWN_PREFERENCE_RX.test(body) && !NEGATIVE_DISTANCE_RX.test(body);
+function stripFillers(clause: string): string {
+  let c = clause.trim();
+  while (FILLER_RX.test(c)) c = c.replace(FILLER_RX, "").trim();
+  return c;
 }
 
-const PREFERENCE_CLAUSE_SPLIT = /(?<=[.!?;])\s+|,\s+|\s+but\s+|\s+and\s+(?!(?:women|men|guys|girls|ladies|dudes)\b)|\s+since\s+/i;
-const OTHER_SUBJECT_RX = /\b(?:the\s+(?:last|previous|other)?\s*(?:match|date|guy|girl|man|woman|bar|restaurant|place|one|person)|my\s+(?:sister|brother|friend|mom|dad|mother|father|parents|roommate|office|ex|partner|place)|he|she|they|his|her|their|him)\b/i;
-const OTHER_VOICE_RX = /\b(?:was|were|lived|lives|said|says|keeps|kept|wants|prefers|went|visited|stayed|told)\b/i;
-const PAST_WITHIN_RX = /\bwas\s+within\s+\d/i;
-const CORRECTION_MARKER_RX = /\b(?:actually|sorry|oops|no wait|i meant|i mean|wait)\b/i;
-const CORRECTION_STRIP_RX = /\b(?:actually|sorry|oops|no wait|i meant|i mean|wait|please)\b/gi;
+function withUnit(clause: string): string {
+  if (new RegExp(`\\d\\s*${UNIT_RX}\\b`, "i").test(clause)) return clause;
+  return clause.replace(/(\d+(?:\.\d+)?)/, "$1 miles");
+}
 
-function reportsOther(clause: string): boolean {
-  return PAST_WITHIN_RX.test(clause) || (OTHER_SUBJECT_RX.test(clause) && OTHER_VOICE_RX.test(clause));
+function ownClause(clause: string): { text: string; radius: boolean } | undefined {
+  const c = stripFillers(clause);
+  const words = c.replace(/[.!?]+$/, "").split(/\s+/).filter(Boolean).length;
+  const radiusNumber = new RegExp(`\\b(?:within|up to|no more than|no farther than|not more than|at most|under)\\s+\\d+(?:\\.\\d+)?\\s*${UNIT_RX}\\b|\\d+(?:\\.\\d+)?\\s*${UNIT_RX}\\b`, "i").test(c);
+  if (/^(?:keep|make|set|change|update|put|limit|cap)\b/i.test(c)) {
+    if (/\b(?:radius|distance|limit)\b/i.test(c) && /\d/.test(c)) return { text: withUnit(c), radius: true };
+    if (radiusNumber) return { text: c, radius: true };
+    if (/^keep\s+it\s+within\s+\d/i.test(c)) return { text: withUnit(c), radius: true };
+  }
+  if (/^(?:make|set|change|update)\s+(?:my\s+)?age\s+range\s+\d/i.test(c)) return { text: c, radius: false };
+  if (new RegExp(`^(?:within|up to|no more than|no farther than|not more than|at most|under|max(?:imum)?)\\s+\\d+(?:\\.\\d+)?\\s*${UNIT_RX}\\b`, "i").test(c)) return { text: c, radius: true };
+  if (new RegExp(`^go\\s+up\\s+to\\s+\\d+(?:\\.\\d+)?\\s*${UNIT_RX}\\b`, "i").test(c)) return { text: c, radius: true };
+  if (new RegExp(`^\\d+(?:\\.\\d+)?\\s*${UNIT_RX}(?:\\s+of\\s+\\d{5})?\\s*(?:please|now|tops|max)?[.!?]*$`, "i").test(c) && words <= 5) return { text: c, radius: true };
+  if (/^i(?:'d| would|'ll| will|'m| am)?\b/i.test(c) && radiusNumber && /\b(?:within|up to|no more than|no farther than|not more than|at most|under|go|travel)\b/i.test(c)) return { text: c, radius: true };
+  if (/^my\s+(?:radius|distance|limit)\b/i.test(c)) return { text: /\d/.test(c) ? withUnit(c) : c, radius: /\d/.test(c) };
+  if (/^my\s+zip(?:\s+code)?\s+is\s+\d{5}\b/i.test(c)) return { text: c, radius: false };
+  if (/^i\s+(?:live|living)\s+in\b/i.test(c) || /^i(?:'m| am)\s+(?:living\s+in|in|based\s+in|over\s+in|out\s+in)\b/i.test(c) || /^i\s+(?:just\s+)?moved\s+to\b/i.test(c)) return { text: c, radius: false };
+  if (/^(?:i(?:'m| am)\s+)?looking\s+for\s+(?:men|women|guys|girls|ladies|dudes|man|woman)\b/i.test(c)) return { text: c, radius: radiusNumber };
+  if (/^i(?:'m| am)\b/i.test(c) && /\blooking\s+for\s+(?:men|women|guys|girls|ladies|dudes|man|woman)\b/i.test(c)) return { text: c, radius: radiusNumber };
+  if (/^ages?\s+\d+\s*(?:to|-|–)\s*\d+\b/i.test(c) || /^\d+\s*(?:to|-|–)\s*\d+[.!?]*$/i.test(c)) return { text: c, radius: false };
+  if (/^anywhere\s+in\s+(?:the\s+)?(?:city|nyc|new york)\b/i.test(c) || /^(?:the\s+)?(?:city|nyc)\s+is\s+(?:fine|good|ok|okay)\b/i.test(c) || /^anywhere\s+is\s+fine\b/i.test(c) || /^i(?:'ll| will| can|could)?\s+(?:go|travel)\s+anywhere\b/i.test(c)) return { text: c, radius: false };
+  return undefined;
 }
 
 function correctionValue(clause: string): { n: string; unit?: string } | undefined {
-  const m = /^(\d+(?:\.\d+)?)\s*(miles|mi|km|kilometers)?[.!?]*$/i.exec(clause.replace(CORRECTION_STRIP_RX, " ").trim());
-  return m ? { n: m[1]!, unit: m[2] } : undefined;
+  const c = stripFillers(clause).replace(/[.!?]+$/, "").trim();
+  if (/\bwithin\b/i.test(c)) return undefined;
+  if (/^(?:he|she|they|you|my|the|his|her|their|him|them)\b/i.test(c)) return undefined;
+  const numbers = c.match(/\d+(?:\.\d+)?/g) ?? [];
+  if (numbers.length !== 1) return undefined;
+  if (c.split(/\s+/).filter(Boolean).length > 5) return undefined;
+  const m = new RegExp(`(\\d+(?:\\.\\d+)?)\\s*(${UNIT_RX})?$`, "i").exec(c);
+  if (!m) return undefined;
+  const n = Number(m[1]);
+  const miles = /^k/i.test(m[2] ?? "") ? n * 0.621 : n;
+  if (!(miles >= 0.5 && miles <= 200)) return undefined;
+  return { n: m[1]!, unit: m[2] };
 }
 
-function correctionMarkerOnly(clause: string): boolean {
-  return CORRECTION_MARKER_RX.test(clause) && clause.replace(CORRECTION_STRIP_RX, " ").replace(/[^a-z0-9]/gi, "") === "";
+function isRetraction(clause: string): boolean {
+  const c = clause.trim().replace(/[.!?]+$/, "");
+  return !/\d/.test(c) && c.split(/\s+/).filter(Boolean).length <= 3 && /\b(?:no|not|never|scratch|forget|cancel|oops|wait|stop)\b/i.test(c);
 }
 
 function correctedClause(clause: string, value: { n: string; unit?: string }): string {
-  const m = /(\d+(?:\.\d+)?)\s*(miles|mi|km|kilometers)?/i.exec(clause);
+  const m = /(\d+(?:\.\d+)?)\s*(miles|mi|km|kilometers|kilometres)?/i.exec(clause);
   if (!m) return `within ${value.n} ${value.unit ?? "miles"}`;
   return clause.slice(0, m.index) + `${value.n} ${value.unit ?? m[2] ?? "miles"}` + clause.slice(m.index + m[0].length);
 }
 
 export function ownPreferenceText(body: string): string {
-  const kept: string[] = [];
-  let correctionPending = false;
+  const kept: { text: string; radius: boolean }[] = [];
+  let awaitingCorrection = false;
+  const lastRadius = () => kept.map((k, i) => (k.radius ? i : -1)).filter(i => i >= 0).pop() ?? -1;
   for (const raw of body.split(PREFERENCE_CLAUSE_SPLIT)) {
     const clause = raw.trim();
-    if (!clause) continue;
+    if (!clause || NEGATIVE_DISTANCE_RX.test(clause)) continue;
     const value = correctionValue(clause);
-    if ((correctionPending || CORRECTION_MARKER_RX.test(clause)) && value && kept.length && !statesOwnPreference(clause)) {
-      kept[kept.length - 1] = correctedClause(kept[kept.length - 1]!, value);
-      correctionPending = false;
+    if (value && (awaitingCorrection || lastRadius() >= 0)) {
+      if (awaitingCorrection) kept.push({ text: `within ${value.n} ${value.unit ?? "miles"}`, radius: true });
+      else kept[lastRadius()] = { text: correctedClause(kept[lastRadius()]!.text, value), radius: true };
+      awaitingCorrection = false;
       continue;
     }
-    if (correctionMarkerOnly(clause)) { correctionPending = true; continue; }
-    correctionPending = false;
-    if (statesOwnPreference(clause) && !reportsOther(clause)) kept.push(clause);
+    if (isRetraction(clause) && lastRadius() >= 0) {
+      kept.splice(lastRadius(), 1);
+      awaitingCorrection = true;
+      continue;
+    }
+    const own = ownClause(clause);
+    if (own) { kept.push(own); awaitingCorrection = false; }
   }
-  return kept.join(". ");
+  return kept.map(k => k.text).join(". ");
+}
+
+export function statesOwnPreference(body: string): boolean {
+  return ownPreferenceText(body) !== "";
 }
 
 export function bookedReplyKeepsMeeting(body: string): boolean {

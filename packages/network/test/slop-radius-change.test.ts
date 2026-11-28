@@ -78,6 +78,14 @@ test("a radius change texted after onboarding is saved and matching uses the new
     "make my radius minus 5 miles",
     "make my radius −5 miles",
     "make my radius –5 miles",
+    "my coworker said keep it within 30 miles",
+    "my wife wants me to keep it within 30 miles, lol no",
+    "my cousin keeps it within 3 miles, crazy",
+    "the date had been within 30 miles but still too far",
+    "you said within 30 miles last time but that was too far",
+    "the app showed someone within 25 miles, too far",
+    "last week's match was within 40 miles, way too far",
+    "my roommate's girlfriend keeps it within 3 miles, crazy",
   ];
   for (const remark of remarks) {
     await w.say("a", remark);
@@ -91,6 +99,11 @@ test("a radius change texted after onboarding is saved and matching uses the new
     "keep it within 10 miles since the last guy lived 30 miles away",
     "keep it within 10 miles and my office is at 11201",
     "keep it within 10 miles and my sister lives in Astoria",
+    "he was too far, keep it within 10 miles",
+    "keep it within 10 miles and my boss lives in Astoria",
+    "keep it within 10 miles and my work is at 11201",
+    "my ex lived 40 miles away so keep it within 10 miles",
+    "keep it within 10 miles of where my sister lives",
   ];
   for (const text of statedOnly) {
     await w.say("a", "set my radius to 7 miles");
@@ -108,6 +121,10 @@ test("a radius change texted after onboarding is saved and matching uses the new
     ["keep it within 10 miles, actually 15", "15"],
     ["set my radius to 10 km, sorry I meant 2 km", "1"],
     ["make it 5 miles, no wait, 3 miles", "3"],
+    ["keep it within 10 miles, scratch that, 15", "15"],
+    ["keep it within 10 miles - no, 15", "15"],
+    ["keep it within 10 miles, oh make that 15", "15"],
+    ["2 miles, actually make that 1", "1"],
   ];
   for (const [text, miles] of corrections) {
     await w.say("a", text);
