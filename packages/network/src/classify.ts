@@ -1882,13 +1882,22 @@ function removeBoundOfferDates(text: string, options: readonly TimeOption[]): st
     const candidates = slots.filter(slot => slot.dayOfMonth === dayOfMonth && (month === undefined || slot.month === month));
     dates.push({ at: match.index!, end: match.index! + match[0].length, candidates });
   }
+  const nearest = mentions.map(mention => {
+    let best = -1;
+    let bestDistance = Infinity;
+    for (const [index, date] of dates.entries()) {
+      const distance = mention.end <= date.at ? date.at - mention.end : mention.at >= date.end ? mention.at - date.end : 0;
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    }
+    return best;
+  });
   const spans: [number, number][] = [];
   for (const [index, date] of dates.entries()) {
     if (!date.candidates.length) continue;
-    const assigned = mentions.filter(mention => {
-      const distance = (span: { at: number; end: number }) => mention.end <= span.at ? span.at - mention.end : mention.at >= span.end ? mention.at - span.end : 0;
-      return dates.every((other, otherIndex) => otherIndex < index ? distance(date) < distance(other) : distance(date) <= distance(other));
-    });
+    const assigned = mentions.filter((_, mentionIndex) => nearest[mentionIndex] === index);
     const bound = (options.length === 1 && date.candidates.length === 1) || date.candidates.some(slot => assigned.length > 0
       && assigned.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute)));
     if (bound) spans.push([date.at, date.end]);
