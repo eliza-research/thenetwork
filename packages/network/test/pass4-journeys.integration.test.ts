@@ -122,6 +122,62 @@ describe("Pass 4 user journeys integration", () => {
     expect(w.to("l2").slice(l2Before).some(m => m.body.includes(after.venue!))).toBe(true);
   });
 
+  test("general venue swap syncs the arrival pre-brief, avoids rejected repeats, and stops at the pivot limit", async () => {
+    const w = new Mini([], { city: "la", engine: { cities: ["la"] }, arrivalBriefs: true, plans: false });
+    for (const [id, name, area] of [["s1", "Nora Kim", "Silver Lake"], ["s2", "Omar Reed", "Echo Park"]] as const) {
+      w.members.push({
+        id, name, homeCity: "la", state: "normal", joinedAt: w.clock.now(), age: 29, unansweredProactive: 0,
+        prefs: { categoriesOptIn: ["social", "hobby"], quietHours: [23, 7], romanceOptIn: false, formats: ["one_to_one"], maxTravelMinutes: 45, onlyWhenAsked: false },
+      });
+      w.presence.push({ memberId: id, city: "la", type: "home", areas: [area] });
+    }
+    await w.onboard("s1", "s2");
+    const oppId = w.propose(["s1", "s2"], { category: "social", objective: "Coffee hangout" });
+    await w.runUntil(() => w.net.opps.has(oppId), 2 * DAY);
+    await w.answerProbes(["s1", "s2"]);
+    const v0 = w.net.opps.get(oppId)!.venueId!;
+    const v0Name = w.net.opps.get(oppId)!.venue!;
+    const seen = new Set<string>([v0]);
+
+    await w.say("s1", "Can we swap the venue?");
+    const v1 = w.net.opps.get(oppId)!.venueId!;
+    expect(seen.has(v1)).toBe(false);
+    seen.add(v1);
+
+    await w.say("s1", "Can we try another spot?");
+    const v2 = w.net.opps.get(oppId)!.venueId!;
+    const v2Name = w.net.opps.get(oppId)!.venue!;
+    expect(seen.has(v2)).toBe(false);
+    seen.add(v2);
+
+    await w.say("s1", "Can we swap the venue?");
+    const afterThird = w.net.opps.get(oppId)!;
+    const repeatedPriorVenue = afterThird.venueId !== v2 && seen.has(afterThird.venueId!);
+
+    await w.say("s2", "Sounds good!");
+    const beforeBrief = w.sent.length;
+    w.clock.set(afterThird.meetingAt! - 70 * MINUTE);
+    await w.net.tick(w.clock.now());
+    const briefs = w.sent.slice(beforeBrief).filter(s => s.meta.proposalId === oppId && /Heads up for/i.test(s.body));
+    const rejectedByS1 = new Map(w.net.exportState().venues?.rejected ?? []).get("s1") ?? [];
+
+    expect({
+      repeatedPriorVenue,
+      exhaustedCount: w.log("venue_pivot_exhausted").length,
+      rejectedRecorded: rejectedByS1.includes(v0) && rejectedByS1.includes(v1),
+      briefRecipients: briefs.map(b => b.to).sort(),
+      briefNamesCurrentVenue: briefs.length === 2 && briefs.every(b => b.body.includes(v2Name)),
+      briefNamesInitialVenue: briefs.some(b => b.body.includes(v0Name)),
+    }).toEqual({
+      repeatedPriorVenue: false,
+      exhaustedCount: 1,
+      rejectedRecorded: true,
+      briefRecipients: ["s1", "s2"],
+      briefNamesCurrentVenue: true,
+      briefNamesInitialVenue: false,
+    });
+  });
+
   test("multi-city onboarding skips redundant questions, uses city copy, and direct-reply ack works without breaking Blooio streak", async () => {
     // Multi-city plans place question and timezone labels
     expect(plansPlaceQuestionFor("nyc")).toContain("Which NYC neighborhood");

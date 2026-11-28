@@ -2072,34 +2072,9 @@ export class ConsentNetwork implements NetworkUnderTest {
             return;
           }
         }
-        if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
-          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)) {
-          const initialState = this.proposeTopOneVenueFor(o.participants, o.meetingAt, {
-            city: this.networkCity(),
-            teenFriendAllowed: o.teenRuleAt !== undefined,
-          });
-          const pivoted = this.pivotVenueSuggestion(initialState, body);
-          const nextSpot = pivoted.state.current?.venue && pivoted.state.current.venue.id !== o.venueId
-            ? pivoted.state.current.venue
-            : pivoted.state.backup?.venue && pivoted.state.backup.venue.id !== o.venueId
-              ? pivoted.state.backup.venue
-              : undefined;
-          if (nextSpot) {
-            const oldVenueId = o.venueId;
-            o.venueId = nextSpot.id;
-            o.venue = nextSpot.name;
-            o.venueArea = nextSpot.neighborhood;
-            this.ctx.log("venue_swapped", { oppId: o.id, memberId: m.id, fromVenueId: oldVenueId ?? null, toVenueId: nextSpot.id, reason: pivoted.reason });
-            this.send(m, this.copy.venueSwapProposed(nextSpot.name, nextSpot.neighborhood), { type: "scheduling", proposalId: o.id }, "reply");
-            const whenStr = whenPhrase(o.meetingAt, o.meetingTimeZone ?? tz);
-            for (const otherId of o.participants) {
-              if (otherId === m.id || o.status.get(otherId) !== "yes" || !o.bookedTold?.includes(otherId)) continue;
-              this.send(this.member(otherId), this.copy.silentPartnerVenueSwap(whenStr, nextSpot.name, { area: nextSpot.neighborhood }),
-                { type: "scheduling", proposalId: o.id }, "scheduling", { about: o.participants });
-            }
-            return;
-          }
-        }
+        if (!checkIn && directBookingReply && !o.plan && !o.workIntro && !o.seat && !o.publicEventRevision && o.meetingAt !== undefined && o.meetingAt > now
+          && !cancellation && !CANCEL_INTENT_OVERRIDE_RX.test(bookingText) && VENUE_SWAP_INTENT_RX.test(bookingText)
+          && this.handleBookedVenueObjection(m, o, body, classifyVenueRejection(body), now)) return;
         if (declines) {
           return this.handleDrop(m, o, true, !msg.reaction && bookedTextDeclines(bookingText, cancellation !== undefined || c.kind === "cancel" || consentOf(body).answer === "no"));
         }
