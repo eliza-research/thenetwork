@@ -19,7 +19,7 @@ const tokens = designSystem({ tailwind, tokens: parseTokens(JSON.parse(readFileS
 const consoles = { "apps/observatory": ["apps/observatory/web/**/*.{ts,tsx}"], "packages/mcp": ["packages/mcp/src/pages/**/*.{ts,tsx}", "packages/mcp/src/pages.ts"] }
 
 export default defineConfig(
-  globalIgnores(["**/node_modules/", "**/dist/", "**/generated/", "**/storybook-static/", "**/.cache/", "**/gen/"]),
+  globalIgnores(["**/node_modules/", "**/dist/", "**/generated/", "**/storybook-static/", "**/.cache/", "**/gen/", "**/.alchemy/", "**/.wrangler/"]),
   { linterOptions: { reportUnusedDisableDirectives: "error", reportUnusedInlineConfigs: "error" } },
   {
     files: ui,

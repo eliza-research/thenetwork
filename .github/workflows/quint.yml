@@ -22,6 +22,7 @@ on:
       - '.npmrc'
       - '.pnpmfile.cjs'
       - '.github/workflows/quint.yml'
+      - '.github/actions/setup-pnpm-cache/**'
       - '.github/actions/setup-quint/**'
   push:
     branches: [main, develop]
@@ -78,11 +79,10 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
+      - uses: ./.github/actions/setup-pnpm-cache
       - name: Install the Quint toolchain
         working-directory: tools/vibestack
-        run: |
-          npm install --global corepack@0.35.0 && corepack enable pnpm
-          corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
+        run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
       - name: Install the pinned Quint Rust evaluator
         uses: ./.github/actions/setup-quint
       - name: Check whole-flow models at their configured bounds

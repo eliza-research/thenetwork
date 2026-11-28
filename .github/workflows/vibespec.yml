@@ -27,6 +27,7 @@ on:
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
       - '.github/actions/setup-dafny/**'
+      - '.github/actions/setup-pnpm-cache/**'
       - '.github/actions/setup-quint/**'
   pull_request:
   schedule:
@@ -80,7 +81,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - run: pnpm install --frozen-lockfile
       - run: pnpm run spec:setup
       - name: Install the pinned Quint Rust evaluator
@@ -281,7 +282,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - run: corepack pnpm@10.24.0 --filter vibestack install --frozen-lockfile --ignore-scripts
         working-directory: tools/vibestack
       - *formal-keys
@@ -360,7 +361,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - run: pnpm install --frozen-lockfile
       - name: Install only browser runtime dependencies
         run: pnpm --dir tools/vibestack --filter vibestack --prod install --frozen-lockfile --ignore-scripts

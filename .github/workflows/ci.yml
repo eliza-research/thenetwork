@@ -64,7 +64,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - name: Put the Postgres client tools on PATH
         # The simulations call pg_isready, pg_ctl, pg_dump and psql (dev-pg.ts, the ops backup drill).
         run: |
@@ -89,8 +89,8 @@ jobs:
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .cache/typecheck
-          key: typecheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json', 'apps/observatory/tsconfig.json', 'deploy/cloudflare/tsconfig.json', 'apps/observatory/deploy/tsconfig.json', 'apps/site/tsconfig.json', 'packages/ui/tsconfig.json') }}-${{ github.sha }}
-          restore-keys: typecheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json', 'apps/observatory/tsconfig.json', 'deploy/cloudflare/tsconfig.json', 'apps/observatory/deploy/tsconfig.json', 'apps/site/tsconfig.json', 'packages/ui/tsconfig.json') }}-
+          key: typecheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json', 'apps/observatory/tsconfig.json', 'deploy/tsconfig.alchemy.json', 'apps/observatory/deploy/tsconfig.json', 'apps/site/tsconfig.json', 'packages/ui/tsconfig.json') }}-${{ github.sha }}
+          restore-keys: typecheck-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tsconfig.json', 'sites/tsconfig.json', 'apps/observatory/tsconfig.json', 'deploy/tsconfig.alchemy.json', 'apps/observatory/deploy/tsconfig.json', 'apps/site/tsconfig.json', 'packages/ui/tsconfig.json') }}-
       - name: Typecheck (all workspace targets)
         run: pnpm run typecheck
         timeout-minutes: 10
@@ -131,6 +131,9 @@ jobs:
         run: node --import tsx --env-file-if-exists=.env sites/sites.ts
         env:
           DEPLOY_TARGET: production
+      - name: Offline edge router verification in workerd (test:deploy)
+        run: pnpm exec vitest run --config deploy/vitest.config.ts
+        timeout-minutes: 5
 
   matching-pack:
     name: matching (${{ matrix.pack }})
@@ -152,7 +155,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - name: Install
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
@@ -234,7 +237,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - name: Install
         run: pnpm install --frozen-lockfile
         timeout-minutes: 5
@@ -282,7 +285,7 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .nvmrc
-      - run: npm install --global corepack@0.35.0 && corepack enable pnpm
+      - uses: ./.github/actions/setup-pnpm-cache
       - name: Put the Postgres client tools on PATH
         # The test helpers call initdb, pg_isready and pg_ctl (packages/db/dev-pg.ts).
         run: |

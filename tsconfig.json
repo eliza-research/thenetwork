@@ -6,5 +6,5 @@
     "types": ["node"], "resolveJsonModule": true, "allowImportingTsExtensions": true
   },
   "include": ["design/**/*.ts", "packages/**/*.ts", "packages/ui/src/**/*.tsx", "deploy/**/*.ts", "tests/**/*.ts", "scripts/platform-dev.ts", "scripts/sim.ts", "scripts/sim/**/*.ts", "scripts/clef-fit.ts", "scripts/relay-eval.ts", "scripts/relay-clef-lib.ts", "scripts/review-eval.ts", "scripts/live-test/**/*.ts"],
-  "exclude": ["**/node_modules", "eliza/**"]
+  "exclude": ["**/node_modules", "eliza/**", "alchemy.run.ts", "deploy/alchemy-sites.ts", "deploy/sites.alchemy.ts", "deploy/worker.test.ts", "deploy/vitest.config.ts"]
 }
