@@ -481,3 +481,20 @@
 {"text":"I work Thursday morning, 7 works","answer":"unclear","keys":[]}
 {"text":"I have a meeting Thursday morning, 7 works","answer":"unclear","keys":[]}
 {"text":"I work Thursday, 7 works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 7 o'clock works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, seven works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 7 sounds good","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 7 is ok","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 7 still works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 19:00 works","answer":"unclear","keys":[]}
+{"text":"I have a meeting Thursday morning, 7 o'clock works","answer":"unclear","keys":[]}
+{"text":"I work Thursday, 7 sounds good","answer":"unclear","keys":[]}
+{"text":"I have a meeting Saturday, 11 is ok","answer":"unclear","keys":[]}
+{"text":"I'm at work Thursday morning, 7 works","answer":"unclear","keys":[]}
+{"text":"I work early Thursday morning, 7 works","answer":"unclear","keys":[]}
+{"text":"We work Saturday morning, 11 works for us","answer":"unclear","keys":[]}
+{"text":"I have class Saturday morning, 11 works","answer":"unclear","keys":[]}
+{"text":"I have a meeting on Thursday before, 7 works","answer":"unclear","keys":[]}
+{"text":"Thursday I have work, 7 works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 10 works","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 12 works","answer":"unclear","keys":[]}
