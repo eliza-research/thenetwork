@@ -62,6 +62,7 @@ test("only each participant's own answer to the exact offer commits a changed ti
   await w.say("a", yes.a!);
   await w.say("b", yes.b!);
   expect(booking()).toMatchObject({ meetingAt: originalAt, reschedule: { accepted: ["a", "b"] } });
+  
   w.restart();
   await w.say("c", yes.c!);
   const committed = booking();
