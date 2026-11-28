@@ -302,15 +302,14 @@ test.skipIf(!pgAvailable)("a service turn in a San Francisco runtime parses resc
 }, 120_000);
 
 test("a weekday-named reschedule lands on the named day, not one day later", () => {
-  // Monday 2026-10-05 12:00 New York; the booked meeting is Wednesday 2026-10-07 18:00 New York.
   const nowMs = Date.UTC(2026, 9, 5, 16);
   const originalAt = Date.UTC(2026, 9, 7, 22);
   expect(parseNaturalReschedule("move it to Friday", { nowMs, tz: "America/New_York", originalAt }))
-    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 9, 22) }); // Friday 2026-10-09 18:00 New York
+    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 9, 22) });
 });
 test("naming today's weekday reschedules to next week, not tomorrow", () => {
-  const nowMs = Date.UTC(2026, 9, 5, 16); // Monday 2026-10-05 12:00 New York
-  const originalAt = Date.UTC(2026, 9, 7, 22); // Wednesday 2026-10-07 18:00 New York
+  const nowMs = Date.UTC(2026, 9, 5, 16);
+  const originalAt = Date.UTC(2026, 9, 7, 22);
   expect(parseNaturalReschedule("move it to Monday", { nowMs, tz: "America/New_York", originalAt }))
-    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 12, 22) }); // Monday 2026-10-12 18:00 New York
+    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 12, 22) });
 });

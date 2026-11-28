@@ -224,7 +224,6 @@ describe("plan probe replies", () => {
   }, 600_000);
 
   test("a booked plan's late joiner receives the arrival brief and can relay arrival", async () => {
-    // spec/planDecision.md, "Only a pending member can change an open plan"; spec/product/stories.md, "Logistics follow the accepted opportunity and sending rules"
     const ids = ["a", "b", "c", "d"];
     const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline, plans: false, arrivalBriefs: true });
     await w.onboard(...ids);

@@ -12,7 +12,6 @@ import { NY } from "../src/outreach.ts";
 import { Mini, type Spec } from "./mini.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
-// spec/travelPresence.md, "Use my travel dates for matching"; spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
 test.skipIf(!pgAvailable).each(["trip cancelled", "trip present", "home member"] as const)(
   "a queued invitation for a saved trip does not arrive after the trip is cancelled (%s)", async scenario => {
     const url = await migratedDb("travel_cancel_queued_probe");

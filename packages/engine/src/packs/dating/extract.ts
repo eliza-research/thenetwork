@@ -392,9 +392,15 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
     const lead = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*/.exec(s.text)![0].length;
     const L = genderList(s.text, lead);
     const bothLead = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:both|either)\b/.test(s.text);
-    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:both|either)\s+)?(?:(?:only|just)\s+)?(?:(?:trans|transgender|cis|cisgender)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text) && (!bothLead || L.genders.size >= 2);
-    const afterLead = t.slice(s.start + lead), afterList = t.slice(s.start + L.end);
-    if (bothLead && (afterLead.includes("?") || /\b(?:jk|kidding|no wait|wait,? no|scratch that|never ?mind|lol no|haha no)\b/.test(afterLead) || /\b(?:just|only)\s+(?:men|women|guys|girls|gals|ladies|females|males|dudes|boys|non-?binary (?:people|folks|ppl)|enbies|nbs)\b/.test(afterList) || /\b(?:men|women|guys|girls|gals|ladies|females|males|dudes|boys)\s+only\b/.test(afterList) || /\bno,\s*(?:just\s+|only\s+)?(?:men|women|guys|girls|gals|ladies|females|males|dudes|boys)\b/.test(afterList))) return;
+    if (bothLead) {
+      const negLead = /\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead));
+      const listText = s.text.slice(lead, L.end);
+      const rest = t.slice(s.start + L.end);
+      if (negLead || L.genders.size < 2 || L.neg.size > 0
+        || /\b(?:no|not|nope|nah|never|except|nor|excluding)\b/.test(listText)
+        || !/^\s*(?:(?:are\s+(?:fine|good|ok|okay|cool|great)|work|please|pls|thanks|tbh|honestly)?\s*[.!]*\s*)$/.test(rest)) return;
+    }
+    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:both|either)\s+)?(?:(?:only|just)\s+)?(?:(?:trans|transgender|cis|cisgender)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl|only)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text);
     const singularAsked = asked === "seeks" && /^\s*(?:(?:actually|no|oh|um|well|so)[\s,!]+)*(?:a\s+|an\s+)?(?:woman|man|guy|girl|gal|lady|dude|nonbinary person|nb person)\b/.test(s.text);
     if (asked !== "gender" && (plural || singularAsked) && (L.genders.size || L.neg.size) && !/^\s*(?:i'?m|im|i am)\b/.test(s.text)) {
       const negLead = /\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead)), negAfter = /^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end));

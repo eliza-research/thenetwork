@@ -407,7 +407,6 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
     && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
   if (queuedProbePolicy(true, paused, categoryAllowed) !== "Proceed") return { ok: false, reason: "matching_settings_changed" };
   const city = isCity(rt.city) ? rt.city : "nyc";
-  // spec/travelPresence.md, "Use my travel dates for matching"; spec/probeDispatch.md, "Wait for the member's send window and current availability"
   if (probe.type !== "plan_probe") {
     const presence = await claimPresence(tx, row.app, [row.memberId]);
     if (probeAvailability(claimPresent(presence, row.memberId, now, now + 6 * DAY, city), false) === "ParticipantAway") {
