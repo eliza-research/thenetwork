@@ -2389,5 +2389,5 @@ export const NOBODY_CAME = /\b(nobody|no one) else (came|showed)\b/i;
 /** A clear answer that the member has no availability for the current week. */
 export function explicitlyBusyThisWeek(body: string): boolean {
   const text = body.trim().toLowerCase().replace(/[‘’ʼ]/g, "'").replace(/\s+/g, " ");
-  return /^(?:(?:i'm |i am )?(?:busy|not free|(?:pretty |completely )?packed) this week|busy week,? nothing free|this week is full|(?:no free time|nothing free) this week)(?:[,!.]? (?:sorry|thanks))?[.!]?$/.test(text);
+  return /^(?:sorry[,!.]? )?(?:(?:i'm |i am )?(?:(?:too )?busy|not free|(?:pretty |completely )?packed) this week|busy week,? nothing free|this week is full|(?:no free time|nothing free) this week)(?:[,!.]? (?:sorry|thanks))?[.!]?$/.test(text);
 }
