@@ -124,6 +124,25 @@ test.each(["no", "yes"] as const)("a bare day-of check-in %s answers the check-i
   }
 });
 
+test.each(["no", "yes"] as const)("a bare reschedule %s answers the offer while only the booking notice waits", async answer => {
+  // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
+  const { w, id, booking, vote } = await bookedFixture();
+  expect(w.net.memberList().find(m => m.id === "b")?.awaiting).toMatchObject({ kind: "booked", oppId: id });
+  expect(w.net.memberList().find(m => m.id === "b")?.awaiting?.bookedCheckIn).toBeUndefined();
+
+  await w.say("a", request);
+  await w.run(HOUR);
+  vote("b");
+
+  await w.say("b", answer);
+  if (answer === "no") {
+    expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt });
+    expect(booking().reschedule).toBeUndefined();
+  } else {
+    expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt, reschedule: { accepted: ["b"] } });
+  }
+});
+
 test("a bare crew answer does not vote on an open reschedule offer", async () => {
   // spec/crewOffer.md, "A crew reply follows acceptance of its exact offer"
   // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
