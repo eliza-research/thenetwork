@@ -1066,7 +1066,7 @@ export function feedbackOf(body: string): {
   const negative = otherNoShow || NEGATIVE_FEEDBACK.test(t);
   const positive = POSITIVE_FEEDBACK.test(t) || /^we hit it off[.!]*$/.test(t.trim());
   const sentiment = negative ? "negative" : positive ? "positive" : "neutral";
-  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t);
+  const again = !negative && /again|clicked/.test(t) && !/\b(wouldn'?t|won'?t|not|never)\b[^.!?]*\bagain\b/.test(t) && !againDecline(t);
   const venue = venueFeedbackOf(body);
   return {
     sentiment,
@@ -1082,6 +1082,16 @@ export function feedbackOf(body: string): {
 }
 const POSITIVE_FEEDBACK = /\b(?:great|clicked|loved|amazing|nice|easy to talk|had a blast|super fun|so fun|super chill|went well|went great|really enjoyed|good vibes|vibes? were (?:great|good|immaculate)|lowkey great|slapped|10\/10)\b|\b(?:it was|that was)\s+fire\b/;
 const NEGATIVE_FEEDBACK = /\b((was|is|it's|that's)?\s*(not|n't|wasn't|isn't)\s+(that |very |really |so |too |super )?(great|good|fun|nice|amazing)|not much in common|nothing in common|didn't (really |quite )?(click|connect|enjoy|vibe)|didn't have much|not (really )?for me|not my (thing|type)|awkward|terrible|rude|creepy|bummer|uncomfortable|cringe|no chemistry|zero chemistry|(?:weird|bad|off) vibes?|felt off|super awkward|kind of boring|kinda mid|pretty mid|was mid)/;
+const AGAIN_DECLINE = /\b(?:don'?t|didn'?t|can'?t|cannot)\s+(?:(?:really|quite|ever)\s+)?(?:want\s+to\s+(?:meet|see|go|do|hang out|get together|talk|chat|text|call)|think\s+(?:i'd|i'll|we'd|we'll|i|we)\s+(?:want\s+to\s+)?(?:meet|see|go|do|hang out|get together|talk|chat|text|call|click|connect)|see\s+(?:myself|us|him|her|them|you)\s+(?:meeting|seeing|going|doing|hanging out|getting together|talking|chatting|texting|calling)|feel like\s+(?:(?:i|we)\s+)?(?:want\s+to\s+)?(?:meeting|seeing|going|doing|hanging out|getting together|talking|chatting|texting|calling|meet|see|go|do|hang out|get together|talk|chat|text|call)|plan\s+(?:to|on)\s+(?:meeting|seeing|going|doing|hanging out|getting together|talking|chatting|texting|calling|meet|see|go|do|hang out|get together|talk|chat|text|call)|meet|see|go|do|hang out|get together|talk|chat|text|call)(?:\s+(?:me|him|her|them|you|us|it|this|that|someone|anyone|up))?(?:\s+ever)?\s+again\b|\bno interest in\s+(?:meeting|seeing|going|doing|hanging out|getting together|talking|chatting|texting|calling)(?:\s+(?:me|him|her|them|you|us|it|this|that|someone|anyone|up))?(?:\s+ever)?\s+again\b/g;
+function againDecline(t: string): boolean {
+  for (const m of t.matchAll(AGAIN_DECLINE)) {
+    const sentenceStart = Math.max(t.lastIndexOf(".", m.index), t.lastIndexOf("!", m.index), t.lastIndexOf("?", m.index)) + 1;
+    const before = t.slice(sentenceStart, m.index);
+    if (/^(?:can'?t|cannot)\b/.test(m[0]) && /\b(?:(?:don'?t|didn'?t|can'?t|cannot)\s+(?:see|understand)|no reason)\s+why\b[^.!?]*$/.test(before)) continue;
+    return true;
+  }
+  return false;
+}
 
 
 // ------------------------------------------------------------------ consent: yes, no or unclear
