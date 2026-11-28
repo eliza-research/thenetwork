@@ -451,6 +451,7 @@ export function postingProblem(p: JobPosting): string | undefined {
   if (!Number.isInteger(p.openings) || !openingsInRange(p.openings)) return "invalid_openings";
   if (!Number.isFinite(p.payMin) || !Number.isFinite(p.payMax) || !payRangeAllowed(p.payMin, p.payMax)) return "pay_range_required";
   if (!["onsite", "hybrid", "remote"].includes(p.mode)) return "invalid_mode";
+  if (postingNeedsArea(p.status !== "active", p.mode === "remote", AREA_IDS.has(p.area ?? ""))) return "missing_area";
   if (p.must.length > 12 || p.nice.length > 12 || p.must.some(m => !m.skill || !Number.isInteger(m.level) || m.level < 0 || m.level > 5)) return "invalid_skills";
   return undefined;
 }
