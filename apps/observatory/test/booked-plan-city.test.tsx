@@ -16,7 +16,6 @@ test("Plan and Booked plan agree on a generated venue time even with another Cit
     window, document: window.document, navigator: window.navigator, location: window.location,
     history: window.history, localStorage: window.localStorage, sessionStorage: window.sessionStorage,
     IS_REACT_ACT_ENVIRONMENT: true,
-    // The view can show the plan from the actual game snapshot; the detail read is unnecessary here.
     fetch: () => Promise.resolve(new Response(null, { status: 404 })),
   });
   let unmount: (() => void) | undefined;

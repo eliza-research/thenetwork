@@ -50,7 +50,7 @@ test("MapView draws a focused member's visible cross-borough connection", async 
   store.edges.set(edge.id, edge);
   const mapView = new MapView(el as unknown as HTMLElement);
   try {
-    store.ui = { ...originalUI, filters: { ...originalUI.filters, borough: "Manhattan" }, focus: null };
+    store.ui = { ...originalUI, filters: { ...originalUI.filters, borough: "Downtown & Villages" }, focus: null };
     mapView["sync"]();
     expect(mapView["members"].has(a.id)).toBe(true);
     expect(mapView["members"].has(b.id)).toBe(false);

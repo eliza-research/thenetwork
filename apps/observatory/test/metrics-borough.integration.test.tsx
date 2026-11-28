@@ -44,7 +44,7 @@ test("Metrics counts members who met someone only in the selected borough", asyn
     store.setUI({ drawer: "metrics", drawerOpen: true });
     await act(async () => { root.render(createElement(Drawer)); });
     expect(count()).toBe("3");
-    await act(async () => { store.setFilters({ borough: "Brooklyn" }); await sleep(45); });
+    await act(async () => { store.setFilters({ borough: "Brownstone Brooklyn" }); await sleep(45); });
     expect(count()).toBe("1");
     await act(async () => { store.setFilters({ borough: "Queens" }); await sleep(45); });
     expect(count()).toBe("0");

@@ -108,7 +108,6 @@ const severityText: Record<NonNullable<ObsFeedItem["severity"]>, string> = { inf
 function Linked({ x }: { x: ObsFeedItem }) {
   const ids = (x.members ?? []).filter(id => store.members.has(id)).slice(0, 8);
   if (!ids.length) return <>{x.text}</>;
-  // An ambiguous label stays plain text rather than opening the wrong member.
   const byName = new Map<string, string | null>();
   for (const id of ids) {
     const name = store.members.get(id)!.name;
@@ -492,7 +491,7 @@ function Metrics() {
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
-        <Kpi label="members who met someone" value={num(metSomeone)} title="Members in the selected borough with at least one held meeting, all time" />
+        <Kpi label="members who met someone" value={num(metSomeone)} title="Members in the selected area with at least one held meeting, all time" />
         {game && <Kpi label="precision (truth)" value={pct(st.oracleJudged ? st.compatible / st.oracleJudged : 0)} title="Proposals the hidden truth says were truly compatible" />}
         {game && <Kpi label="unsafe" value={num(st.unsafe)} tone={st.unsafe ? "destructive" : "ok"} title="Proposals the hidden truth says were unsafe" />}
         <Kpi label="opt-outs" value={num(st.optOuts)} tone={st.optOuts ? "warn" : undefined} />

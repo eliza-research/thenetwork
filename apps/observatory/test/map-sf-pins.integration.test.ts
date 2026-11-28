@@ -105,7 +105,6 @@ test("MapView focuses SF members in San Francisco, Bay Area zips near their cent
     expect(marker.getLatLng()).toMatchObject(memberPoint(moving.id, "Astoria", "nyc"));
     expect(edgeStart()).toMatchObject(marker.getLatLng());
 
-    // A full snapshot can remove a member while the same map stays mounted.
     store.members.delete(moving.id);
     store.edges.delete("moving-edge");
     store.graphTick++;
