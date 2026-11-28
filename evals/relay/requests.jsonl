@@ -567,3 +567,13 @@
 {"text": "She can have my email, \"call me\"", "want": "none"}
 {"text": "She can have my email!!", "want": "contact_share"}
 {"text": "She can have my email..", "want": "contact_share"}
+{"text": "Yeah \"no\" she can have my phone  number", "want": "none"}
+{"text": "Sure \"lol\" she can have my phone  number please", "want": "none"}
+{"text": "\"no\" she can have my phone  number", "want": "none"}
+{"text": "Yeah “no” she can have my phone  number", "want": "none"}
+{"text": "Sure “lol” she can have my phone  number please", "want": "none"}
+{"text": "“no” she can have my phone  number", "want": "none"}
+{"text": "Yeah 'no' she can have my phone  number", "want": "none"}
+{"text": "Sure 'lol' she can have my phone  number please", "want": "none"}
+{"text": "'no' she can have my phone  number", "want": "none"}
+{"text": "She can have my phone  number.", "want": "contact_share"}
