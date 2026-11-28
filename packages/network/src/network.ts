@@ -1331,7 +1331,7 @@ export function presentInCity(snapshot: WorldSnapshot, id: MemberId, city: City,
 export function presentInNyc(snapshot: WorldSnapshot, id: MemberId, from: number, to: number): boolean {
   return presentInCity(snapshot, id, "nyc", from, to);
 }
-function presentFor(member: WorldSnapshot["members"][number] | undefined, own: readonly Presence[], from: number, to: number, city: City = "nyc"): boolean {
+export function presentFor(member: { homeCity: City } | undefined, own: readonly Presence[], from: number, to: number, city: City = "nyc"): boolean {
   const requested = { from, to };
   if (!member || !presenceWindowValid(requested)) return false;
   let present = member.homeCity === city;
