@@ -1160,6 +1160,7 @@ type SendHook =
   | { t: "probe"; oppId: string; id: MemberId; roster?: number } | { t: "reveal"; oppId: string; id: MemberId } | { t: "times"; oppId: string; id: MemberId }
   | { t: "drop_notice"; oppId: string; meetingAt?: number } | { t: "feedback"; oppId: string }
   | { t: "reschedule_offer" | "reschedule_updated"; oppId: string; key: string }
+  | { t: "venue_swap"; oppId: string; venueId: string }
   | ({ t: "group_late" } & LateArrivalDelivery)
   | { t: "growth"; kind: string } | { t: "reengage" } | { t: "ask"; reason: AskRecord["reason"]; also?: string[]; follow?: boolean; engineQuestion?: true } | { t: "checkin" }
   | { t: "plan_probe"; oppId: string; id: MemberId; options?: TimeOption[] } | { t: "crew_offer"; crewId: string }
@@ -10217,6 +10218,9 @@ export class ConsentNetwork implements NetworkUnderTest {
       case "reschedule_updated": return {
         valid: () => !!o && rescheduleNoticeCurrent({ ...o, current: o.stage === "scheduled" }, this.rescheduleRoster(o), m.id, h.key, now()),
       };
+      case "venue_swap": return {
+        valid: () => !!o && o.stage === "scheduled" && o.status.get(m.id) === "yes" && o.venueId === h.venueId,
+      };
       case "invite_notice": return {
         valid: () => (m.pendingInviteJoins ?? []).some(x => x.inviteeId === h.notice.inviteeId && x.at === h.notice.at)
           && this.inviteJoinCopy(m, h.notice) !== undefined && !m.onlyWhenAsked,
@@ -12049,7 +12053,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (peerId === m.id) continue;
         const peer = this.members.get(peerId);
         if (!peer) continue;
-        this.send(peer, this.copy.silentPartnerVenueSwap(when, next.name, { area: next.neighborhood }), { type: "scheduling", proposalId: o.id }, "scheduling", { about: going });
+        this.send(peer, this.copy.silentPartnerVenueSwap(when, next.name, { area: next.neighborhood }), { type: "scheduling", proposalId: o.id }, "scheduling", { about: going, hook: { t: "venue_swap", oppId: o.id, venueId: next.id } });
       }
       return true;
     }

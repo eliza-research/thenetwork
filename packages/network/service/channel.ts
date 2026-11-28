@@ -4,6 +4,7 @@ import { plans } from "@thenetwork/engine";
 import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
+import { cleanPhrase } from "../../core/src/smsCopy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
 import { OutboundQueue, WAITING, type AppChecks, type ClaimCheck, type MessageKind, type QueueRow, type RecipientCheck } from "../../blooio/src/outbound-queue.ts";
 import { ChannelSendError, type Clock, type ChannelAdapter as ProviderAdapter, type StatusUpdate } from "../../blooio/src/types.ts";
@@ -47,6 +48,21 @@ async function rescheduleAdmission(tx: SQL, row: QueueRow, runtimeId: string, no
   const roster = [...new Set(booking.participants.filter(id => accepted.has(id)))].sort();
   return rescheduleNoticeCurrent({ ...booking, current: booking.stage === "scheduled" }, roster, row.memberId, row.id, now)
     ? { ok: true } : refused;
+}
+
+/** A queued venue-swap notice goes out only while the seat and the named venue are current. */
+async function venueSwapNoticeAdmission(tx: SQL, row: QueueRow, runtimeId: string): Promise<RecipientCheck> {
+  const refused = { ok: false, reason: "venue_swap_changed" } as const;
+  if (row.kind !== "transactional" || !row.memberId || !row.oppId) return { ok: true };
+  const named = /^Quick tweak for .+: let's do (.+) instead\. Still works for you\?$/.exec(row.text);
+  if (!named) return { ok: true };
+  const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where app_id=${row.app} and id=${runtimeId}`;
+  const opp = saved?.state.opps.find(o => o.id === row.oppId);
+  if (!opp || opp.stage !== "scheduled" || !opp.venue) return refused;
+  if (new Map(opp.status).get(row.memberId) !== "yes") return refused;
+  const name = cleanPhrase(opp.venue);
+  const withArea = opp.venueArea ? `${name} (${cleanPhrase(opp.venueArea)})` : name;
+  return named[1] === name || named[1] === withArea ? { ok: true } : refused;
 }
 
 async function interruptionSurveyAdmission(tx: SQL, row: QueueRow, runtimeId: string, now: number): Promise<RecipientCheck> {
@@ -634,6 +650,8 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
       }
       if ((row.oppId || venueBookingNoticeBase(row.id)) && await originalBookingNoticeStale(tx, row.app, rt.pg.id, [row.id], o.clock, row)) return { ok: false, reason: "booking_changed" };
       if (row.id.startsWith(RESCHEDULE_QUEUE_PREFIX)) return rescheduleAdmission(tx, row, rt.pg.id, o.clock.now());
+      const venueSwap = await venueSwapNoticeAdmission(tx, row, rt.pg.id);
+      if (!venueSwap.ok) return venueSwap;
       if (row.id.startsWith(interruptionFeedbackPrefix)) return interruptionSurveyAdmission(tx, row, rt.pg.id, o.clock.now());
       if (row.id.startsWith(reengagementDeliveryPrefix)) return reengagementAdmission(tx, row, rt.pg.id, o.clock.now());
       if (row.id.startsWith(replacementProbePrefix)) return replacementProbeAdmission(tx, row, rt, o.clock.now());
