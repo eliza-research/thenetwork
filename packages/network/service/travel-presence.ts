@@ -116,7 +116,7 @@ const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angel
 export function travelDestinationCorrectionCommand(text: string): { city: City; replaces: City } | undefined {
   const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
   const match = new RegExp(
-    `^(?:actually,? )?(?:(?:i will|i['’]ll) be in|(?:i am|i['’]m) (?:visiting|in|going to|heading to|traveling to|travelling to)) ${CITY_RX},? not ${CITY_RX}$`,
+    `^(?:(?:actually,? )?(?:(?:i will|i['’]ll) be in|(?:i am|i['’]m) (?:visiting|going to|heading to|traveling to|travelling to))|actually,? (?:i am|i['’]m) in) ${CITY_RX},? not ${CITY_RX}$`,
     "i",
   ).exec(line);
   if (!match) return;
@@ -167,31 +167,39 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
 export async function correctTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, command: { city: City; replaces: City }, now: number): Promise<string | undefined> {
   const authorized = await travelOwner(tx, accounts, owner);
   const { app, memberId } = owner;
-  const current = authorized ? await tx`select member_id, city, type, from_at, to_at from network.presence
-    where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.replaces} and to_at > ${new Date(now)}
+  const current = authorized ? await tx`select ctid, member_id, city, type, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary'
     order by from_at asc` : [];
-  const trips = current.map(presenceOf).flatMap(p => {
+  const trips = current.flatMap(row => {
+    const p = presenceOf(row);
     const window = temporaryPresenceWindow(p);
-    return window ? [window] : [];
+    return window ? [{ ctid: row.ctid as string, city: p.city, window }] : [];
   });
-  switch (decideTravelDestinationCorrection(authorized, trips.length)) {
+  const savedTrips = trips.filter(p => p.city === command.replaces && p.window.to > now).length;
+  const targetIndex = trips.findIndex(p => p.city === command.replaces && p.window.to > now);
+  const target = targetIndex >= 0 ? trips[targetIndex] : undefined;
+  let from: string | undefined, to: string | undefined, corrected: PresenceWindow | undefined;
+  if (target) {
+    const fromParts = localParts(target.window.from, CITY_TZ[command.replaces]);
+    const toParts = localParts(target.window.to, CITY_TZ[command.replaces]);
+    from = isoDate(fromParts.year, fromParts.month, fromParts.day);
+    to = isoDate(toParts.year, toParts.month, toParts.day);
+    const start = from ? localMidnight(from, command.city) : undefined;
+    const end = to ? localMidnight(to, command.city) : undefined;
+    if (start !== undefined && end !== undefined) corrected = { from: start, to: end };
+  }
+  const conflict = corrected ? trips.some((p, index) => index !== targetIndex && presenceWindowsOverlap(p.window, corrected)) : false;
+  switch (decideTravelDestinationCorrection(authorized, savedTrips, corrected ?? EMPTY_WINDOW, now, conflict)) {
     case "TravelCorrectUnavailable": return;
     case "TravelCorrectNone": return `No saved ${CITY_NAME[command.replaces]} trip in ${app.domain}.`;
+    case "TravelCorrectNeedsDates": return `Send both dates like this: I will be in ${CITY_NAME[command.city]} from YYYY-MM-DD until YYYY-MM-DD. Use the first day you will be away from ${CITY_NAME[command.city]} as the end date.`;
+    case "TravelCorrectConflict": return `Those dates overlap a trip already saved in ${app.domain}. Send dates that don't overlap.`;
     case "TravelCorrectOne": break;
   }
-  const trip = trips[0]!;
-  const fromParts = localParts(trip.from, CITY_TZ[command.replaces]);
-  const toParts = localParts(trip.to, CITY_TZ[command.replaces]);
-  const from = isoDate(fromParts.year, fromParts.month, fromParts.day);
-  const to = isoDate(toParts.year, toParts.month, toParts.day);
-  const start = from ? localMidnight(from, command.city) : undefined;
-  const end = to ? localMidnight(to, command.city) : undefined;
-  if (!from || !to || start === undefined || end === undefined) return;
+  if (!target || !corrected || !from || !to) return;
   await tx`delete from network.presence
-    where ctid in (select ctid from network.presence
-      where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.replaces} and to_at > ${new Date(now)}
-      order by from_at asc limit 1)`;
+    where app_id=${app.id} and member_id=${memberId} and ctid=${target.ctid}::tid`;
   await tx`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
-    values (${app.id}, ${memberId}, ${command.city}, 'temporary', ${new Date(start)}, ${new Date(end)})`;
+    values (${app.id}, ${memberId}, ${command.city}, 'temporary', ${new Date(corrected.from)}, ${new Date(corrected.to)})`;
   return `Saved in ${app.domain}: ${CITY_NAME[command.city]} from ${from} until ${to} (end date excluded).`;
 }

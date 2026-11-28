@@ -371,6 +371,64 @@ test("a destination correction text replaces the saved trip city", async () => {
   expect((await tripsOf(otherId)).map(trip => trip.city)).toEqual(["chicago"]);
 }, 60_000);
 
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a bare present-location text does not replace a saved trip", async () => {
+  const phone = "+12125550233", app = APPS.friends;
+  await service.accounts.invite(app, phone);
+  const person = (await service.accounts.personFor(phone))!;
+  const joined = await service.accounts.join(app, { e164: phone, personId: person.id }, {
+    firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+  });
+  if (!joined.ok) throw new Error(joined.error);
+  const memberId = joined.membership.memberId;
+  const day = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const tripsOf = () => sql`select city, from_at, to_at from network.presence where app_id=${app.id}
+    and member_id=${memberId} and type='temporary' order by from_at, to_at`;
+  const declare = (id: string, text: string) => post(turn(id, phone, text, "friends"));
+  expect((await (await declare("present-save-la", `I will be in Los Angeles from ${day(20)} until ${day(22)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declare("present-save-chicago", `I will be in Chicago from ${day(30)} until ${day(32)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  const before = await tripsOf();
+  const bareNyc = await declare("present-bare-nyc", "I'm in NYC, not LA.");
+  expect(bareNyc.status).toBe(200);
+  expect((await bareNyc.json()).replies[0]).not.toContain("No saved Los Angeles trip");
+  expect(await tripsOf()).toEqual(before);
+  const bareSf = await declare("present-bare-sf", "I am in San Francisco, not Chicago.");
+  expect(bareSf.status).toBe(200);
+  expect(await tripsOf()).toEqual(before);
+  const cued = await declare("present-cued", "actually I'm in Miami, not Chicago");
+  expect(cued.status).toBe(200);
+  expect((await cued.json()).replies[0]).toContain("Miami");
+  expect((await tripsOf()).map(trip => trip.city)).toEqual(["la", "miami"]);
+}, 60_000);
+
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a destination correction that would overlap keeps the saved trip", async () => {
+  const app = APPS.friends;
+  const join = async (e164: string) => {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error(joined.error);
+    return joined.membership.memberId;
+  };
+  const tripsOf = (id: string) => sql`select city, from_at, to_at from network.presence where app_id=${app.id}
+    and member_id=${id} and type='temporary' order by from_at, to_at`;
+  const day = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const overlapPhone = "+12125550234";
+  const overlapId = await join(overlapPhone);
+  const declareOverlap = (id: string, text: string) => post(turn(id, overlapPhone, text, "friends"));
+  expect((await (await declareOverlap("correct-overlap-miami", `I will be in Miami from ${day(10)} until ${day(12)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  expect((await (await declareOverlap("correct-overlap-nyc", `I will be in New York City from ${day(12)} until ${day(14)}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  const overlapBefore = await tripsOf(overlapId);
+  const overlapped = await declareOverlap("correct-overlap-fix", "actually I'm going to San Francisco, not Miami");
+  expect(overlapped.status).toBe(200);
+  expect((await overlapped.json()).replies[0]).toContain("overlap");
+  expect(await tripsOf(overlapId)).toEqual(overlapBefore);
+}, 60_000);
+
+
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
   const phone = "+12125550173", app = APPS.friends;
   const joined = await service.accounts.join(app, { e164: phone, personId: null }, {
@@ -580,6 +638,35 @@ test("signed solo concierge offers current public listings without recruiting an
     await service.close();
     await start();
   }
+}, 60_000);
+
+// spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
+test("a destination correction that would end keeps the saved trip", async () => {
+  const app = APPS.friends;
+  const join = async (e164: string) => {
+    await service.accounts.invite(app, e164);
+    const person = (await service.accounts.personFor(e164))!;
+    const joined = await service.accounts.join(app, { e164, personId: person.id }, {
+      firstName: "Ari", age: 29, homeCity: "nyc", consent: { sms: true, wording: app.consent.text },
+    });
+    if (!joined.ok) throw new Error(joined.error);
+    return joined.membership.memberId;
+  };
+  const tripsOf = (id: string) => sql`select city, from_at, to_at from network.presence where app_id=${app.id}
+    and member_id=${id} and type='temporary' order by from_at, to_at`;
+  const day = (offset: number) => new Date(clock.now() + offset * DAY).toISOString().slice(0, 10);
+  const expiredPhone = "+12125550235";
+  const expiredId = await join(expiredPhone);
+  const declareExpired = (id: string, text: string) => post(turn(id, expiredPhone, text, "friends"));
+  const endDate = day(1);
+  const startDate = new Date(Date.parse(`${endDate}T00:00:00Z`) - 2 * DAY).toISOString().slice(0, 10);
+  expect((await (await declareExpired("correct-expired-la", `I will be in Los Angeles from ${startDate} until ${endDate}.`)).json()).replies[0]).toContain("Saved in friends.help");
+  const expiredBefore = await tripsOf(expiredId);
+  clock.set(Date.parse(`${endDate}T05:30:00Z`));
+  const expired = await declareExpired("correct-expired-fix", "actually I'm going to Miami, not Los Angeles");
+  expect(expired.status).toBe(200);
+  expect((await expired.json()).replies[0]).toContain("YYYY-MM-DD");
+  expect(await tripsOf(expiredId)).toEqual(expiredBefore);
 }, 60_000);
 
 // spec/contributionHistory.md, "Show verified acts a page at a time"

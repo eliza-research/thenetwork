@@ -99,21 +99,29 @@ pure val presenceValues = windowValues
 
 ### A signed destination correction replaces one saved trip
 
-The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A correction naming a new city and the saved city it replaces changes only the earliest current or future saved trip to the replaced city in that app, keeping that trip's calendar dates in the new city. A later trip to the replaced city, a trip to another city, another member's trip, and a trip that has ended all stay. The reply names the corrected trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing changes. This command changes no consent, account status, home location, or matching markets.
+The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A correction naming a new city and the saved city it replaces changes only the earliest current or future saved trip to the replaced city in that app, keeping that trip's calendar dates in the new city. A later trip to the replaced city, a trip to another city, another member's trip, and a trip that has ended all stay. The corrected trip must still be current or future in the new city. It must not share time with another saved trip. When the corrected dates have ended, the reply asks for dates and nothing changes. When the corrected dates overlap another saved trip, the reply says so and nothing changes. The reply names the corrected trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing changes. This command changes no consent, account status, home location, or matching markets.
 
 ```quint
-type TravelDestinationCorrection = TravelCorrectUnavailable | TravelCorrectNone | TravelCorrectOne
+type TravelDestinationCorrection = TravelCorrectUnavailable | TravelCorrectNone | TravelCorrectNeedsDates | TravelCorrectConflict | TravelCorrectOne
 
-pure def decideTravelDestinationCorrection(authorized: bool, savedTrips: int): TravelDestinationCorrection =
+pure def decideTravelDestinationCorrection(authorized: bool, savedTrips: int, window: PresenceWindow, now: int, conflict: bool): TravelDestinationCorrection =
   if (not(authorized)) TravelCorrectUnavailable
-  else if (savedTrips > 0) TravelCorrectOne
-  else TravelCorrectNone
+  else if (savedTrips == 0) TravelCorrectNone
+  else if (not(presenceWindowCurrentOrFuture(window, now))) TravelCorrectNeedsDates
+  else if (conflict) TravelCorrectConflict
+  else TravelCorrectOne
 
-pure def lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: bool, savedTrips: int): bool =
-  decideTravelDestinationCorrection(authorized, savedTrips) == TravelCorrectOne implies (authorized and savedTrips > 0)
+pure def lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: bool, savedTrips: int, window: PresenceWindow, now: int, conflict: bool): bool =
+  decideTravelDestinationCorrection(authorized, savedTrips, window, now, conflict) == TravelCorrectOne implies (authorized and savedTrips > 0 and presenceWindowCurrentOrFuture(window, now) and not(conflict))
 
-pure def lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: int): bool =
-  decideTravelDestinationCorrection(false, savedTrips) == TravelCorrectUnavailable
+pure def lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: int, window: PresenceWindow, now: int, conflict: bool): bool =
+  decideTravelDestinationCorrection(false, savedTrips, window, now, conflict) == TravelCorrectUnavailable
+
+pure def lawDestinationCorrectionNeedsDatesWhenEnded(savedTrips: int, window: PresenceWindow, now: int, conflict: bool): bool =
+  (savedTrips > 0 and not(presenceWindowCurrentOrFuture(window, now))) implies decideTravelDestinationCorrection(true, savedTrips, window, now, conflict) == TravelCorrectNeedsDates
+
+pure def lawDestinationCorrectionConflictChangesNothing(savedTrips: int, window: PresenceWindow, now: int): bool =
+  (savedTrips > 0 and presenceWindowCurrentOrFuture(window, now)) implies decideTravelDestinationCorrection(true, savedTrips, window, now, true) == TravelCorrectConflict
 
 pure val savedTripsValues = Set(-1, 0, 1, 2)
 ```

@@ -6,7 +6,7 @@ export interface PresenceWindow { from: number; to: number }
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 export type TravelEntry = "TravelUnavailable" | "TravelNeedsDates" | "TravelDateConflict" | "TravelAlreadySaved" | "TravelSave";
 /** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
-export type TravelDestinationCorrection = "TravelCorrectUnavailable" | "TravelCorrectNone" | "TravelCorrectOne";
+export type TravelDestinationCorrection = "TravelCorrectUnavailable" | "TravelCorrectNone" | "TravelCorrectNeedsDates" | "TravelCorrectConflict" | "TravelCorrectOne";
 
 
 /** Story: Use my travel dates for matching / A temporary presence needs both dates in order (spec/travelPresence.md) */
@@ -107,20 +107,34 @@ export function lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: number
 
 /** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
 //@ pure
-export function decideTravelDestinationCorrection(authorized: boolean, savedTrips: number): TravelDestinationCorrection {
-  return !authorized ? "TravelCorrectUnavailable" : (savedTrips > 0 ? "TravelCorrectOne" : "TravelCorrectNone");
+export function decideTravelDestinationCorrection(authorized: boolean, savedTrips: number, window: PresenceWindow, now: number, conflict: boolean): TravelDestinationCorrection {
+  return !authorized ? "TravelCorrectUnavailable" : (savedTrips === 0 ? "TravelCorrectNone" : (!presenceWindowCurrentOrFuture(window, now) ? "TravelCorrectNeedsDates" : (conflict ? "TravelCorrectConflict" : "TravelCorrectOne")));
 }
 
 /** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
 //@ pure
-export function lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: boolean, savedTrips: number): boolean {
+export function lawDestinationCorrectionReplacesOneOnlyWhenSaved(authorized: boolean, savedTrips: number, window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
-  return !(decideTravelDestinationCorrection(authorized, savedTrips) === "TravelCorrectOne") || (authorized && savedTrips > 0);
+  return !(decideTravelDestinationCorrection(authorized, savedTrips, window, now, conflict) === "TravelCorrectOne") || (authorized && savedTrips > 0 && presenceWindowCurrentOrFuture(window, now) && !conflict);
 }
 
 /** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
 //@ pure
-export function lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: number): boolean {
+export function lawUnauthorizedDestinationCorrectionChangesNothing(savedTrips: number, window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
-  return decideTravelDestinationCorrection(false, savedTrips) === "TravelCorrectUnavailable";
+  return decideTravelDestinationCorrection(false, savedTrips, window, now, conflict) === "TravelCorrectUnavailable";
+}
+
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawDestinationCorrectionNeedsDatesWhenEnded(savedTrips: number, window: PresenceWindow, now: number, conflict: boolean): boolean {
+  //@ ensures \result === true
+  return !(savedTrips > 0 && !presenceWindowCurrentOrFuture(window, now)) || decideTravelDestinationCorrection(true, savedTrips, window, now, conflict) === "TravelCorrectNeedsDates";
+}
+
+/** Story: Tell the Network my travel dates / A signed destination correction replaces one saved trip (spec/travelPresence.md) */
+//@ pure
+export function lawDestinationCorrectionConflictChangesNothing(savedTrips: number, window: PresenceWindow, now: number): boolean {
+  //@ ensures \result === true
+  return !(savedTrips > 0 && presenceWindowCurrentOrFuture(window, now)) || decideTravelDestinationCorrection(true, savedTrips, window, now, true) === "TravelCorrectConflict";
 }
