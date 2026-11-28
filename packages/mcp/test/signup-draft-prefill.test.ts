@@ -292,7 +292,7 @@ test.skipIf(!pgAvailable)("on Postgres the draft shows on one form only, also wh
   } finally { await store.close(); await dropTestDb(); }
 });
 
-test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry is unavailable to both signup forms", async expiring => {
+test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry is unavailable to Finish signup and /oauth/signup-draft stays removed", async expiring => {
   const store = new PgOAuthStore(await testDb());
   try {
     const e = setup({ store });
@@ -305,20 +305,23 @@ test.skipIf(!pgAvailable).each(["grant", "draft"] as const)("a %s at its expiry 
     if (expiring === "grant") await store.sql`update oauth.grants set expires_at=${new Date(deadline)} where id=${grant.id}`;
     else await store.sql`update oauth.signup_drafts set expires_at=${new Date(deadline)} where grant_id=${grant.id}`;
 
-    const recover = () => e.fetch(new Request("https://friends.help/oauth/signup-draft", {
+    const removed = await e.fetch(new Request("https://friends.help/oauth/signup-draft", {
       method: "POST",
       headers: { origin: "https://friends.help", cookie: `sid_friends=${owner.token}`, "content-type": "application/json" },
       body: "{}",
     }));
-    expect(await (await recover()).json()).toMatchObject({ draft: { firstName: "Ari", homeCity: "sf" } });
-    e.clock.t = deadline;
-    const recovery = await recover();
-    expect(recovery.status).toBe(200);
-    expect(await recovery.json()).toMatchObject({ draft: null });
+    expect(removed.status).toBe(404);
+    expect(await removed.json()).toEqual({ error: "not_found" });
 
+    e.clock.t = deadline;
     const prefill = await authorization.post("/oauth/authorize/signup", { decision: "open" });
     expect(prefill.status).toBe(200);
     expect(blank(await prefill.text())).toBe(true);
-    expect(await store.sql`select consumed_at as consumed from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([{ consumed: null }]);
+    expect(await store.sql`select grant_id from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([{ grant_id: grant.id }]);
+
+    const ask = { clientId, app: "friends" as const, phoneKey, personId: null, ageAllowed: true };
+    expect(await store.useSignupPrefill(ask, () => deadline)).toBeUndefined();
+    expect(await store.useSignupPrefill(ask, () => deadline - 1)).toEqual({ firstName: "Ari", homeCity: "sf" });
+    expect(await store.sql`select grant_id from oauth.signup_drafts where grant_id=${grant.id}`).toEqual([]);
   } finally { await store.close(); await dropTestDb(); }
 });

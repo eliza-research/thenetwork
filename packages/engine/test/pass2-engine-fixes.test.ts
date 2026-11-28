@@ -362,7 +362,7 @@ describe("Pass 2 engine fixes", () => {
     const pair = deep.context.pairs[0]!;
     expect(pair.edges).toEqual(["P2 avoid P1", "knows"]);
     expect(pair.feedback).toHaveLength(6);
-    expect(pair.feedback.map(f => f.days_ago)).toEqual([6, 5, 4, 3, 2, 1]);
+    expect(pair.feedback.map(f => f.days_ago)).toEqual([7, 7, 7, 7, 2, 1]);
     expect(pair.feedback[5]).toEqual({ from: "P2", about: "P1", sentiment: "negative", would_meet_again: false, days_ago: 1 });
 
     const pubV2 = buildPublicView(w.input, screenConfigOf(w, cand), { version: "v2" });

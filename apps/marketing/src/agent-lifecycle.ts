@@ -332,7 +332,7 @@ async function runWithConcurrency<T, R>(
       const current = nextIdx;
       nextIdx += 1;
       if (current >= items.length) return;
-      results[current] = await worker(items[current]!, current);
+      results[current] = await worker(items[current], current);
     }
   };
 

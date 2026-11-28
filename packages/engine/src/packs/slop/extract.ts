@@ -1156,7 +1156,8 @@ function shouldShortCircuitSlopLlm(text: string, p: SlopOnboarding, asked: Onboa
   if (!trimmed) return true;
   const hasAgeCue = SELF_AGE_CUE.test(trimmed);
   if (!hasAgeCue && (trimmed.length < 4 || TRIVIAL_SLOP_TURN.test(trimmed))) return true;
-  if (hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
+  const ageConfident = !!p.age && p.age.confidence >= LLM_FILL_BELOW;
+  if (ageConfident && hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
     return true;
   }
   return false;

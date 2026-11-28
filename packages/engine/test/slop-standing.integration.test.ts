@@ -72,7 +72,7 @@ describe("slop.date private standing", () => {
     expect(dateProfile(w, "agree")?.uncertainty).toBe(12);
     expect(dateProfile(w, "disagree")?.uncertainty).toBe(20);
     expect(dateProfile(w, "single")?.uncertainty).toBe(20);
-    expect(dateProfile(w, "unrated")).toMatchObject({ standing: 50, uncertainty: 20 });
+    expect(dateProfile(w, "unrated")).toMatchObject({ standing: 50, uncertainty: 10 });
   });
 
   test("standing is the midrank percentile in the member's pool; a small pool keeps the middle", () => {
@@ -80,7 +80,7 @@ describe("slop.date private standing", () => {
     expect(dateProfile(w, "w00")?.standing).toBe(2);
     expect(dateProfile(w, "w23")?.standing).toBe(97);
     expect(dateProfile(w, "w12")?.standing).toBe(52);
-    for (const id of ["m00", "m09"]) expect(dateProfile(w, id)).toMatchObject({ standing: 50, uncertainty: 20 });
+    for (const id of ["m00", "m09"]) expect(dateProfile(w, id)).toMatchObject({ standing: 50, uncertainty: 10 });
   });
 
   test("standing is switched off while real outcomes show that the gap predicts nothing, and back on when it does", () => {

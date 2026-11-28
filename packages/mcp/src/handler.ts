@@ -392,7 +392,18 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
 
   function openAiUnavailable(c: Pick<Ctx, "app" | "host">, client: OAuthClient): boolean {
     const openAi = assistantOf(client) === "chatgpt" || (client.kind === "cimd" && isOpenAiHost(new URL(client.id).hostname));
-    return openAi && !openAiOn(c) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+    return openAi && !openAiOn(c) && !slopChatGptClient(c, client) && (client.kind !== "dcr" || !privateOpenAiApps.has(c.app.id));
+  }
+
+  function chatGptRedirects(uris: readonly string[]): boolean {
+    return uris.length > 0 && uris.every(uri => {
+      const u = new URL(uri);
+      return u.protocol === "https:" && !u.username && !u.password && ["chatgpt.com", "chat.openai.com"].includes(u.host);
+    });
+  }
+
+  function slopChatGptClient(c: Pick<Ctx, "app">, client: OAuthClient): boolean {
+    return c.app.id === "slop" && client.app === "slop" && client.kind === "dcr" && chatGptRedirects(client.redirectUris);
   }
 
   function grantAllowsUpdates(grant: Grant, client: OAuthClient): boolean {
@@ -475,7 +486,8 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
     if (!Array.isArray(responses) || !responses.every(r => r === "code")) return bad("response_types may be code only.");
     if (b.scope !== undefined && (typeof b.scope !== "string" || !parseScopes(b.scope, scopesOn(c.app.id)))) return bad(`Supported scopes: ${scopesOn(c.app.id).join(", ")}.`);
     const name = typeof b.client_name === "string" ? b.client_name.replace(/[\u0000-\u001f]/g, "").slice(0, 100) : null;
-    const surface: Surface = !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
+    const slopChatGpt = c.app.id === "slop" && c.host.id === "slop" && chatGptRedirects(uris as string[]);
+    const surface: Surface = !slopChatGpt && !privateOpenAiApps.has(c.app.id) && (uris as string[]).some(r => isOpenAiHost(new URL(r).hostname)) ? "openai" : "full";
     if (surface === "openai" && !openAiOn(c)) return bad("This app is not available for this client.");
     const secret = method === "none" ? null : randomToken("ntws_");
     const client: OAuthClient = { id: `mcp_${randomId()}`, secretHash: secret ? sha256hex(secret) : null, name, redirectUris: uris as string[], authMethod: method, app: c.host.id, surface, kind: "dcr", createdAt: now() };
