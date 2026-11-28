@@ -279,7 +279,4 @@ test("staff API requires an area for onsite postings but not remote ones", async
     expect(withArea.status).toBe(200);
   } finally { await s.close(); }
 }, T);
-  
-  
-    
-});
+  });
