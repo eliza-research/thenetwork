@@ -106,7 +106,7 @@ const CONNECT_TYPES = new Set(["probe", "proposal", "relay", "growth_ask", "sche
 const TEEN_CONTACT_TYPES = new Set([...CONNECT_TYPES].filter(t => t !== "cancellation"));
 
 /** An inbound that only acknowledges ("thx", "ok", "sounds good") answers a logistics message, not an earlier ask. */
-const ACK_ONLY = /^(?:ok(?:ay)?|k|kk|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
+const ACK_ONLY = /^(?:ok(?:ay)?|(?=(k+))\1|thx|thanks?(?: you)?|ty|cool|great|nice|perfect|got it|sounds good|will do|see you( then)?|yep|yup|sure|[\s.!,:;)(-]|\p{Extended_Pictographic})+$/iu;
 /** An inbound that asks the Network for something (a member's own ask: follow-ups to it are not unsolicited). */
 const ASK = /\?|\b(looking for|i'?d (really )?(like|love)|i want|i need|can you|could you|help me|find me|anything (come|came) up|still hoping)\b/i;
 /** Wording that says someone declined or did not answer. */
