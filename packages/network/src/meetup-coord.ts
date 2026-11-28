@@ -80,7 +80,7 @@ export interface MeetupCoordHost {
       meetupId: string;
       kind: "pre_brief" | "arrival_relay" | "arrival_ack" | "backup_pivot" | "no_show_ping" | "waiting_notice";
     },
-  ): void;
+  ): "sent" | "deferred" | "refused" | void;
 }
 
 export interface MeetupCoordRecord {
@@ -109,6 +109,7 @@ export interface MeetupCoordRecord {
   checkedInIds: MemberId[];
   updates: ArrivalUpdate[];
   pendingDigest: ArrivalUpdate[];
+  heldDigest?: { memberId: MemberId; updates: ArrivalUpdate[] }[];
   lastDigestAt?: number;
 }
 
@@ -491,6 +492,7 @@ export class MeetupCoordinator {
           meetup.activeVenueId = backup.id;
           meetup.pivoted = true;
           meetup.pendingDigest = [];
+          meetup.heldDigest = [];
           const relayedTo: MemberId[] = [];
           const primaryName = this.resolveVenue(meetup.primaryVenueId, meetup).name;
           const reasonText = reportedFull ? "is full" : "is closed";
@@ -567,6 +569,7 @@ export class MeetupCoordinator {
         meetup.activeVenueId = backup.id;
         meetup.pivoted = true;
         meetup.pendingDigest = [];
+        meetup.heldDigest = [];
         const relayedTo: MemberId[] = [];
         const msg = formatBackupVenuePivot(primaryName, backup.name, reportedFull ? "full" : "closed", {
           address: backup.address,
@@ -612,6 +615,7 @@ export class MeetupCoordinator {
       meetup.met = true;
       meetup.closed = true;
       meetup.pendingDigest = [];
+      meetup.heldDigest = [];
       return { handled: true, meetupId: meetup.meetupId, phase: "closed", state: "met", relayedTo: [] };
     }
 
@@ -682,10 +686,12 @@ export class MeetupCoordinator {
       if (meetup.lastDigestAt === undefined) meetup.lastDigestAt = nowMs;
       if (nowMs - meetup.lastDigestAt >= this.digestDebounceMs) {
         const flushed = this.flushGroupDigest(meetup, nowMs);
-        if (!sender.optedOut && flushed.length > 0) {
-          this.host.send(senderId, "Got it — I've updated the group.", { meetupId: meetup.meetupId, kind: "arrival_ack" });
+        const held = (meetup.heldDigest ?? []).some(h => h.updates.includes(update));
+        if (!sender.optedOut && (flushed.length > 0 || held)) {
+          const ack = held ? "Got it — I'll pass that along to the group shortly." : "Got it — I've updated the group.";
+          this.host.send(senderId, ack, { meetupId: meetup.meetupId, kind: "arrival_ack" });
         }
-        return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: flushed };
+        return { handled: true, meetupId: meetup.meetupId, phase, state: parsed.state, relayedTo: flushed, ...(held ? { queuedDigest: true } : {}) };
       }
       if (!sender.optedOut) {
         this.host.send(senderId, "Got it — I'll pass that along to the group shortly.", { meetupId: meetup.meetupId, kind: "arrival_ack" });
@@ -711,10 +717,12 @@ export class MeetupCoordinator {
 
   private flushGroupDigest(meetup: MeetupCoordRecord, nowMs: number): MemberId[] {
     const anyMinorInEvent = this.meetupHasMinor(meetup);
-    if (meetup.pendingDigest.length === 0 || meetup.closed || meetup.met || anyMinorInEvent) return [];
+    const heldBefore = meetup.heldDigest ?? [];
+    if ((meetup.pendingDigest.length === 0 && heldBefore.length === 0) || meetup.closed || meetup.met || anyMinorInEvent) return [];
     const phase = evaluateMeetupPhase(nowMs, meetup.startMs, meetup.met);
     if (phase !== "active_arrival") return [];
-    const batch = meetup.pendingDigest.splice(0, meetup.pendingDigest.length);
+    const fresh = meetup.pendingDigest.splice(0, meetup.pendingDigest.length);
+    meetup.heldDigest = [];
     meetup.lastDigestAt = nowMs;
     const sentTo: MemberId[] = [];
     const guards = this.buildSafetyGuards();
@@ -722,6 +730,7 @@ export class MeetupCoordinator {
     for (const recipientId of meetup.confirmed) {
       const rec = this.host.party(meetup.meetupId, recipientId);
       if (!rec) continue;
+      const batch = [...(heldBefore.find(h => h.memberId === recipientId)?.updates ?? []), ...fresh];
       const lines: string[] = [];
       for (const u of batch) {
         if (u.memberId === recipientId) continue;
@@ -749,8 +758,9 @@ export class MeetupCoordinator {
       }
       if (lines.length > 0) {
         const digest = `Arrival update: ${lines.join(" ")}`;
-        this.host.send(recipientId, digest, { meetupId: meetup.meetupId, kind: "arrival_relay" });
-        sentTo.push(recipientId);
+        const result = this.host.send(recipientId, digest, { meetupId: meetup.meetupId, kind: "arrival_relay" });
+        if (result === "refused") meetup.heldDigest.push({ memberId: recipientId, updates: batch });
+        else sentTo.push(recipientId);
       }
     }
     return sentTo;
@@ -790,6 +800,7 @@ export class MeetupCoordinator {
         }
         meetup.closed = true;
         meetup.pendingDigest = [];
+        meetup.heldDigest = [];
         summary.closed.push(meetup.meetupId);
         continue;
       }
@@ -817,7 +828,7 @@ export class MeetupCoordinator {
         summary.preBriefs.push(meetup.meetupId);
       }
 
-      if (phase === "active_arrival" && meetup.mode === "group" && meetup.pendingDigest.length > 0) {
+      if (phase === "active_arrival" && meetup.mode === "group" && (meetup.pendingDigest.length > 0 || (meetup.heldDigest?.length ?? 0) > 0)) {
         if (meetup.lastDigestAt === undefined || nowMs - meetup.lastDigestAt >= this.digestDebounceMs) {
           const sent = this.flushGroupDigest(meetup, nowMs);
           if (sent.length > 0) summary.digestsFlushed.push(meetup.meetupId);
@@ -872,6 +883,7 @@ export class MeetupCoordinator {
       if (m.meetupId !== meetupId && m.oppId !== meetupId) continue;
       m.closed = true;
       m.pendingDigest = [];
+      m.heldDigest = [];
     }
   }
 

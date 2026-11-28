@@ -11403,6 +11403,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           opp.reminded.add(to);
           if (!m.awaiting && opp.stage === "scheduled") this.expect(m, { kind: "booked", oppId: opp.id, at: this.now() });
         }
+        return sent;
       },
     };
   }

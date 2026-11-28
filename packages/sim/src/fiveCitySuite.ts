@@ -1544,7 +1544,7 @@ export async function runFiveCitySuite(
         ],
         canaries: [sender.canary, recip.canary],
       }),
-      send: (to, body, meta) => sent.push({ to, body, kind: meta.kind }),
+      send: (to, body, meta) => void sent.push({ to, body, kind: meta.kind }),
     };
     const coord = new MeetupCoordinator(host);
     coord.registerMeetup({
@@ -1919,7 +1919,7 @@ export async function runFiveCitySuite(
         },
         blocked: () => false,
         privateFacts: () => ({ forbidden: [], canaries: [] }),
-        send: (_to, body) => minorRelaySent.push(body),
+        send: (_to, body) => void minorRelaySent.push(body),
       });
       minorCoord.registerMeetup({
         meetupId: `teen-relay-${city}`,

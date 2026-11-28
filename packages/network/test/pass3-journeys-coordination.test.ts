@@ -379,7 +379,7 @@ describe("Pass 3 Wave 2: Natural-language scheduling, counter-proposal relay, 3-
       }),
       blocked: () => false,
       privateFacts: () => ({ forbidden: [], canaries: [] }),
-      send: (to, body, meta) => sent.push({ to, body, kind: meta.kind }),
+      send: (to, body, meta) => void sent.push({ to, body, kind: meta.kind }),
     };
 
     const coord = new MeetupCoordinator(host);
