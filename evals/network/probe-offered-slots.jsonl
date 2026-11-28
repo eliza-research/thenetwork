@@ -420,3 +420,14 @@
 {"text":"any day works but Saturday would be ideal","answer":"yes","keys":["b"]}
 {"text":"any day works but Sunday doesn't work","answer":"unclear","keys":[]}
 {"text":"any day works but Sunday is out","answer":"unclear","keys":[]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday won't work, Saturday works, Sunday won't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work. Saturday works. Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday won't work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works and Sunday doesn't work","answer":"yes","keys":["b"]}
+{"text":"Thursday does not work, Saturday works, Sunday does not work","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't work for me","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday doesn't","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Saturday works, Sunday is out","answer":"yes","keys":["b"]}
+{"text":"Thursday doesn't work, Sunday doesn't work","answer":"unclear","keys":[]}
+{"text":"Saturday works, Sunday doesn't work, Thursday doesn't work","answer":"yes","keys":["b"]}

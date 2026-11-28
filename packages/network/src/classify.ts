@@ -2118,8 +2118,12 @@ export function parseProbeReply(
     if (Number.isFinite(firstStrongAt)) {
       const tails = [...refusedTails].filter(([at]) => at >= firstStrongAt).sort(([first], [second]) => second - first);
       const retractsPick = tails.some(([, [, keys]]) => keys.some(key => strong.has(key)));
+      const spans: [number, number][] = tails.map(([at, [end]]) => [at, end]);
+      for (const [at, [end, keys, qualified]] of qualifiedTimeRefusals) {
+        if ((qualified || !keys.some(key => strong.has(key))) && !spans.some(([start, stop]) => start === at && stop === end)) spans.push([at, end]);
+      }
       let remaining = t;
-      for (const [at, [end]] of tails) {
+      for (const [at, end] of spans.sort((a, b) => b[0] - a[0])) {
         remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
       }
       const rescanned = consentScan(remaining);
