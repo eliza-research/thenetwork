@@ -3682,8 +3682,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     for (const r of this.requests) {
       if (r.memberId !== m.id || r.kind !== "people") continue;
       const key = `request:${r.id}`;
-      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing");
-      const paused = r.withdrawn === true && r.withdrawnBy === key && m.intentControls?.[key] === "PauseControl";
+      const control = m.intentControls?.[key];
+      if (control === "CloseControl") continue;
+      const booked = r.outcome === "booked" && r.oppId !== undefined && this.opps.get(r.oppId)?.stage === "scheduled";
+      const open = !r.withdrawn && !r.closed && (r.outcome === undefined || r.outcome === "none" || r.outcome === "probing" || booked);
+      const paused = control === "PauseControl" && ((r.withdrawn === true && r.withdrawnBy === key) || (booked && !r.withdrawn && !r.closed));
       const objective = this.requestObjective(r);
       if ((!open && !paused) || covered.has(objective)) continue;
       entries.push({
@@ -3730,7 +3733,8 @@ export class ConsentNetwork implements NetworkUnderTest {
     const asked = !!pending && pending.keys.includes(e.key) && (pending.kind === "CloseAsked" || pending.kind === "RenewalAsked")
       && standingReplyApplies(pending.kind, "KeepReply", now - pending.at);
     const status: StandingStatus = e.kind === "posting" ? "open" : asked ? "waiting_on_you" : e.phase === "IntentPaused" ? "paused" : "active";
-    return { ref: e.ref, number: index + 1, kind: e.kind, summary: e.summary, status, inProgress: this.standingInProgress(m, e), endsAt: e.endsAt };
+    const inProgress = this.standingInProgress(m, e) || this.standingLinkedOpps(m, e).some(o => o.stage === "scheduled");
+    return { ref: e.ref, number: index + 1, kind: e.kind, summary: e.summary, status, inProgress, endsAt: e.endsAt };
   }
 
   private standingListText(m: MemberState, page: number, now: number): string {
@@ -6175,6 +6179,15 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (participant?.awaiting?.oppId === o.id) participant.awaiting = undefined;
     }
     this.ctx.log("opportunity_closed", { proposalId: o.id, reason });
+    if (o.requester) {
+      const r = this.requests.find(x => x.oppId === o.id && x.memberId === o.requester);
+      if (r && r.outcome === "booked") {
+        r.outcome = "none";
+        r.oppId = undefined;
+        this.dirty = true;
+        this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason });
+      }
+    }
     for (const id of still) {
       const member = this.members.get(id);
       if (!minorClose || o.bookedTold?.includes(id)) this.sendBookedCancellation(o, id, copy.dropNotice("", false), minorClose);
@@ -6247,6 +6260,11 @@ export class ConsentNetwork implements NetworkUnderTest {
           r.outcome = "none";
           if (tell && !r.toldRetryNone && !told.has(req!.id)) { r.toldRetryNone = true; this.send(req!, copy.declinedQuiet, { type: "info" }, "info"); }
         }
+      } else if (r && r.outcome === "booked") {
+        r.outcome = "none";
+        r.oppId = undefined;
+        this.dirty = true;
+        this.ctx.log("request_result", { requestId: r.id, memberId: r.memberId, outcome: "waiting", reason });
       }
     }
     // A review rejection or expiry is not something the members did: no interaction record.
