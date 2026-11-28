@@ -584,7 +584,8 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       if (!slopRadiusMilesInBounds(n)) continue;
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);
     }
-    for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|chicago|chi|miami|mia|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|chicago|miami|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+)?(?:city|nyc|sf|la|chicago|chi|miami|mia)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc|chicago|miami)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
+    for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+|my\s+|your\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|chicago|chi|miami|mia|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|chicago|miami|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+|my\s+|your\s+)?(?:city|nyc|sf|la|chicago|chi|miami|mia)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc|chicago|miami)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
+      if (negated(s.text, m.index, 2)) continue;
       best = cand<Distance>({ mode: "city" }, s, m, 0.9);
     }
     for (const m of all(MULTI_MARKET_RX, s.text)) {
@@ -595,7 +596,7 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
     if (asked === "distance" && !best) {
       const m = /^\s*(?:within\s+|about\s+|around\s+|up to\s+|like\s+|maybe\s+|prob(?:ably)?\s+|max\s+)?(\d{1,3})\s*(?:ish|max|tops|or so)?\s*[?!.]*\s*$/.exec(s.text);
       if (m && slopRadiusMilesInBounds(Number(m[1]))) best = cand<Distance>({ mode: "radius", miles: Number(m[1]) }, s, m, 0.9);
-      const c = /^\s*(?:the\s+|just\s+(?:the\s+)?|only\s+(?:the\s+)?)?(?:city|nyc|anywhere|the whole city|new york|sf|la|chicago|chi|miami|mia)\s*(?:is fine|works|lol|tbh)?\s*[?!.]*\s*$/.exec(s.text);
+      const c = /^\s*(?:the\s+|my\s+|your\s+|just\s+(?:the\s+|my\s+|your\s+)?|only\s+(?:the\s+|my\s+|your\s+)?)?(?:city|nyc|anywhere|the whole city|new york|sf|la|chicago|chi|miami|mia)\s*(?:is fine|works|lol|tbh)?\s*[?!.]*\s*$/.exec(s.text);
       if (c) best = cand<Distance>({ mode: "city" }, s, c, 0.9);
     }
   }

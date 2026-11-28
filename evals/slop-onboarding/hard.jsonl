@@ -175,3 +175,6 @@
 {"text":"within one mile","expect":{"distance":{"mode":"radius","miles":1}}}
 {"text":"within 200 miles","expect":{"distance":{"mode":"radius","miles":200}}}
 {"text":"within 200.1 miles","expect":{"distance":null}}
+{"text":"just my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"anywhere in my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
