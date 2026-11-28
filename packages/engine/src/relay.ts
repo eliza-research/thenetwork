@@ -540,7 +540,7 @@ const DIRECT_TRANSFER_REFUSAL = String.raw`(?:(?:don'?t|do\s+not)(?:\s+(?:want\s
 const DECLINES_PENDING_SEND = new RegExp(
   String.raw`^\s*(?:(?:actually|please|pls|i|no|never mind|nvm)\s+)*(?:i(?='ll\b))?` +
   String.raw`${DIRECT_TRANSFER_REFUSAL}\s+(?:${TRANSFER})(?:\s+out)?\s+` +
-  String.raw`(?:(?:it|that)(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|${PENDING_SWAP_RECIPIENT}\s+(?:it|that|anything))` +
+  String.raw`(?:(?:it|that)(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|anything(?:\s+else)?(?:\s+(?:to|with)\s+${PENDING_SWAP_RECIPIENT})?|${PENDING_SWAP_RECIPIENT}\s+(?:it|that|anything))` +
   String.raw`(?:\s+(?:yet|please|pls|any\s?more|now|after all))*\s*$`,
 );
 const CONTACT_RELAY_NAME = CONTACT_SWAP_NAME + "|email";

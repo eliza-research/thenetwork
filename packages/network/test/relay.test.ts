@@ -493,6 +493,8 @@ test.each([
   "Never send it",
   "Don't send them it",
   "Don't send them anything",
+  "Don't send anything",
+  "Don't send anything to them",
   "Don't you dare send it",
   "Don't send my photo or number",
   "Please don't send Ari my photos or cell yet",
