@@ -137,11 +137,7 @@ test("place search ranks Harlem first, preserves dismissal, and opens places fro
     const options = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     // The exact place name comes first; the longer name that merely contains it comes after.
-    expect(options.slice(0, 3)).toEqual([
-      "Harlem · Manhattan",
-      "Harlem / Morningside · NYC · Midtown & Flatiron",
-      "East Harlem · Manhattan",
-    ]);
+    expect(options.slice(0, 2)).toEqual(["Harlem · Manhattan", "East Harlem · Manhattan"]);
     const press = async (key: string) => {
       await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
     };

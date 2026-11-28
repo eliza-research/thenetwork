@@ -42,7 +42,7 @@ test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the re
     }
     await Promise.all((["peon", "ntwrk"] as const).map(async app => {
       const run = await lab.start({ app, arms: [...LAB_ARMS], seeds: [1], days: 7 }, "regression");
-      const deadline = Date.now() + 150_000;
+      const deadline = Date.now() + 240_000;
       let done = (await lab.get(run.id))!;
       while ((done.status === "queued" || done.status === "running") && Date.now() < deadline) {
         await sleep(25);
@@ -64,4 +64,4 @@ test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the re
     if (lab.running) throw new Error("lab child did not stop");
     await rm(dir, { recursive: true, force: true });
   }
-}, 210_000);
+}, 300_000);

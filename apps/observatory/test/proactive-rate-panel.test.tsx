@@ -35,7 +35,7 @@ test("the Metrics proactive headline uses authoritative member time and leaves u
     store.stats = { ...raw, scorecard: rate ? [rate] : undefined };
     await act(async () => { store.notify(); await new Promise(resolve => setTimeout(resolve, 40)); });
   };
-  const headline = () => [...box.querySelectorAll("span")].find(s => s.textContent === "proactive / member / week")!.parentElement!.firstElementChild!;
+  const headline = () => [...box.querySelectorAll("span")].find(s => s.textContent === "proactive / member / week")!.parentElement!.firstElementChild!.firstElementChild!;
   try {
     store.stats = { ...raw, scorecard: [metric(0.397)] };
     await act(async () => root.render(createElement(Drawer)));
