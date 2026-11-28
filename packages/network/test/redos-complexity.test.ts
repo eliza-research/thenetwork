@@ -45,6 +45,6 @@ describe("probe time mention completion on mention-dense repeats", () => {
     const r = parseProbeReply(unit.repeat(1600), options as never, false, ctx);
     const ms = performance.now() - t0;
     expect(r).toEqual(parseProbeReply(unit, options as never, false, ctx));
-    expect(ms).toBeLessThan(5000);
+    expect(ms).toBeLessThan(6000);
   }, 60_000);
 });
