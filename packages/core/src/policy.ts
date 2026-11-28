@@ -74,6 +74,17 @@ export function quoteStillOpen(prefix: string): boolean {
   return quoteInSpan(prefix, prefix.length, prefix.length) !== undefined;
 }
 
+export function quoteOpenByLength(text: string): boolean[] {
+  const open: boolean[] = [false];
+  let doubleAt = -1, singleAt = -1;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '"' && quoteDelimiter(text, i, doubleAt >= 0)) doubleAt = doubleAt < 0 ? i : -1;
+    if (text[i] === "'" && quoteDelimiter(text, i, singleAt >= 0)) singleAt = singleAt < 0 ? i : -1;
+    open.push(doubleAt >= 0 || singleAt >= 0);
+  }
+  return open;
+}
+
 /** Check the exact evidence span in the normalized message, across sentence boundaries. */
 export function unquotedOwnAgeEvidence(text: string, start: number, end: number): boolean {
   return ownAgeEvidenceAllowed(quoteInSpan(text, start, end) !== undefined);

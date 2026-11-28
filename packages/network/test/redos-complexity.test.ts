@@ -31,4 +31,15 @@ describe("inbound-text regexes on adversarial repeats", () => {
     expect(r).toEqual(parseProbeReply("thats itself great", []));
     expect(ms).toBeLessThan(3000);
   }, 30_000);
+
+  test("a long reply affirmed only at the end stays fast and reads the same", () => {
+    const start = Date.UTC(2026, 11, 4, 15, 0, 0);
+    const options = [{ key: "a", start, end: start + 3_600_000, label: "Friday 3pm" }];
+    const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
+    const t0 = performance.now();
+    const r = parseProbeReply("lorem ipsum dolor sit ".repeat(1600) + "sounds good", options, false, ctx);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply("sounds good", options, false, ctx));
+    expect(ms).toBeLessThan(3000);
+  }, 30_000);
 });
