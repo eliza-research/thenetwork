@@ -1746,7 +1746,7 @@ export class NetworkService implements RuntimeHost {
     };
     const text = joinProfileText({ about: field("about"), neighborhood: field("neighborhood"), zip: field("zip") });
     if (!text) return;
-    await this.submitProfile(personId, rt.app.id, e164, text)
+    await this.submitProfile(personId, rt.app.id, e164, text, { allowOnboardingReply: true })
       .catch(e => this.log(`[join] profile not learned (${rt.id}): ${(e as Error).message}`));
   }
 
@@ -2555,7 +2555,7 @@ export class NetworkService implements RuntimeHost {
    * booked date, not a block or a report (InboundMessage.source). Only for a live membership; it
    * never creates a member. The text is the member's.
    */
-  async submitProfile(personId: string, appId: AppId, e164: string, text: string): Promise<"accepted" | "not_member"> {
+  async submitProfile(personId: string, appId: AppId, e164: string, text: string, options?: { allowOnboardingReply?: boolean }): Promise<"accepted" | "not_member"> {
     const m = await this.people.getMembership(personId, appId);
     const rt = m && await this.runtimeOfMember(appId, m.memberId);
     if (!m || !rt || !["active", "onboarding"].includes(m.state)) return "not_member";
@@ -2568,7 +2568,7 @@ export class NetworkService implements RuntimeHost {
     const ev: Extract<ChannelEvent, { kind: "message" }> = {
       kind: "message", channel: "imessage" as never, messageId: rowId, from: e164, to: null, chatId: e164, isGroup: false, text, mediaUrls: [], transport: "imessage" as never, receivedAt: t,
     };
-    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false);
+    await this.memberMessage(rt, m.memberId as MemberId, ev, rowId, undefined, undefined, false, undefined, options?.allowOnboardingReply);
     await rt.projectRecordedAges(m.memberId as MemberId);
     return "accepted";
   }
@@ -2824,9 +2824,9 @@ export class NetworkService implements RuntimeHost {
   }
 
   /** A member's message (or keyword) as one unit of work on their app's network. */
-  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
+  private async memberMessage(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromThread = true, reportReply?: SharedReportChoiceOwner, allowOnboardingReply = false): Promise<InboundOutcome> {
     // Not from the thread: a profile from the member's AI assistant, learned but never an answer (InboundMessage.source).
-    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply);
+    const out = await this.memberUnit(rt, memberId, ev, rowId, kw, systemReply, !fromThread, reportReply, allowOnboardingReply);
     if (out === "handled") {
       await this.syncAutoSafetyQuarantine(rt, memberId).catch(e => this.log(`[safety] quarantine sync failed (${rt.id}): ${(e as Error).message}`));
     }
@@ -2839,7 +2839,7 @@ export class NetworkService implements RuntimeHost {
     return out;
   }
 
-  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false, reportReply?: SharedReportChoiceOwner): Promise<InboundOutcome> {
+  private memberUnit(rt: NetworkRuntime, memberId: MemberId, ev: Extract<ChannelEvent, { kind: "message" }>, rowId: string, kw: ReturnType<typeof platformKeyword>, systemReply?: string, fromAssistant = false, reportReply?: SharedReportChoiceOwner, allowOnboardingReply = false): Promise<InboundOutcome> {
     const keyword = kw === "stop" || kw === "stop_all" ? "STOP" : kw === "start" ? "START" : kw === "help" ? "HELP" : undefined;
     return rt.unitOfWork(async n => {
       if ((await rt.scoped(tx => tx`select 1 from network.messages where app_id = ${rt.app.id} and id = ${rowId}`)).length) return "duplicate" as const;
@@ -3067,7 +3067,7 @@ export class NetworkService implements RuntimeHost {
       try {
         disposition = await n.onInbound({ id: rowId, memberId, body: ev.text, ts: signedDirect ? Math.min(t, ev.receivedAt) : t, channel,
           ...(signedDirect ? { signedReceivedAt: ev.receivedAt } : {}),
-          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const } : {}) }, stageIntent, reportReply?.choice);
+          ...(keyword ? { keyword } : {}), ...(fromAssistant ? { source: "mcp" as const, ...(allowOnboardingReply ? { allowOnboardingReply: true } : {}) } : {}) }, stageIntent, reportReply?.choice);
       } finally { rt.replyingTo = undefined; }
       if (rt.unit.memberCommand) return "cofounder_intent" as const;
       // Carrier keywords: the app's own confirmation (packages/platform apps.ts). START gets the Network's own welcome back.

@@ -1384,6 +1384,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private replyTo?: MemberId;
   private memberReply = false;
   private turnSource: "thread" | "mcp" | undefined;
+  private turnSilentMcp = false;
   private turnCause: string | undefined;
   private lastTick = 0;
   private tickGap = HOUR;
@@ -1544,6 +1545,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.memberReply = fromThread && !msg.keyword;
     this.sentThisTurn = false;
     this.turnSource = msg.source ?? "thread";
+    this.turnSilentMcp = msg.source === "mcp" && !msg.allowOnboardingReply;
     this.turnCause = msg.id;
     this.understood = u;
     const toldBefore = m.minorScopeToldAt;
@@ -1551,7 +1553,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const turnOpen = this.handleInbound(m, msg, privateInviteTurn, replyOpen, currentDanger, priorInboundAt, queueCofounderIntent, reportChoice) === "open";
       return scopeNoticeTurnOpens(turnOpen, m.minorScopeToldAt !== toldBefore) ? "open" : "handled";
     }
-    finally { this.replyTo = undefined; this.memberReply = false; this.sentThisTurn = false; this.turnSource = undefined; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
+    finally { this.replyTo = undefined; this.memberReply = false; this.sentThisTurn = false; this.turnSource = undefined; this.turnSilentMcp = false; this.turnCause = undefined; this.understood = undefined; this.invitesBeforeReply.clear(); }
   }
 
   /** How many messages we had sent since the member's previous message, when this one came in. */
@@ -2860,7 +2862,7 @@ export class ConsentNetwork implements NetworkUnderTest {
    * `skip`: the questions the member just answered, never repeated right away. False when nothing is left.
    */
   private onboardNext(m: MemberState, skip: readonly string[]): boolean {
-    if (this.turnSource === "mcp") return false;
+    if (this.turnSilentMcp) return false;
     const ob = this.opts.hooks?.onboarding;
     if (!ob || m.minor) return false;
     const nx = ob.next(m.onboarding, { age: this.ageOf(m), skip });
@@ -2872,7 +2874,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private onInterviewAnswer(m: MemberState, body: string) {
     this.learnFrom(m, body);
     m.awaiting = undefined;
-    const silentMcp = this.turnSource === "mcp";
+    const silentMcp = this.turnSilentMcp;
     // An app with its own onboarding loop takes over after the first answer.
     if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
       this.activate(m);
@@ -2956,7 +2958,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("ask_answered", { memberId: m.id, reason: ask.reason });
     if (c.kind === "people_request" && (!m.minor || this.teenAdmitted(m.id))) return this.openRequest(m, c, {});
     if (c.kind === "plans_request") return this.onPlans(m, c);
-    if (this.turnSource === "mcp") return;
+    if (this.turnSilentMcp) return;
     // The onboarding loop goes on with its next question, else the usual acknowledgement.
     if (this.onboardNext(m, reasons)) return;
     this.ack(m, copy.ackLearned);
@@ -11321,7 +11323,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.flagged = new Map((st.flagged ?? []).filter(([key, flag]) => typeof key === "string" && typeof flag?.at === "number" && typeof flag.reason === "string"));
     this.teenStop = parseTeenStop(st);
     this.planWorldCache = undefined;
-    this.replyTo = undefined; this.memberReply = false; this.turnSource = undefined; this.turnCause = undefined; this.currentRunId = undefined;
+    this.replyTo = undefined; this.memberReply = false; this.turnSource = undefined; this.turnSilentMcp = false; this.turnCause = undefined; this.currentRunId = undefined;
     this.snapCache = undefined; this.knownCache = undefined; this.dirty = true;
   }
 

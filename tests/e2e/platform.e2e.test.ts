@@ -571,13 +571,24 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
           if (name === "submit_profile") expect(data.submitted).toBe(false);
           if (app === "ntwrk") {
             expect(data.next_step).toContain("invite-only");
-            expect(data.next_step).toContain("disconnect The Network in your agent's connector settings, then connect it again");
-            expect(data.next_step).toContain("choose Finish signup");
-            expect(data.next_step).toContain("Enter the invitation on that page");
+            if (name === "check_status") {
+              expect(data.next_step).toContain("/oauth/finish-signup?t=");
+              expect(data.next_step).toContain("Finish signup");
+              expect(data.next_step).toContain("enter the invitation there");
+            } else {
+              expect(data.next_step).toContain("disconnect The Network in your agent's connector settings, then connect it again");
+              expect(data.next_step).toContain("choose Finish signup");
+              expect(data.next_step).toContain("Enter the invitation on that page");
+            }
             expect(data.next_step).not.toContain("sign up there");
           } else {
-            expect(data.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
-            expect(data.next_step).toContain("choose Finish signup");
+            if (name === "check_status") {
+              expect(data.next_step).toContain("/oauth/finish-signup?t=");
+              expect(data.next_step).toContain("Finish signup");
+            } else {
+              expect(data.next_step).toContain("disconnect friends.help in your agent's connector settings, then connect it again");
+              expect(data.next_step).toContain("choose Finish signup");
+            }
             expect(data.next_step).toContain('Or text "friends" as your first message to The Network\'s line.');
           }
         }
@@ -623,7 +634,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const registered = await st.site("ntwrk", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } });
       expect(registered.status).toBe(201);
       expect(((await registered.json()) as { redirect_uris: string[] }).redirect_uris).toEqual([redirect]);
-      for (const uris of [[redirect], ["https://platform.openai.com/callback"], [redirect, "https://client.example/callback"]]) {
+      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(201);
+      for (const uris of [["https://platform.openai.com/callback"], [redirect, "https://client.example/callback"]]) {
         expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: uris, token_endpoint_auth_method: "none" } })).status).toBe(400);
       }
     }, T);
@@ -835,7 +847,8 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
 
     test("MCP_PRIVATE_OPENAI_APPS is dev-only, the slop.date ChatGPT connector does not depend on it, and the public plugin stays closed", async () => {
       const redirect = "https://chatgpt.com/connector_platform_oauth_redirect";
-      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(400);
+      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(201);
+      expect((await st.site("slop", "/oauth/register", { json: { redirect_uris: ["https://platform.openai.com/callback"], token_endpoint_auth_method: "none" } })).status).toBe(400);
       expect((await st.site("ntwrk", "/oauth/register", { json: { redirect_uris: [redirect], token_endpoint_auth_method: "none" } })).status).toBe(201);
       for (const env of [
         { PLATFORM_ENV: "production" }, { PLATFORM_ENV: "staging" }, { PLATFORM_ENV: "unknown" },
@@ -1130,8 +1143,16 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const tools = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
-      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "list_looking_for", "pause_looking_for", "read_profile", "resume_looking_for", "start_signup", "submit_profile"]);
+      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(
+        t.name === "submit_profile" ? ["app", "about"]
+          : t.name === "get_updates" ? ["app", "update_token"]
+          : t.name === "get_context" ? ["app", "include", "update_token"]
+          : t.name === "set_availability" ? ["app", "days", "windows", "quietHours", "timezone", "notes"]
+          : t.name === "set_red_lines" ? ["app", "redLines", "mode"]
+          : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"]
+          : ["app"],
+      );
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_context", "get_updates", "list_looking_for", "pause_looking_for", "read_profile", "resume_looking_for", "set_availability", "set_red_lines", "start_signup", "submit_profile"]);
       for (const t of tools) expect(JSON.stringify(t.inputSchema), t.name).not.toMatch(/phone|code|otp|birth/i);
     });
   });

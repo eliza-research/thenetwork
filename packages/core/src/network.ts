@@ -134,6 +134,7 @@ export interface InboundMessage {
    * block or a report, and it does not teach the send time. Absent: the member texted it.
    */
   source?: "mcp";
+  allowOnboardingReply?: boolean;
 }
 
 export interface MeetingReport {
