@@ -96,3 +96,24 @@ pure val firstValues = windowValues
 pure val secondValues = windowValues
 pure val presenceValues = windowValues
 ```
+
+### A signed travel cancellation removes one saved trip
+
+The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A cancellation naming a city removes only the earliest current or future saved trip to that city in that app. A later trip to the same city, a trip to another city, another member's trip, and a trip that has ended all stay. The reply names the removed trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing is removed. This command changes no consent, account status, home location, or matching markets.
+
+```quint
+type TravelCancellation = TravelCancelUnavailable | TravelCancelNone | TravelCancelOne
+
+pure def decideTravelCancellation(authorized: bool, savedTrips: int): TravelCancellation =
+  if (not(authorized)) TravelCancelUnavailable
+  else if (savedTrips > 0) TravelCancelOne
+  else TravelCancelNone
+
+pure def lawTravelCancellationRemovesOneOnlyWhenSaved(authorized: bool, savedTrips: int): bool =
+  decideTravelCancellation(authorized, savedTrips) == TravelCancelOne implies (authorized and savedTrips > 0)
+
+pure def lawUnauthorizedTravelCancellationRemovesNothing(savedTrips: int): bool =
+  decideTravelCancellation(false, savedTrips) == TravelCancelUnavailable
+
+pure val savedTripsValues = Set(-1, 0, 1, 2)
+```
