@@ -1513,6 +1513,10 @@ test("explicit saved-profile reads select the app without consuming onboarding o
     "Show me my Friends profile please.",
     "Read my saved Friends profile, thanks.",
     "Could you read my Friends profile? Thanks.",
+    "What's my saved profile?",
+    "What's my Friends profile?",
+    "Whats my saved profile?",
+    "Whats my Friends profile?",
   ];
   for (const [index, text] of texts.entries()) {
     if (index === 2) {
@@ -1604,6 +1608,18 @@ test("explicit saved-profile reads select the app without consuming onboarding o
   const membershipBeforeGuards = await Promise.all(
     ["friends", "slop"].map((app) => service.accounts.store.getMembership(person.id, app as "friends" | "slop")),
   );
+  for (const [index, [text, floor]] of ([
+    ["What's my profile? I'm 15.", 15],
+    ["What's my profile? I'm 15 y.o.", 15],
+    ["What's my profile, I'm 12 btw", 13],
+    ["What's on my profile? I'm 15.", 13],
+  ] as const).entries()) {
+    const compound = (await (await post(turn(`profile-compound-age-${index}`, phone, text))).json()) as any;
+    expect(compound.replies.join("\n")).not.toContain("Which profile");
+    expect(compound.replies.join("\n")).not.toContain("own number");
+    expect(compound.replies.join("\n")).not.toContain("FRIENDS_ONLY");
+    expect(await service.accounts.lowestAge(phone, person)).toBe(floor);
+  }
   await service.accounts.store.setPhoneHold(phone, "recycled_number", clock.now());
   const held = (await (await post(turn("profile-held", phone, texts[0]!))).json()) as any;
   expect(held.replies).toEqual([]);
