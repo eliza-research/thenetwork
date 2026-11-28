@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseProbeReply } from "../src/classify.ts";
+import { isNamedProbeTime, parseProbeReply } from "../src/classify.ts";
 import { pendingReportReplyNames } from "../src/network.ts";
 
 describe("inbound-text regexes on adversarial repeats", () => {
@@ -31,4 +31,30 @@ describe("inbound-text regexes on adversarial repeats", () => {
     expect(r).toEqual(parseProbeReply("thats itself great", []));
     expect(ms).toBeLessThan(3000);
   }, 30_000);
+});
+
+describe("probe time mention prefix tests on clock-dense repeats", () => {
+  const options = [
+    { key: "a", start: Date.UTC(2026, 11, 4, 15), end: Date.UTC(2026, 11, 4, 16), label: "Friday 3pm" },
+    { key: "b", start: Date.UTC(2026, 11, 5, 15), end: Date.UTC(2026, 11, 5, 16), label: "Saturday 3pm" },
+  ];
+
+  test("repeated bare clocks stay fast and read the same as a named time check", () => {
+    const unit = "maybe 3pm or 4pm ";
+    const t0 = performance.now();
+    const r = isNamedProbeTime(unit.repeat(3200));
+    const ms = performance.now() - t0;
+    expect(r).toEqual(isNamedProbeTime(unit));
+    expect(ms).toBeLessThan(150);
+  }, 30_000);
+
+  test("repeated exclusion phrases stay fast and read the same", () => {
+    const unit = "anything but 3pm or 4pm, maybe ";
+    const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
+    const t0 = performance.now();
+    const r = parseProbeReply(unit.repeat(1200), options as never, false, ctx);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply(unit, options as never, false, ctx));
+    expect(ms).toBeLessThan(10000);
+  }, 60_000);
 });
