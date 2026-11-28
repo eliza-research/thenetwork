@@ -391,6 +391,9 @@ const isJoinNameToken = (word: string, appWords: readonly string[]): boolean => 
 const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
 
+const savedQuietHours = (value: unknown): readonly [number, number] | undefined =>
+  Array.isArray(value) && value.length === 2 && Number.isInteger(value[0]) && Number.isInteger(value[1]) ? [value[0], value[1]] : undefined;
+
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
   const others = text.replace(/\d+/g, " ").replace(/[^\p{L}' -]+/gu, " ").split(/\s+/).map(w => w.replace(/^-+|-+$/g, "")).filter(Boolean).map(lower)
@@ -1486,6 +1489,7 @@ export class NetworkService implements RuntimeHost {
           personId,
           to,
           timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York",
+          quietHours: savedQuietHours(rawPrefs.quietHours),
           prefs,
           proactiveAllowed: !paused && !suppressProactiveForLocalAgent,
         };

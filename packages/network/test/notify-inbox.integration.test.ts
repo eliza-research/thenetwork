@@ -8,6 +8,7 @@ import { NetworkService } from "../service/service.ts";
 // spec/outboundAdmission.md, "Replies, quiet hours and unanswered messages limit when a send can go out"
 test.skipIf(!pgAvailable)("the notification planner follows each recipient's home zone in a shared New York runtime", async () => {
   const url = await migratedDb("network_notify_home_zone");
+  const sql = new SQL(url);
   const clock = new SimClock(Date.UTC(2026, 9, 19, 19));
   const service = new NetworkService({
     url, clock, photoStorage: null, log: () => {}, env: { PLATFORM_ENV: "dev", CLEF_RATINGS: "off" },
@@ -18,8 +19,8 @@ test.skipIf(!pgAvailable)("the notification planner follows each recipient's hom
     const app = APPS.ntwrk;
     const notify = service.notify!;
     const members = [];
-    for (const [phone, firstName, homeCity] of [
-      ["+12125550171", "Ari", "nyc"], ["+12125550172", "Mira", "sf"],
+    for (const [phone, firstName, homeCity, quietHours] of [
+      ["+12125550171", "Ari", "nyc", [23, 7]], ["+12125550172", "Mira", "sf", [18, 10]],
     ] as const) {
       const invite = await service.accounts.invite(app, phone);
       if (!invite) throw new Error("The notification fixture invitation was missing");
@@ -29,11 +30,12 @@ test.skipIf(!pgAvailable)("the notification planner follows each recipient's hom
       if (!result.ok) throw new Error(`The notification fixture did not join: ${result.error}`);
       const { personId, memberId } = result.membership;
       expect(await service.runtimeOfMember(app.id, memberId)).toBe(service.runtimeFor("ntwrk", "nyc"));
+      await sql`update network.members set prefs=prefs || ${{ quietHours: [...quietHours] }}::jsonb where app_id=${app.id} and id=${memberId}`;
       await notify.add({
         personId, app: app.id, eventType: "information", subjectId: "home-city",
         urgency: "requested", summary: "Your requested update is ready.", expiresAt: clock.now() + 2 * DAY,
       }, clock.now());
-      members.push({ personId, phone });
+      members.push({ personId, memberId, phone });
     }
     const [ny, sf] = members;
     const planAt = async (at: number) => {
@@ -41,16 +43,33 @@ test.skipIf(!pgAvailable)("the notification planner follows each recipient's hom
       const { sends, holds } = await notify.plan(at);
       return { sends: sends.map(row => [row.to, row.timeZone]), holds };
     };
+    expect(await planAt(Date.UTC(2026, 9, 20, 12, 30))).toEqual({
+      sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
+    });
     // 10:30 in New York and 07:30 in San Francisco.
     expect(await planAt(Date.UTC(2026, 9, 20, 14, 30))).toEqual({
       sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
     });
-    // 22:30 in New York and 19:30 in San Francisco.
+    const midday = await planAt(Date.UTC(2026, 9, 20, 18, 0));
+    expect(midday.holds).toEqual([]);
+    expect(midday.sends).toHaveLength(2);
+    expect(midday.sends).toEqual(expect.arrayContaining([[ny!.phone, "America/New_York"], [sf!.phone, "America/Los_Angeles"]]));
     expect(await planAt(Date.UTC(2026, 9, 21, 2, 30))).toEqual({
-      sends: [[sf!.phone, "America/Los_Angeles"]], holds: [{ personId: ny!.personId, reason: "quiet_hours" }],
+      sends: [[ny!.phone, "America/New_York"]], holds: [{ personId: sf!.personId, reason: "quiet_hours" }],
     });
+    await sql`update network.members set prefs=prefs - 'quietHours' where app_id=${app.id} and id=${ny!.memberId}`;
+    const absent = await planAt(Date.UTC(2026, 9, 21, 2, 30));
+    expect(absent.sends).toEqual([]);
+    expect(absent.holds.map(hold => hold.personId).sort()).toEqual([ny!.personId, sf!.personId].sort());
+    expect(absent.holds.every(hold => hold.reason === "quiet_hours")).toBe(true);
+    await sql`update network.members set prefs=prefs || ${{ quietHours: [21.5, 9] }}::jsonb where app_id=${app.id} and id=${sf!.memberId}`;
+    const fractional = await planAt(Date.UTC(2026, 9, 21, 4, 15));
+    expect(fractional.sends).toEqual([]);
+    expect(fractional.holds.map(hold => hold.personId).sort()).toEqual([ny!.personId, sf!.personId].sort());
+    expect(fractional.holds.every(hold => hold.reason === "quiet_hours")).toBe(true);
   } finally {
     await service.close();
+    await sql.close();
     await dropDb(url);
   }
 }, 120_000);
