@@ -99,6 +99,77 @@ test("decline and expiry keep the original booking and invalidate queued offers"
   expect(w.log("meeting_rescheduled")).toEqual([]);
 });
 
+test.each(["no", "yes"] as const)("a bare day-of check-in %s answers the check-in, not an open reschedule offer", async answer => {
+  // spec/meetingSettlement.md, "The day-of check-in uses one near-meeting message"
+  // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
+  const { w, id, booking, vote } = await bookedFixture();
+  w.clock.set(originalAt - 3 * HOUR);
+  await w.net.tick(w.clock.now());
+  expect(w.net.memberList().find(m => m.id === "b")?.awaiting).toMatchObject({
+    kind: "booked", oppId: id, bookedCheckIn: { meetingAt: originalAt, revision: 0 },
+  });
+
+  await w.say("a", request);
+  await w.run(HOUR);
+  const explicitYes = vote("b");
+  expect(booking().reschedule?.accepted).toEqual([]);
+
+  await w.say("b", answer);
+  if (answer === "no") {
+    expect(booking().stage).toBe("closed");
+  } else {
+    expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt, reschedule: { accepted: [] } });
+    await w.say("b", explicitYes);
+    expect(booking().reschedule?.accepted).toEqual(["b"]);
+  }
+});
+
+test.each(["no", "yes"] as const)("a bare reschedule %s answers the offer while only the booking notice waits", async answer => {
+  // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
+  const { w, id, booking, vote } = await bookedFixture();
+  expect(w.net.memberList().find(m => m.id === "b")?.awaiting).toMatchObject({ kind: "booked", oppId: id });
+  expect(w.net.memberList().find(m => m.id === "b")?.awaiting?.bookedCheckIn).toBeUndefined();
+
+  await w.say("a", request);
+  await w.run(HOUR);
+  vote("b");
+
+  await w.say("b", answer);
+  if (answer === "no") {
+    expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt });
+    expect(booking().reschedule).toBeUndefined();
+  } else {
+    expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt, reschedule: { accepted: ["b"] } });
+  }
+});
+
+test("a bare crew answer does not vote on an open reschedule offer", async () => {
+  // spec/crewOffer.md, "A crew reply follows acceptance of its exact offer"
+  // spec/meetingReschedule.md, "Only independent answers to the current offer can change the booking"
+  const { w, id, booking, vote } = await bookedFixture();
+  await w.say("a", request);
+  await w.run(HOUR);
+  const explicitYes = vote("b");
+  const state = w.net.exportState();
+  const crewId = "crew-reschedule-fixture";
+  const at = w.clock.now();
+  state.plans!.crewOffers.push({
+    crew: {
+      id: crewId, activityId: "climbing", venueId: "mccarren-park", city: "nyc", members: ids,
+      cadenceDays: 7, hostRotation: ids, sessions: [], handedOff: false, slot: { start: originalAt },
+    },
+    planId: id, at, offered: ids, yes: [], no: [],
+  });
+  state.members.find(m => m.id === "b")!.awaiting = { kind: "crew", crewId, at };
+  w.net.importState(state);
+
+  await w.say("b", "no");
+  expect(booking()).toMatchObject({ stage: "scheduled", meetingAt: originalAt, reschedule: { accepted: [] } });
+  expect(w.net.exportState().plans!.crewOffers.find(offer => offer.crew.id === crewId)?.no).toEqual(["b"]);
+  await w.say("b", explicitYes);
+  expect(booking().reschedule?.accepted).toEqual(["b"]);
+});
+
 test("committed reschedule moves the arrival pre-brief, arrival relay, and no-show window to the new time", async () => {
   const pair = ["a", "b"];
   const w = new Mini(pair.map(id => ({

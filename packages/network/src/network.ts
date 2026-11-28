@@ -1936,7 +1936,25 @@ export class ConsentNetwork implements NetworkUnderTest {
       ? [...this.opps.values()].filter(o => o.reschedule?.offered.includes(m.id) && !o.reschedule.accepted.includes(m.id) && this.currentReschedule(o, o.reschedule, now))
       : [];
     const strictReschedule = /^RESCHEDULE\b/i.test(body.trim());
-    const openOfferRef = openRescheduleOffers.length === 1 ? rescheduleMemberRef(openRescheduleOffers[0]!.reschedule!, m.id) : undefined;
+    const bookedPrompt = aw?.kind === "booked" ? this.opps.get(aw.oppId!) : undefined;
+    const bookedCheckIn = aw?.kind === "booked" ? aw.bookedCheckIn : undefined;
+    const bookedCheckInReceipt = bookedPrompt && bookedCheckIn
+      ? this.ctx.initialInviteReceipt?.(bookedReminderKey("day-of-checkin", bookedPrompt.id, m.id, bookedCheckIn.revision))
+      : undefined;
+    const bookedCheckInAcceptedAt = this.ctx.initialInviteReceipt
+      ? (bookedCheckInReceipt?.kind === "accepted" ? bookedCheckInReceipt.at : undefined)
+      : aw?.at;
+    const bookedCheckInCurrent = bookedPrompt !== undefined && bookedCheckIn !== undefined
+      && bookedReplyCurrent(opportunityLifecycle(bookedPrompt), bookedPrompt.status.get(m.id) === "yes")
+      && dayOfReplyAccepted(bookedPrompt.meetingAt === bookedCheckIn.meetingAt && (bookedPrompt.scheduleRevision ?? 0) === bookedCheckIn.revision,
+        localDateParts(now, tz).day === localDateParts(bookedCheckIn.meetingAt, tz).day, bookedCheckIn.meetingAt - now)
+      && dayOfCheckInAnswerCurrent(bookedCheckInAcceptedAt !== undefined, bookedCheckInAcceptedAt ?? 0, msg.signedReceivedAt ?? msg.ts, now);
+    const crewPrompt = aw?.kind === "crew" && aw.crewId ? this.crewOffers.find(offer => offer.crew.id === aw.crewId && !offer.resolved) : undefined;
+    const crewReceipt = crewPrompt && aw?.crewOfferReceiptId ? this.ctx.initialInviteReceipt?.(aw.crewOfferReceiptId) : undefined;
+    const crewAcceptedAt = this.ctx.initialInviteReceipt ? (crewReceipt?.kind === "accepted" ? crewReceipt.at : undefined) : aw?.at;
+    const crewPromptCurrent = crewPrompt !== undefined && crewOfferReplyCurrent(this.memberReply && !msg.reaction, crewAcceptedAt !== undefined, crewPrompt.at,
+      aw?.at ?? -1, crewAcceptedAt ?? -1, msg.signedReceivedAt ?? msg.ts, now);
+    const openOfferRef = openRescheduleOffers.length === 1 && !bookedCheckInCurrent && !crewPromptCurrent ? rescheduleMemberRef(openRescheduleOffers[0]!.reschedule!, m.id) : undefined;
     const singleOriginalAt = upcomingBookings.length === 1 ? upcomingBookings[0]!.meetingAt : undefined;
     const reschedule = this.memberReply && !msg.reaction
       ? (strictReschedule
