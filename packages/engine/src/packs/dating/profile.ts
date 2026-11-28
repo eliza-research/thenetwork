@@ -216,7 +216,7 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
     const strictSober = coreRl.strictSober || STRICT_SOBER_TOKENS.has(drinkNorm);
     const nonDrinker = strictSober || coreRl.nonDrinker || DRINKING_VALUE_NON_DRINKER_TOKENS.has(drinkNorm) || dealbreakers.some(d => {
       const low = d.trim().toLowerCase();
-      return low === "heavy_drinker" || DRINKING_VALUE_NON_DRINKER_TOKENS.has(low);
+      return DRINKING_VALUE_NON_DRINKER_TOKENS.has(low);
     });
     const lowWalking = coreRl.lowWalking || dealbreakers.some(d => LOW_WALKING_TOKENS.has(d.trim().toLowerCase()));
     const lowNoise = coreRl.lowNoiseRequired || dealbreakers.some(d => {
