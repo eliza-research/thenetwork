@@ -154,8 +154,7 @@ function teenSafety(res: FriendsRunResult, proposals: readonly FlowRecord[], goo
   };
 }
 
-const div = (a: number, b: number) => (b ? a / b : 0);
-const median = (xs: number[]) => { if (!xs.length) return null; const v = [...xs].sort((a, b) => a - b); const m = v.length >> 1; return v.length % 2 ? v[m]! : (v[m - 1]! + v[m]!) / 2; };
+import { medianOrNull as median, safeDiv as div } from "../../stats.ts";
 
 /** V14 (experience design 3.3): mean over days t in [14, D] of the share of eligible members with a value event in (t-14, t]. */
 export function v14Of(ids: MemberId[], valueDays: Map<MemberId, number[]>, days: number): number {

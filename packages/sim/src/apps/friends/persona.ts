@@ -32,8 +32,9 @@ export type GroupPref = "one_to_one" | "group" | "either";
 export type AdversaryKind = "romance_seeker" | "mlm" | "bot" | "harasser" | "age_liar";
 export const ADVERSARY_KINDS: readonly AdversaryKind[] = ["romance_seeker", "mlm", "bot", "harasser", "age_liar"];
 export type VerifyResult = "passed" | "failed" | "pending";
-export type FriendsSpendTier = "free" | "low" | "moderate" | "high" | "unconstrained";
-export type FriendsHumor = "dry_ironic" | "absurdist" | "warm_earnest" | "nerdy_wordplay" | "roast_banter";
+import type { DunbarOpenSlots, HumorRegister, SpendComfortTier } from "../../strata-shared.ts";
+export type FriendsSpendTier = SpendComfortTier;
+export type FriendsHumor = HumorRegister;
 
 export interface FriendsHidden {
   trueAge: number;
@@ -74,7 +75,7 @@ export interface FriendsHidden {
   humorRegister?: FriendsHumor;
   depthPreference?: number;
   extractionPropensity?: number;
-  dunbarOpenSlots?: { inner5: boolean; sympathy15: boolean; affinity50: boolean };
+  dunbarOpenSlots?: DunbarOpenSlots;
 }
 
 export interface FriendsStated {

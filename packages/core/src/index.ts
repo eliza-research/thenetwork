@@ -25,6 +25,7 @@ export { sharedDatingMarket } from "./generated/datingRadius.ts";
 export { temporaryPresenceWindow } from "./travel-presence.ts";
 export * from "./cities.ts";
 export * from "./smsCopy.ts";
+export * from "./redLines.ts";
 export * from "./venues.ts";
 export * from "./externalEvents.ts";
 export * from "./externalMatchmaker.ts";

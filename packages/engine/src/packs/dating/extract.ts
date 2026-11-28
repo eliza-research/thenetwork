@@ -1154,9 +1154,10 @@ const SELF_AGE_CUE = /\b(?:\d{1,2}|age|old|y\/?o|y\.o\.|years?|born|birthday|bda
 function shouldShortCircuitSlopLlm(text: string, p: SlopOnboarding, asked: OnboardField | undefined): boolean {
   const trimmed = text.trim();
   if (!trimmed) return true;
+  const ageConfident = !!p.age && p.age.confidence >= LLM_FILL_BELOW;
   const hasAgeCue = SELF_AGE_CUE.test(trimmed);
-  if (!hasAgeCue && (trimmed.length < 4 || TRIVIAL_SLOP_TURN.test(trimmed))) return true;
-  if (hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
+  if (!hasAgeCue && ageConfident && (trimmed.length < 4 || TRIVIAL_SLOP_TURN.test(trimmed))) return true;
+  if (ageConfident && hardFilled(p) === HARD_FIELDS.length && (!asked || hasField(p, asked)) && !hasAgeCue && !SOFT_FIELD_CUE.test(trimmed)) {
     return true;
   }
   return false;

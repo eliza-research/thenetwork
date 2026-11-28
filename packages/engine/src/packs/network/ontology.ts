@@ -1,4 +1,4 @@
-import type { Category, EdgeType, Facet, Intent } from "@thenetwork/core";
+import { extractMemberRedLines, type Category, type EdgeType, type Facet, type Intent } from "@thenetwork/core";
 import type { EngineConfig } from "../../config.ts";
 import type { MemberConstraints, Ontology } from "../../pack.ts";
 import { CONTRIBUTOR_ROLES } from "../../types.ts";
@@ -77,6 +77,8 @@ export interface ParsedOntologyTags {
   publicityHint?: number;
   discretionHint?: number;
   extractionHint?: number;
+  strictSober: boolean;
+  nonDrinker: boolean;
   soberProtected: boolean;
 }
 
@@ -151,6 +153,7 @@ const HV_TRANSITION_MAP: Readonly<Record<string, string>> = {
 };
 
 export function parseOntologyTags(facets: readonly Facet[]): ParsedOntologyTags {
+  const redLines = extractMemberRedLines(facets);
   const out: ParsedOntologyTags = {
     transitions: [],
     humor: [],
@@ -162,7 +165,9 @@ export function parseOntologyTags(facets: readonly Facet[]): ParsedOntologyTags 
     hvVerifiedCraftTag: false,
     hypeClaimCount: 0,
     statedConnections: [],
-    soberProtected: false,
+    strictSober: redLines.strictSober,
+    nonDrinker: redLines.nonDrinker,
+    soberProtected: redLines.strictSober,
   };
   const pushUnique = <T>(arr: T[], v: T) => { if (!arr.includes(v)) arr.push(v); };
   for (const f of facets) {
@@ -256,8 +261,6 @@ export function parseOntologyTags(facets: readonly Facet[]): ParsedOntologyTags 
       } else if (t.startsWith("extraction_risk:")) {
         const v = Number(t.slice(16));
         if (Number.isFinite(v)) out.extractionHint = Math.max(0, Math.min(1, v > 1 ? v / 100 : v));
-      } else if (t === "sober" || t === "alcohol_free" || t === "sobriety_wellness" || t === "dealbreaker:alcohol") {
-        out.soberProtected = true;
       }
     }
     if (facetConn) {

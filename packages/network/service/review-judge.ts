@@ -16,9 +16,23 @@ import type { NetworkRuntime } from "./runtime.ts";
 
 type Env = Record<string, string | undefined>;
 
-interface ReviewJudgeLimits { budgetMicros: number; requestLimit: number }
+export interface ReviewJudgeLimits {
+  budgetMicros: number;
+  requestLimit: number;
+  budgetExplicit?: boolean;
+  requestLimitExplicit?: boolean;
+}
 interface EngineJudgeLimits { maxCostMicro: number; maxRequests: number }
 type JudgeCostPurpose = "review_judge" | "engine_judge";
+
+const MAX_CITY_BUDGET_SCALE = 10;
+const MAX_SCALED_BUDGET_MICROS = 50_000_000;
+const MAX_SCALED_REQUEST_LIMIT = 4_000;
+
+function hasEnvValue(env: Env, name: string): boolean {
+  const raw = env[name];
+  return raw !== undefined && raw.trim() !== "";
+}
 
 function positiveUsd(env: Env, name: string, fallback: number): number {
   const raw = env[name];
@@ -44,7 +58,25 @@ export function reviewJudgeLimitsFromEnv(env: Env): ReviewJudgeLimits {
   return {
     budgetMicros: positiveMicros(env, "NETWORK_REVIEW_JUDGE_BUDGET_USD", 5),
     requestLimit: positiveCount(env, "NETWORK_REVIEW_JUDGE_MAX_REQUESTS", 400),
+    budgetExplicit: hasEnvValue(env, "NETWORK_REVIEW_JUDGE_BUDGET_USD"),
+    requestLimitExplicit: hasEnvValue(env, "NETWORK_REVIEW_JUDGE_MAX_REQUESTS"),
   };
+}
+
+export function scaledReviewJudgeLimits(limits: ReviewJudgeLimits, activeCities: number): {
+  budgetMicros: number;
+  requestLimit: number;
+  cityRequestLimit: number;
+} {
+  const cities = Math.max(1, Math.min(MAX_CITY_BUDGET_SCALE, Math.floor(activeCities)));
+  const budgetMicros = limits.budgetExplicit
+    ? limits.budgetMicros
+    : Math.min(MAX_SCALED_BUDGET_MICROS, limits.budgetMicros * cities);
+  const requestLimit = limits.requestLimitExplicit
+    ? limits.requestLimit
+    : Math.min(MAX_SCALED_REQUEST_LIMIT, limits.requestLimit * cities);
+  const cityRequestLimit = Math.max(1, Math.min(requestLimit, Math.ceil(requestLimit / cities)));
+  return { budgetMicros, requestLimit, cityRequestLimit };
 }
 
 export function engineJudgeLimitsFromEnv(env: Env): EngineJudgeLimits {
@@ -84,7 +116,7 @@ const ERROR_OUTCOME = {
 
 interface Decided { verdict: JudgeVerdictName; reason: JudgeReasonCode; explanation: string | null; model: string | null; promptVersion: string; reviewer: string }
 interface Item { work: JudgeWork; packet: ReviewPacket }
-interface Claimed extends Item { claims: number }
+interface Claimed extends Item { claims: number; reserveKey: string; reservedMicros: number }
 interface StoredRow { opportunity_id: string; revision: number; packet_hash: string; base_packet_hash: string; rubric: string; verdict: string; reason: string; reviewer: string }
 
 interface ReviewJudgeWorkerOptions {
@@ -93,10 +125,19 @@ interface ReviewJudgeWorkerOptions {
   teenFacts: (rt: NetworkRuntime, memberId: MemberId) => Promise<TeenAgeFacts>;
   limits: ReviewJudgeLimits;
   log: (line: string) => void;
+  activeCitiesFor?: (app: AppId) => number;
 }
 
 export class ReviewJudgeWorker {
+  private readonly reservedMicros = new Map<string, number>();
+
   constructor(private readonly o: ReviewJudgeWorkerOptions) {}
+
+  private releaseReservation(key: string, amount: number): void {
+    const next = (this.reservedMicros.get(key) ?? 0) - amount;
+    if (next <= 0) this.reservedMicros.delete(key);
+    else this.reservedMicros.set(key, next);
+  }
 
   async run(rt: NetworkRuntime, signal: AbortSignal): Promise<void> {
     if (signal.aborted) return;
@@ -108,19 +149,50 @@ export class ReviewJudgeWorker {
     if (close.length) await rt.unitOfWork(n => n.closeUnjudgeable(close));
     const judge = this.o.judgeFor(rt.app.id);
     const reviewer = rt.net.judgeReviewer;
-    const items = await Promise.all(work.map(w => this.enrich(rt, w)));
+    const batch = work.slice(0, judgeCallsPerRun);
+    const items = await Promise.all(batch.map(w => this.enrich(rt, w)));
     if (items.length) {
-      const spentMicros = await rt.scoped(tx => llmSpentMicros(tx, rt.app.id, dayOf(now), "review_judge"));
+      const activeCities = Math.max(1, this.o.activeCitiesFor ? this.o.activeCitiesFor(rt.app.id) : 1);
+      const limits = scaledReviewJudgeLimits(this.o.limits, activeCities);
+      const reservePerCall = Math.max(1, Math.ceil(limits.budgetMicros / Math.max(1, limits.requestLimit)));
       const calls: Claimed[] = [];
       for (const item of items) {
         if (calls.length >= judgeCallsPerRun) break;
-        const claimed = await rt.scoped(tx => this.claim(tx, rt, item, judge !== undefined, spentMicros, reviewer, now));
+        const claimed = await this.claimWithReservation(rt, item, judge !== undefined, limits, activeCities, reservePerCall, reviewer, now);
         if (claimed) calls.push(claimed);
       }
-      if (judge) await Promise.all(calls.map(c => this.callAndStore(rt, judge, c, signal)));
+      if (judge) {
+        await Promise.all(calls.map(c => this.callAndStore(rt, judge, c, signal)));
+      } else {
+        for (const c of calls) this.releaseReservation(c.reserveKey, c.reservedMicros);
+      }
       if (!signal.aborted) await this.apply(rt, items);
     }
     await this.purge(rt, now, new Set(openCaseMembers));
+  }
+
+  private async claimWithReservation(
+    rt: NetworkRuntime,
+    item: Item,
+    providerReady: boolean,
+    limits: { budgetMicros: number; requestLimit: number; cityRequestLimit: number },
+    activeCities: number,
+    reservePerCall: number,
+    reviewer: string,
+    now: number,
+  ): Promise<Claimed | undefined> {
+    let reserved: { key: string; amount: number } | undefined;
+    try {
+      const claimed = await rt.scoped(async tx => {
+        const result = await this.claim(tx, rt, item, providerReady, limits, activeCities, reservePerCall, reviewer, now);
+        if (result) reserved = { key: result.reserveKey, amount: result.reservedMicros };
+        return result;
+      });
+      return claimed;
+    } catch (error) {
+      if (reserved) this.releaseReservation(reserved.key, reserved.amount);
+      throw error;
+    }
   }
 
   private async enrich(rt: NetworkRuntime, work: JudgeWork): Promise<Item> {
@@ -133,7 +205,17 @@ export class ReviewJudgeWorker {
     return { work, packet: { ...enriched, packetHash: sha256(stableStringify({ ...enriched, packetHash: undefined })) } };
   }
 
-  private async claim(tx: SQL, rt: NetworkRuntime, item: Item, providerReady: boolean, spentMicros: number, reviewer: string, now: number): Promise<Claimed | undefined> {
+  private async claim(
+    tx: SQL,
+    rt: NetworkRuntime,
+    item: Item,
+    providerReady: boolean,
+    limits: { budgetMicros: number; requestLimit: number; cityRequestLimit: number },
+    activeCities: number,
+    reservePerCall: number,
+    reviewer: string,
+    now: number,
+  ): Promise<Claimed | undefined> {
     const { packet } = item;
     const [row] = await tx<{ status: string; claims: number; lease_until: Date }[]>`select status, claims, lease_until from network.review_judgments
       where app_id = ${rt.app.id} and network_id = ${rt.id} and opportunity_id = ${packet.oppId} and revision = ${packet.revision} and packet_hash = ${packet.packetHash}
@@ -146,14 +228,23 @@ export class ReviewJudgeWorker {
       return undefined;
     }
     const day = dayOf(now);
+    const reserveKey = `${rt.app.id}:${day}`;
+    await tx`select pg_advisory_xact_lock(hashtext(${`review-judge-budget:${reserveKey}`}))`;
+    const dbSpentMicros = await llmSpentMicros(tx, rt.app.id, day, "review_judge");
+    const spentMicros = dbSpentMicros + (this.reservedMicros.get(reserveKey) ?? 0);
     const [counter] = await tx<{ n: number }[]>`select n from network.review_judge_requests where app_id = ${rt.app.id} and day = ${day}`;
-    const decide = (requestsUsed: number) => judgeCallDecision(item.work.packetClean, item.work.priorFlag, providerReady, spentMicros, this.o.limits.budgetMicros,
-      requestsUsed, this.o.limits.requestLimit, packet.deadline - now);
+    const cityUsed = activeCities > 1
+      ? ((await tx<{ n: number }[]>`select count(*)::int as n from network.review_judgments
+          where app_id = ${rt.app.id} and network_id = ${rt.id} and claimed_at >= ${new Date(`${day}T00:00:00.000Z`)} and claims > 0`)[0]?.n ?? 0)
+      : 0;
+    const requestsUsed = activeCities > 1 && cityUsed >= limits.cityRequestLimit ? limits.requestLimit : (counter?.n ?? 0);
+    const decide = (used: number) => judgeCallDecision(item.work.packetClean, item.work.priorFlag, providerReady, spentMicros, limits.budgetMicros,
+      used, limits.requestLimit, packet.deadline - now);
     const uncalled = (call: Exclude<JudgeCall, "CallJudge">): Decided => {
       const j = uncalledJudgment(packet, call, reviewer);
       return { verdict: j.verdict, reason: j.reason, explanation: null, model: null, promptVersion: REVIEW_JUDGE_PROMPT_VERSION, reviewer };
     };
-    const call = decide(counter?.n ?? 0);
+    const call = decide(requestsUsed);
     if (call !== "CallJudge") {
       if (claim === "ClaimFirst") await this.insertDecided(tx, rt, item, uncalled(call), now);
       else await this.writeDecided(tx, rt, packet, claims, uncalled(call), now);
@@ -172,23 +263,28 @@ export class ReviewJudgeWorker {
         returning 1 as taken`;
     if (!taken.length) return undefined;
     const slot = await tx`insert into network.review_judge_requests (app_id, day, n) values (${rt.app.id}, ${day}, 1)
-      on conflict (app_id, day) do update set n = network.review_judge_requests.n + 1 where network.review_judge_requests.n < ${this.o.limits.requestLimit}
+      on conflict (app_id, day) do update set n = network.review_judge_requests.n + 1 where network.review_judge_requests.n < ${limits.requestLimit}
       returning n`;
     if (!slot.length) {
-      const full = decide(this.o.limits.requestLimit);
+      const full = decide(limits.requestLimit);
       if (full !== "CallJudge") await this.writeDecided(tx, rt, packet, claims + 1, uncalled(full), now);
       return undefined;
     }
-    return { ...item, claims: claims + 1 };
+    this.reservedMicros.set(reserveKey, (this.reservedMicros.get(reserveKey) ?? 0) + reservePerCall);
+    return { ...item, claims: claims + 1, reserveKey, reservedMicros: reservePerCall };
   }
 
   private async callAndStore(rt: NetworkRuntime, judge: ReviewJudge, c: Claimed, signal: AbortSignal): Promise<void> {
-    const decided = await this.call(judge, c.packet, signal);
-    if (!decided) return;
     try {
-      await rt.scoped(tx => this.writeDecided(tx, rt, c.packet, c.claims, decided, this.o.clock.now()));
-    } catch (e) {
-      this.o.log(`[review-judge] ${c.packet.app} ${c.packet.oppId} r${c.packet.revision}: the judgment was not stored (${e instanceof Error ? e.message : String(e)}); the lease stays`);
+      const decided = await this.call(judge, c.packet, signal);
+      if (!decided) return;
+      try {
+        await rt.scoped(tx => this.writeDecided(tx, rt, c.packet, c.claims, decided, this.o.clock.now()));
+      } catch (e) {
+        this.o.log(`[review-judge] ${c.packet.app} ${c.packet.oppId} r${c.packet.revision}: the judgment was not stored (${e instanceof Error ? e.message : String(e)}); the lease stays`);
+      }
+    } finally {
+      this.releaseReservation(c.reserveKey, c.reservedMicros);
     }
   }
 

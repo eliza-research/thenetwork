@@ -84,6 +84,7 @@ export function friendshipInfo(w: World): Map<MemberId, FriendshipInfo> {
     const mi = w.get(id)!;
     const fs = facets.get(id) ?? [];
     const ts = fs.flatMap(f => f.tags);
+    const matchableTs = fs.filter(f => f.scope === "matchable" || f.scope === "shareable").flatMap(f => f.tags);
     const city: City = getCity(mi.m.homeCity) ? mi.m.homeCity : FRIENDS_CITY;
     const pres = mi.presence.filter(p => p.city === city);
     const homeP = pres.find(p => p.type === "home");
@@ -91,12 +92,14 @@ export function friendshipInfo(w: World): Map<MemberId, FriendshipInfo> {
     const often = pres.flatMap(p => (p === homeP ? p.areas.slice(1) : p.areas)).map(a => hoodForCity(city, a)).filter((x): x is Neighborhood => !!x);
     const val = (k: keyof typeof FT) =>
       ts.find(t => t.startsWith(FTT[k]))?.slice(FTT[k].length) ?? ts.find(t => t.startsWith(FT[k]))?.slice(FT[k].length);
+    const matchVal = (k: keyof typeof FT) =>
+      matchableTs.find(t => t.startsWith(FTT[k]))?.slice(FTT[k].length) ?? matchableTs.find(t => t.startsWith(FT[k]))?.slice(FT[k].length);
     const tol = Number(val("maxTravel"));
     m.set(id, {
       city, home, often, tolerance: Number.isFinite(tol) && tol > 0 ? tol : DEFAULT_TOLERANCE,
       verified: friendshipStaffVerified(ts),
       safetyCue: ts.some(t => t.startsWith(FT.safety)) && !ts.includes(FT.reviewCleared),
-      groupPref: val("groupPref"), energy: val("energy"), lifeStage: val("lifeStage"),
+      groupPref: val("groupPref"), energy: val("energy"), lifeStage: matchVal("lifeStage"),
       friend: friendStatementOf(val("gender"), val("openGender")),
       standing: fs.flatMap(f => standingFromTags(f.tags, f.observedAt ?? f.validFrom ?? mi.m.joinedAt)),
     });

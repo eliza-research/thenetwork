@@ -2,13 +2,18 @@
 // proposal, returns what would REALLY happen: would each participant accept, show up,
 // and how much they'd enjoy it, computed from hidden traits plus seeded noise. The Network
 // under test never sees this; metrics compare its proposals against it.
-import { DAY, canBeMatched, type City, type MemberId, type OpportunityKind } from "@thenetwork/core";
+import {
+  DAY, MIN_MEMBER_AGE, canBeMatched, estimateTravelMinutes, evaluateBackupPivotV2, evaluateVenueRedLines,
+  extractMemberRedLines, getCity, isMinor, type City, type MemberId, type OpportunityKind, type VenueRecord,
+} from "@thenetwork/core";
 import type { Category } from "@thenetwork/core";
 import { Rng, clamp01, hash32 } from "@thenetwork/core";
 import { Coins, signature } from "./coins.ts";
+import { sigmoid } from "./stats.ts";
+import { extractiveGroupDrag, spendTierIndex } from "./strata-shared.ts";
 import { desireById } from "./taxonomy.ts";
 import {
-  desireLive, domainOfTag, ensurePersonaStrata, SPEND_TIERS, withLiveDesires,
+  desireLive, domainOfTag, ensurePersonaStrata, withLiveDesires,
   type Persona, type StrataSignals,
 } from "./persona.ts";
 import { inHourWindow, localParts } from "./time.ts";
@@ -16,13 +21,15 @@ import { inHourWindow, localParts } from "./time.ts";
 export interface OracleProposal {
   id: string; kind: OpportunityKind; participants: MemberId[]; city: City;
   window?: { start: number; end: number }; category?: Category; objective?: string;
+  venue?: VenueRecord; venuePriceTier?: number; venueUnavailable?: boolean; backupVenue?: VenueRecord;
 }
 
 export type OracleFlag =
   | "minor_included" | "romance_mismatch" | "ex_partners" | "adversarial_participant"
   | "city_mismatch" | "boundary_conflict" | "unknown_member"
   | "status_mismatch" | "grift_risk" | "step_ahead_hit" | "mentorship_gap_fail"
-  | "cross_class_guild" | "spend_mismatch" | "anxious_avoidant_trap" | "dunbar_saturated";
+  | "cross_class_guild" | "spend_mismatch" | "anxious_avoidant_trap" | "dunbar_saturated"
+  | "venue_red_line_violation" | "venue_budget_exceeded" | "venue_backup_pivot" | "venue_cancelled";
 
 export interface ParticipantOutcome {
   acceptProb: number; wouldAccept: boolean;
@@ -196,8 +203,8 @@ export class Oracle {
       if (isHighStatusTarget(SB)) flags.push("grift_risk");
     }
 
-    const spendA = SPEND_TIERS.indexOf(SA.spendComfortTier);
-    const spendB = SPEND_TIERS.indexOf(SB.spendComfortTier);
+    const spendA = spendTierIndex(SA.spendComfortTier);
+    const spendB = spendTierIndex(SB.spendComfortTier);
     const obj = (ctx.objective ?? "").toLowerCase();
     const highCostVenue = /\b(sailing|wine|tasting|steakhouse|yacht|fine dining|omakase|cocktails)\b/.test(obj)
       || (/\bdinner\b/.test(obj) && (spendB >= 3 || category === "professional"));
@@ -296,6 +303,23 @@ export class Oracle {
     const allAdults = people.every(p => canBeMatched(p.hidden.trueAge)) && !people.some(p => p.hidden.scripted);
     const strataMap = new Map<MemberId, StrataSignals>(people.map(p => [p.id, ensurePersonaStrata(p, this.seed)]));
     const sharedGuild = allAdults && isSharedPurposeGuild(people, strataMap, category, prop.objective);
+    let activeVenue: VenueRecord | undefined = prop.venue;
+    let venuePivotFriction = 0;
+    let venueCancelled = false;
+    if (prop.venueUnavailable) {
+      const canPivot = evaluateBackupPivotV2(true, false, Boolean(prop.backupVenue), at, at, false);
+      if (canPivot && prop.backupVenue) {
+        activeVenue = prop.backupVenue;
+        venuePivotFriction = 0.05;
+        flags.add("venue_backup_pivot");
+      } else {
+        venueCancelled = true;
+        flags.add("venue_cancelled");
+      }
+    }
+    const venuePriceTier = prop.venuePriceTier ?? activeVenue?.priceTier;
+    const lpVenue = activeVenue ? localParts(at, prop.city) : undefined;
+    const venueAfterDark = lpVenue ? (lpVenue.hour >= 19 || lpVenue.hour < 7) : false;
 
     const out: Record<MemberId, ParticipantOutcome> = {};
     const perceivedBy: Record<MemberId, number> = {};
@@ -307,7 +331,6 @@ export class Oracle {
         const SB = strataMap.get(b.id)!;
         const pe = this.pairEnjoyment(a, b, category, { groupSize, sharedGuild, objective: prop.objective });
         pe.flags.forEach(f => flags.add(f));
-        // Pair noise is stable for the pair (true chemistry), not per proposal.
         const chem = new Rng(hash32(this.seed, "chem", ...[a.id, b.id].sort())).normal(0, PAIR_CHEMISTRY_SD);
         e += pe.e + chem; chemSum += chem;
         gapSum += pe.effGap ?? 0;
@@ -320,25 +343,81 @@ export class Oracle {
       const chemMean = others.length ? chemSum / others.length : 0;
       const meanEffGap = others.length ? gapSum / others.length : 0;
       if (allAdults && groupSize >= 3 && others.length >= 2) {
-        if (maxOtherExtract >= 0.62 && SA.extractionPropensity < 0.40) {
-          e -= 0.22;
+        const drag = extractiveGroupDrag(SA.extractionPropensity, maxOtherExtract, groupSize, 0.62, 0.40, 0.22);
+        if (drag > 0) {
+          e -= drag;
           if (people.some(x => isHighStatusTarget(strataMap.get(x.id)!))) flags.add("grift_risk");
         }
         if (minPairSys < 0.20) {
           e -= 0.28 * (0.20 - minPairSys);
         }
       }
-      // Group-size fit: introverts dislike big groups; extroverts are fine either way.
       const sizeDiff = Math.max(0, groupSize - a.hidden.preferredGroupSize);
       e -= 0.06 * sizeDiff * (1 - a.hidden.socialEnergy);
       if (groupSize === 2 && a.hidden.boundaries.includes("prefers groups over one-on-one with strangers")
           && !a.relationships.some(r => others.some(o => o.id === r.to))) { e -= 0.15; flags.add("boundary_conflict"); }
+      let venueAcceptMult = 1;
+      if (venuePivotFriction > 0) e -= venuePivotFriction;
+      if (venuePriceTier !== undefined) {
+        const budgetGap = venuePriceTier - spendTierIndex(SA.spendComfortTier);
+        if (budgetGap >= 1) {
+          e -= 0.14 * budgetGap;
+          venueAcceptMult *= 0.65;
+          flags.add("venue_budget_exceeded");
+        }
+      }
+      if (activeVenue) {
+        const extraTokens = [...a.hidden.boundaries];
+        if (SA.substanceProfile.soberProtected || SA.substanceProfile.alcohol === "none") extraTokens.push("strict_sober");
+        const projectedFacets = (a.public.projectedFacets ?? []).map(f => ({ tags: f.tags, value: f.value }));
+        const rl = extractMemberRedLines(projectedFacets, extraTokens);
+        const alcoholCentric = activeVenue.isAlcoholCentric ?? (activeVenue.isBarOnly || activeVenue.category === "cocktail_bar" || activeVenue.category === "wine_bar" || activeVenue.category === "brewery");
+        const noiseTier = activeVenue.noiseLevel === "quiet" ? 0 : activeVenue.noiseLevel === "conversational" ? 1 : activeVenue.noiseLevel === "lively" ? 2 : 3;
+        const redLinesOk = evaluateVenueRedLines({
+          anyStrictSober: rl.strictSober,
+          anyNonDrinker: rl.nonDrinker,
+          isAlcoholCentric: alcoholCentric,
+          isBarOnly: activeVenue.isBarOnly,
+          alcoholOptional: activeVenue.alcoholOptional,
+          anyHalal: rl.halal,
+          halalFriendly: activeVenue.halalFriendly === true,
+          anyKosher: rl.kosher,
+          kosherFriendly: activeVenue.kosherFriendly === true,
+          anyGlutenFree: rl.glutenFree,
+          glutenFreeFriendly: activeVenue.glutenFreeFriendly === true,
+          anySevereAllergen: rl.severeAllergen,
+          severeAllergenSafe: activeVenue.severeAllergenSafe === true,
+          anySmokeFree: rl.smokeFree,
+          isSmokeFree: activeVenue.isSmokeFree === true,
+          anyLowNoise: rl.lowNoiseRequired,
+          noiseTier,
+          anyDaytimeOnly: rl.daytimeOnly,
+          isAfterDark: venueAfterDark,
+          isFirstMeet: category === "romance",
+          safetyScore: activeVenue.safetyScore ?? 8,
+          transitScore: activeVenue.transitScore ?? 4,
+          startLocalHour: lpVenue?.hour ?? 18,
+          groupSize,
+          hasReservation: false,
+          openEventEligible: groupSize > 6 ? activeVenue.openEventEligible === true : false,
+          concurrentHeadcount: 0,
+          walkInCapacity: activeVenue.walkInGroupCapacity,
+        });
+        const minorVenueFail = isMinor(a.hidden.trueAge) && !(activeVenue.allAges ?? (!activeVenue.isBarOnly && !alcoholCentric && (activeVenue.ageMin ?? 0) <= MIN_MEMBER_AGE));
+        const dietaryFail = (rl.vegetarian && !activeVenue.servesVegetarian)
+          || (rl.vegan && !activeVenue.servesVegan)
+          || (rl.wheelchairNeeded && !activeVenue.wheelchairAccessible);
+        if (!redLinesOk || minorVenueFail || dietaryFail) {
+          e = Math.min(e, 0.12);
+          venueAcceptMult *= 0.15;
+          flags.add("venue_red_line_violation");
+        }
+      }
+      if (venueCancelled) e = 0;
       const present = presenceTimes.some(t => this.presentIn(a, prop.city, t));
       const enjoyment = clamp01(e);
 
       const r = new Rng(this.decisionKey("decide", prop, a.id, category, at));
-      // People judge an invitation from what they can see (the systematic part + noise),
-      // not from the chemistry they'll only discover by meeting.
       const perceived = perceivedBy[a.id] = enjoyment - chemMean + r.normal(0, 0.1);
       const fatigue = Math.pow(0.85, Math.max(0, (ctx.recentAsks?.[a.id] ?? 0) - 1));
       const sameArea = others.some(o => o.routine.homeArea === a.routine.homeArea) ? 1.05 : 1;
@@ -356,10 +435,10 @@ export class Oracle {
       const dunbarSaturated = allAdults && !SA.dunbarOpenSlots.sympathy15 && !SA.dunbarOpenSlots.affinity50
         && (category === "social" || !category) && maxComp < 0.55;
       if (dunbarSaturated) flags.add("dunbar_saturated");
-      const dunbarAcceptMult = dunbarSaturated ? 0.75 : 1;
+      const dunbarAcceptMult = dunbarSaturated && a.hidden.capacity >= 0.35 ? 0.78 : 1;
 
       let acceptProb = sigmoid((perceived - 0.5) * 7) * (0.3 + 0.7 * a.hidden.capacity) * fatigue * sameArea
-        * statusAcceptMult * griftAcceptMult * spendAcceptMult * dunbarAcceptMult;
+        * statusAcceptMult * griftAcceptMult * spendAcceptMult * dunbarAcceptMult * venueAcceptMult;
       if (!present) acceptProb *= 0.15;
       if (a.hidden.adversarial && ["spammer", "scammer", "harasser"].includes(a.hidden.adversarial)) acceptProb = 0.95;
       if (allAdults && category !== "romance" && (SA.adversarySubkind === "grifter_pitcher" || SA.adversarySubkind === "clout_chaser")) {
@@ -367,8 +446,8 @@ export class Oracle {
       }
       acceptProb = clamp01(acceptProb);
       const wouldAccept = r.next() < acceptProb;
-      const logistics = this.options.logistics ? this.logistics(a, others, prop) : 1;
-      const showProb = clamp01((1 - a.hidden.flakiness * (groupSize > 2 ? 1.3 : 1)) * (present ? 1 : 0.1) * logistics);
+      const logistics = this.options.logistics ? this.logistics(a, others, prop, activeVenue) : 1;
+      const showProb = venueCancelled ? 0 : clamp01((1 - a.hidden.flakiness * (groupSize > 2 ? 1.3 : 1)) * (present ? 1 : 0.1) * logistics);
       const wouldShow = wouldAccept && r.next() < showProb;
       out[a.id] = {
         acceptProb: round3(acceptProb), wouldAccept, showProb: round3(showProb), wouldShow,
@@ -378,7 +457,7 @@ export class Oracle {
     const es = Object.values(out).map(o => o.enjoyment);
     const quality = es.length ? es.reduce((s, x) => s + x, 0) / es.length : 0;
     const minEnjoyment = es.length ? Math.min(...es) : 0;
-    const hard: OracleFlag[] = ["minor_included", "romance_mismatch", "ex_partners", "adversarial_participant", "city_mismatch", "unknown_member"];
+    const hard: OracleFlag[] = ["minor_included", "romance_mismatch", "ex_partners", "adversarial_participant", "city_mismatch", "unknown_member", "venue_red_line_violation", "venue_cancelled"];
     const unsafe = (["minor_included", "romance_mismatch", "ex_partners", "adversarial_participant"] as OracleFlag[]).some(f => flags.has(f));
     const compatible = !unsafe && !hard.some(f => flags.has(f)) && people.length >= 2 && (people.length === 2
       ? minEnjoyment >= GOOD_PAIR
@@ -396,10 +475,22 @@ export class Oracle {
     return hash32(this.seed, this.options.stableDecisions ? meaning : this.coins.key(meaning, prop.id));
   }
 
-  /** Show-up multiplier from travel and the meeting time (OracleOptions.logistics). */
-  private logistics(a: Persona, others: Persona[], prop: OracleProposal): number {
-    const near = others.some(o => [o.routine.homeArea, o.routine.workArea].some(x => x === a.routine.homeArea || x === a.routine.workArea));
-    let f = near ? 1 : a.archetype === "busy_parent" ? 0.85 : 0.93;
+  private logistics(a: Persona, others: Persona[], prop: OracleProposal, venue?: VenueRecord): number {
+    let f: number;
+    if (venue && getCity(prop.city)) {
+      const mins = estimateTravelMinutes(prop.city, a.routine.homeArea, venue.neighborhood);
+      f = mins <= 25 ? 1 : mins <= 40 ? (a.archetype === "busy_parent" ? 0.86 : 0.94) : (a.archetype === "busy_parent" ? 0.72 : 0.82);
+    } else {
+      const near = others.some(o => [o.routine.homeArea, o.routine.workArea].some(x => x === a.routine.homeArea || x === a.routine.workArea));
+      if (near) {
+        f = 1;
+      } else if (prop.city !== "nyc" && getCity(prop.city) && others.length > 0) {
+        const minTravel = Math.min(...others.map(o => estimateTravelMinutes(prop.city, a.routine.homeArea, o.routine.homeArea)));
+        f = minTravel <= 25 ? 0.98 : minTravel <= 40 ? (a.archetype === "busy_parent" ? 0.86 : 0.93) : (a.archetype === "busy_parent" ? 0.76 : 0.86);
+      } else {
+        f = a.archetype === "busy_parent" ? 0.85 : 0.93;
+      }
+    }
     const w = prop.window;
     if (w && w.end - w.start <= 6 * 60 * 60 * 1000) {
       const lp = localParts(w.start, prop.city);
@@ -652,5 +743,4 @@ function isSharedPurposeGuild(
   return [...GUILD_TAGS].some(t => o.includes(t.replace(/_/g, " ")));
 }
 
-const sigmoid = (x: number) => 1 / (1 + Math.exp(-x));
 const round3 = (x: number) => Math.round(x * 1000) / 1000;

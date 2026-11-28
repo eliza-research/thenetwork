@@ -1,5 +1,5 @@
 import type { City, Facet, MemberId } from "@thenetwork/core";
-import { canBeMatched, CITY_TZ, DAY, localParts, temporaryPresenceWindow } from "@thenetwork/core";
+import { canBeMatched, CITY_TZ, DAY, DAYTIME_ONLY_TOKENS, DRINKING_VALUE_NON_DRINKER_TOKENS, extractMemberRedLines, localParts, LOW_NOISE_TOKENS, LOW_WALKING_TOKENS, STRICT_SOBER_TOKENS, temporaryPresenceWindow } from "@thenetwork/core";
 import { slopContextualBlockAllowed, slopRecordedBlockContext } from "../../../../core/src/generated/datingRadius.ts";
 import { completedDateFeedbackMatches, completedDatePacingAt, completedMeetingSlot, slopCompletedDateCounts, slopNoShowCounts } from "../../../../core/src/generated/meetingSettlement.ts";
 import { presenceWindowContains } from "../../../../core/src/generated/travelPresence.ts";
@@ -31,6 +31,14 @@ export interface History {
   ratedBody: { type: string; v: number }[];
 }
 
+export interface SlopProfileRedLines {
+  readonly strictSober: boolean;
+  readonly nonDrinker: boolean;
+  readonly lowWalking: boolean;
+  readonly lowNoise: boolean;
+  readonly daytimeOnly: boolean;
+}
+
 export interface SlopProfile {
   id: MemberId; age: number; adult: boolean; optedIn: boolean; paused: boolean;
   zip?: string; homeMarket: City; cell?: Cell;
@@ -42,6 +50,7 @@ export interface SlopProfile {
   ageRange?: [number, number]; scope?: Scope; maxMiles?: number; goal?: Goal;
   values: { smoking?: string; drinking?: string; hasKids?: string; wantsKids?: string; religion?: string; religionImportance?: number; politics?: string };
   dealbreakers: string[];
+  redLines?: SlopProfileRedLines;
   interests: string[]; shareableInterests: string[]; activities: string[]; free: Slot[];
   wants?: number[]; self?: number[];
   wantsBody: string[];
@@ -200,6 +209,21 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       transOpenness: openTrans !== undefined && isTransOpenness(openTrans) ? openTrans : undefined,
       shownTo: [...new Set(has("romance:shown_to:"))].filter((g): g is Gender => g === "woman" || g === "man").sort(),
     };
+    const drinkingVal = oneDomain("drinking:");
+    const dealbreakers = [...new Set(hasDomain("dealbreaker:"))].sort();
+    const drinkNorm = drinkingVal?.trim().toLowerCase() ?? "";
+    const coreRl = extractMemberRedLines(fs, dealbreakers);
+    const strictSober = coreRl.strictSober || STRICT_SOBER_TOKENS.has(drinkNorm);
+    const nonDrinker = strictSober || coreRl.nonDrinker || DRINKING_VALUE_NON_DRINKER_TOKENS.has(drinkNorm) || dealbreakers.some(d => {
+      const low = d.trim().toLowerCase();
+      return low === "heavy_drinker" || DRINKING_VALUE_NON_DRINKER_TOKENS.has(low);
+    });
+    const lowWalking = coreRl.lowWalking || dealbreakers.some(d => LOW_WALKING_TOKENS.has(d.trim().toLowerCase()));
+    const lowNoise = coreRl.lowNoiseRequired || dealbreakers.some(d => {
+      const low = d.trim().toLowerCase();
+      return LOW_NOISE_TOKENS.has(low) || low === "sensory_quiet" || low === "no_loud_venues";
+    });
+    const daytimeOnly = coreRl.daytimeOnly || dealbreakers.some(d => DAYTIME_ONLY_TOKENS.has(d.trim().toLowerCase()));
     out.set(m.id, {
       id: m.id, age: m.age, adult: canBeMatched(m.age), optedIn: m.prefs.romanceOptIn && m.prefs.categoriesOptIn.includes("romance"), paused: m.state === "paused",
       zip: zip && isKnownZip(zip) ? normalizeZip(zip) : zip, homeMarket: m.homeCity, cell, zipUnknown: !!zip && !cell,
@@ -208,10 +232,11 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
       scope, maxMiles: mm !== undefined ? Number(mm) : undefined,
       goal: oneDomain("goal:") as Goal | undefined,
       values: {
-        smoking: oneDomain("smoking:"), drinking: oneDomain("drinking:"), hasKids: oneDomain("has_kids:"), wantsKids: oneDomain("wants_kids:"),
+        smoking: oneDomain("smoking:"), drinking: drinkingVal, hasKids: oneDomain("has_kids:"), wantsKids: oneDomain("wants_kids:"),
         religion: oneDomain("religion:"), religionImportance: ri !== undefined ? Number(ri) : undefined, politics: oneDomain("politics:"),
       },
-      dealbreakers: [...new Set(hasDomain("dealbreaker:"))].sort(),
+      dealbreakers,
+      redLines: { strictSober, nonDrinker, lowWalking, lowNoise, daytimeOnly },
       interests: [...new Set(interestFacets.map(f => f.tags[0]!))].sort(),
       shareableInterests: [...new Set(interestFacets.filter(f => f.scope === "shareable").map(f => f.tags[0]!))].sort(),
       activities: [...new Set(hasDomain("activity:"))].sort(),

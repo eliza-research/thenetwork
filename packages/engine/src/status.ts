@@ -460,7 +460,7 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
   const isDating = isDatingDomain(w.pack.id);
   const isBusiness = isBusinessDomain(w.pack.id);
   const physGate = physDimensionWeight(isDating, 1.0);
-  const brokerageMap = isBusiness ? undefined : w.brokerage;
+  const brokerageMap = isBusiness || isDating ? undefined : w.brokerage;
 
   const allFacetsBy = new Map<MemberId, Facet[]>();
   if (physGate > 0) {
@@ -475,174 +475,223 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
     }
   }
 
-  const seeds = new Set<MemberId>();
   const negReceived = new Set<MemberId>();
-  for (const fb of w.feedback) {
-    if (fb.at <= w.now && fb.sentiment === "negative") negReceived.add(fb.about);
-  }
-  for (const id of adults) {
-    const mi = w.get(id)!;
-    if (mi.inviterRoot === id && !w.holds.has(id) && !negReceived.has(id) && (!mi.newcomer || mi.degree >= 2)) {
-      seeds.add(id);
-    }
-  }
-
-  const trustEdges: SpringRankEdge[] = [];
-  for (const id of adults) {
-    const mi = w.get(id)!;
-    const inv = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
-    if (inv && inv !== id && adultSet.has(inv) && !w.blocked.has(id < inv ? `${id}|${inv}` : `${inv}|${id}`)) {
-      trustEdges.push({ from: inv, to: id, weight: 1.0 });
-      trustEdges.push({ from: id, to: inv, weight: 0.35 });
-    }
-    const pos = w.positive.get(id);
-    if (pos) {
-      for (const [nb, str] of [...pos.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
-        if (adultSet.has(nb)) trustEdges.push({ from: id, to: nb, weight: str });
-      }
-    }
-  }
-  const eigenRaw = solveEigenTrust(adults, trustEdges, seeds, 0.20, 20);
-  const eigenZ = zStandardize(adults, eigenRaw);
-
-  const srEdges: SpringRankEdge[] = [];
-  for (const r of w.interactions) {
-    if (r.at > w.now || r.participants.length !== 2) continue;
-    const [a, b] = r.participants as [MemberId, MemberId];
-    if (!adultSet.has(a) || !adultSet.has(b)) continue;
-    const accA = r.acceptedBy?.includes(a) ?? false;
-    const accB = r.acceptedBy?.includes(b) ?? false;
-    const decA = r.declinedBy?.includes(a) ?? false;
-    const decB = r.declinedBy?.includes(b) ?? false;
-    if (accA && !(r.outcome === "cancelled" && decA)) srEdges.push({ from: a, to: b, weight: 0.7 });
-    if (accB && !(r.outcome === "cancelled" && decB)) srEdges.push({ from: b, to: a, weight: 0.7 });
-  }
-  for (const fb of w.feedback) {
-    if (fb.at > w.now || !adultSet.has(fb.from) || !adultSet.has(fb.about)) continue;
-    if (fb.sentiment === "positive" || fb.wouldMeetAgain === true) {
-      srEdges.push({ from: fb.from, to: fb.about, weight: fb.wouldMeetAgain ? 1.4 : 1.0 });
-    }
-  }
-  const srRes = solveSpringRank(adults, srEdges, eigenZ, 1.2, 25, 1e-7);
-  const springZ = zStandardize(adults, srRes.ranks);
-
-  const econRaw = new Map<MemberId, number>();
-  const cultRaw = new Map<MemberId, number>();
-  const socRaw = new Map<MemberId, number>();
-  const warmRaw = new Map<MemberId, number>();
-  const potRaw = new Map<MemberId, number>();
-  const physMu = new Map<MemberId, number>();
-  const physSig = new Map<MemberId, number>();
-
   const posFbCount = new Map<MemberId, number>();
   const negFbCount = new Map<MemberId, number>();
   for (const fb of w.feedback) {
-    if (fb.at > w.now || !adultSet.has(fb.about)) continue;
+    if (fb.at > w.now) continue;
+    if (fb.sentiment === "negative") negReceived.add(fb.about);
+    if (!adultSet.has(fb.about)) continue;
     if (fb.sentiment === "positive" || fb.wouldMeetAgain === true) posFbCount.set(fb.about, (posFbCount.get(fb.about) ?? 0) + 1);
     else if (fb.sentiment === "negative" || fb.wouldMeetAgain === false) negFbCount.set(fb.about, (negFbCount.get(fb.about) ?? 0) + 1);
   }
 
+  const adultsByCity = new Map<string, MemberId[]>();
   for (const id of adults) {
-    const mi = w.get(id)!;
-    if (physGate > 0) {
-      const fs = allFacetsBy.get(id) ?? [];
-      const tags = fs.flatMap(f => f.tags);
-      const ageFailed = tags.includes("verify:age:fail");
-      const ap = canRatePhotos({ age: mi.m.age, ageVerified: ageFailed ? false : undefined })
-        ? parseAppearance(fs.filter(f => f.tags.some(t => t.startsWith(APPEARANCE_PREFIX))).flatMap(f => f.tags))
-        : undefined;
-      if (ap && ap.confidence >= 0.3) {
-        const comp = 0.25 * ap.face + 0.25 * ap.body + 0.50 * ap.overall;
-        physMu.set(id, clampStatusZ(ap.confidence * comp));
-        physSig.set(id, clampStatusSigma(Math.sqrt(0.15 * 0.15 + (1 - ap.confidence) * 0.75 * 0.75)));
-      } else {
-        physMu.set(id, 0);
-        physSig.set(id, 0.95);
-      }
-    } else {
-      physMu.set(id, 0);
-      physSig.set(id, 1.0);
-    }
+    const city = w.get(id)!.m.homeCity;
+    let bucket = adultsByCity.get(city);
+    if (!bucket) { bucket = []; adultsByCity.set(city, bucket); }
+    bucket.push(id);
+  }
+  const cityKeys = [...adultsByCity.keys()].sort();
 
-    const vec = humanVectorOf(w, id);
-    let topVerifiedRung = 0;
-    if (vec && businessCapitalAllowed("domain_craft")) {
-      for (const coord of Object.values(vec.capital.domainRungs)) {
-        const weighted = coord.value * coord.confidence;
-        if (weighted > topVerifiedRung) topVerifiedRung = weighted;
-      }
-    }
-    const econPrior = !isBusiness && vec && vec.explicitSignals.spendTier
-      ? 0.9 * (vec.capital.economic.value - 0.5) * vec.capital.economic.confidence
-      : 0;
-    const econScore = facetSignal(mi.caps, ECON_RE) + 0.5 * facetSignal(mi.match, ECON_RE) + 0.2 * mi.caps.length + econPrior;
-    const cultScore = facetSignal(mi.caps, CULT_RE) + 0.6 * facetSignal(mi.match, CULT_RE)
-      + 0.15 * mi.match.reduce((s, f) => s + provenanceWeight(f), 0) + 0.20 * topVerifiedRung;
-    const vouchedCount = mi.match.filter(f => f.provenance === "vouched").length;
-    const rel = w.reliability[id];
-    const noShows = rel?.noShows ?? 0;
-    const completed = rel?.completedSinceLastNoShow ?? 0;
-    const extractPen = vec && vec.behavioral.extractionRiskScore > 0.25
-      ? 2.4 * (vec.behavioral.extractionRiskScore - 0.25)
-      : 0;
-    const discretionPen = !isBusiness && vec && vec.explicitSignals.hypeOrExtraction && vec.behavioral.discretionVouchScore < 0.45
-      ? 0.8 * (0.45 - vec.behavioral.discretionVouchScore)
-      : 0;
-    const warmScore = 0.8 * (posFbCount.get(id) ?? 0) - 1.4 * (negFbCount.get(id) ?? 0) + 0.4 * completed - 1.5 * noShows
-      + (mi.isHost ? 0.35 : 0) - (w.holds.has(id) ? 2.5 : 0) - extractPen - discretionPen;
-    const brokPrior = !isBusiness ? 0.25 * (brokerageMap?.get(id) ?? 0) : 0;
-    const vouchPrior = !isBusiness && vec ? 0.30 * (vec.capital.social.vouchQuality.value - 0.35) : 0;
-    const socScore = 0.55 * (eigenZ.get(id) ?? 0) + 0.45 * (springZ.get(id) ?? 0) + 0.12 * Math.log1p(mi.degree) + brokPrior + vouchPrior;
-    const invId = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
-    const invLift = invId && adultSet.has(invId) ? 0.35 * Math.max(0, eigenZ.get(invId) ?? 0) : 0;
-    const potScore = facetSignal(mi.match, POT_RE) + 0.45 * vouchedCount + invLift + 0.2 * Math.min(4, mi.caps.length)
-      + 0.15 * topVerifiedRung + (!isBusiness && vec ? 0.25 * (vec.capital.social.vouchQuality.value - 0.35) : 0);
-
-    econRaw.set(id, econScore);
-    cultRaw.set(id, cultScore);
-    socRaw.set(id, socScore);
-    warmRaw.set(id, warmScore);
-    potRaw.set(id, potScore);
+  const interactionsByCity = new Map<string, typeof w.interactions>();
+  for (const r of w.interactions) {
+    if (r.at > w.now || r.participants.length !== 2) continue;
+    const [a, b] = r.participants as [MemberId, MemberId];
+    if (!adultSet.has(a) || !adultSet.has(b)) continue;
+    const cA = w.get(a)!.m.homeCity;
+    const cB = w.get(b)!.m.homeCity;
+    if (cA !== cB) continue;
+    let list = interactionsByCity.get(cA);
+    if (!list) { list = []; interactionsByCity.set(cA, list); }
+    list.push(r);
   }
 
-  const econZ = zStandardize(adults, econRaw);
-  const cultZ = zStandardize(adults, cultRaw);
-  const socZ = zStandardize(adults, socRaw);
-  const warmZ = zStandardize(adults, warmRaw);
-  const potZ = zStandardize(adults, potRaw);
-
-  let meanAcc = 0;
-  for (const id of adults) meanAcc += w.get(id)!.acceptance;
-  meanAcc = adults.length ? meanAcc / adults.length : w.cfg.acceptance.prior;
-  const baseLogit = safeLogit(meanAcc);
+  const feedbackByCity = new Map<string, typeof w.feedback>();
+  for (const fb of w.feedback) {
+    if (fb.at > w.now || !adultSet.has(fb.from) || !adultSet.has(fb.about)) continue;
+    const cF = w.get(fb.from)!.m.homeCity;
+    const cA = w.get(fb.about)!.m.homeCity;
+    if (cF !== cA) continue;
+    let list = feedbackByCity.get(cF);
+    if (!list) { list = []; feedbackByCity.set(cF, list); }
+    list.push(fb);
+  }
 
   const muWork = new Map<MemberId, [number, number, number, number, number, number]>();
   const sigWork = new Map<MemberId, [number, number, number, number, number, number]>();
   const alphaOf = new Map<MemberId, number>();
   const obsCount = new Map<MemberId, number>();
 
-  for (const id of adults) {
-    const mi = w.get(id)!;
-    const dataConf = Math.min(1, mi.match.length / 6);
-    const baseSig = clampStatusSigma(0.85 - 0.30 * dataConf);
-    muWork.set(id, [
-      physGate > 0 ? (physMu.get(id) ?? 0) : 0,
-      econZ.get(id) ?? 0,
-      cultZ.get(id) ?? 0,
-      socZ.get(id) ?? 0,
-      warmZ.get(id) ?? 0,
-      potZ.get(id) ?? 0,
-    ]);
-    sigWork.set(id, [
-      physGate > 0 ? (physSig.get(id) ?? 0.95) : 1.0,
-      baseSig,
-      baseSig,
-      clampStatusSigma(0.75 - 0.25 * Math.min(1, mi.degree / 4)),
-      clampStatusSigma(0.80 - 0.25 * Math.min(1, (posFbCount.get(id) ?? 0) / 3)),
-      baseSig,
-    ]);
-    alphaOf.set(id, safeLogit(mi.acceptance) - baseLogit);
-    obsCount.set(id, 0);
+  for (const city of cityKeys) {
+    const cohort = adultsByCity.get(city)!;
+    const cohortSet = new Set<MemberId>(cohort);
+
+    const seeds = new Set<MemberId>();
+    for (const id of cohort) {
+      const mi = w.get(id)!;
+      if (mi.inviterRoot === id && !w.holds.has(id) && !negReceived.has(id) && (!mi.newcomer || mi.degree >= 2)) {
+        seeds.add(id);
+      }
+    }
+
+    const trustEdges: SpringRankEdge[] = [];
+    for (const id of cohort) {
+      const mi = w.get(id)!;
+      const inv = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
+      if (inv && inv !== id && cohortSet.has(inv) && !w.blocked.has(id < inv ? `${id}|${inv}` : `${inv}|${id}`)) {
+        trustEdges.push({ from: inv, to: id, weight: 1.0 });
+        trustEdges.push({ from: id, to: inv, weight: 0.35 });
+      }
+      const pos = w.positive.get(id);
+      if (pos) {
+        for (const [nb, str] of [...pos.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+          if (cohortSet.has(nb)) trustEdges.push({ from: id, to: nb, weight: str });
+        }
+      }
+    }
+    const eigenRaw = solveEigenTrust(cohort, trustEdges, seeds, 0.20, 20);
+    const eigenZ = zStandardize(cohort, eigenRaw);
+
+    const srEdges: SpringRankEdge[] = [];
+    for (const r of interactionsByCity.get(city) ?? []) {
+      const [a, b] = r.participants as [MemberId, MemberId];
+      const accA = r.acceptedBy?.includes(a) ?? false;
+      const accB = r.acceptedBy?.includes(b) ?? false;
+      const decA = r.declinedBy?.includes(a) ?? false;
+      const decB = r.declinedBy?.includes(b) ?? false;
+      if (accA && !(r.outcome === "cancelled" && decA)) srEdges.push({ from: a, to: b, weight: 0.7 });
+      if (accB && !(r.outcome === "cancelled" && decB)) srEdges.push({ from: b, to: a, weight: 0.7 });
+    }
+    for (const fb of feedbackByCity.get(city) ?? []) {
+      if (fb.sentiment === "positive" || fb.wouldMeetAgain === true) {
+        srEdges.push({ from: fb.from, to: fb.about, weight: fb.wouldMeetAgain ? 1.4 : 1.0 });
+      }
+    }
+    const srRes = solveSpringRank(cohort, srEdges, eigenZ, 1.2, 25, 1e-7);
+    const springZ = zStandardize(cohort, srRes.ranks);
+
+    const econRaw = new Map<MemberId, number>();
+    const cultRaw = new Map<MemberId, number>();
+    const socRaw = new Map<MemberId, number>();
+    const warmRaw = new Map<MemberId, number>();
+    const potRaw = new Map<MemberId, number>();
+    const physMu = new Map<MemberId, number>();
+    const physSig = new Map<MemberId, number>();
+
+    for (const id of cohort) {
+      const mi = w.get(id)!;
+      if (physGate > 0) {
+        const fs = allFacetsBy.get(id);
+        let ageFailed = false;
+        let appTags: string[] | undefined;
+        if (fs) {
+          for (let i = 0; i < fs.length; i++) {
+            const fTags = fs[i]!.tags;
+            let hasApp = false;
+            for (let j = 0; j < fTags.length; j++) {
+              const t = fTags[j]!;
+              if (t === "verify:age:fail") ageFailed = true;
+              else if (t.startsWith(APPEARANCE_PREFIX)) hasApp = true;
+            }
+            if (hasApp) {
+              if (!appTags) appTags = [];
+              for (let j = 0; j < fTags.length; j++) appTags.push(fTags[j]!);
+            }
+          }
+        }
+        const ap = appTags && canRatePhotos({ age: mi.m.age, ageVerified: ageFailed ? false : undefined })
+          ? parseAppearance(appTags)
+          : undefined;
+        if (ap && ap.confidence >= 0.3) {
+          const comp = 0.25 * ap.face + 0.25 * ap.body + 0.50 * ap.overall;
+          physMu.set(id, clampStatusZ(ap.confidence * comp));
+          physSig.set(id, clampStatusSigma(Math.sqrt(0.15 * 0.15 + (1 - ap.confidence) * 0.75 * 0.75)));
+        } else {
+          physMu.set(id, 0);
+          physSig.set(id, 0.95);
+        }
+      } else {
+        physMu.set(id, 0);
+        physSig.set(id, 1.0);
+      }
+
+      const vec = isDating ? undefined : humanVectorOf(w, id);
+      let topVerifiedRung = 0;
+      if (vec && businessCapitalAllowed("domain_craft")) {
+        for (const coord of Object.values(vec.capital.domainRungs)) {
+          const weighted = coord.value * coord.confidence;
+          if (weighted > topVerifiedRung) topVerifiedRung = weighted;
+        }
+      }
+      const econPrior = !isBusiness && vec && vec.explicitSignals.spendTier
+        ? 0.9 * (vec.capital.economic.value - 0.5) * vec.capital.economic.confidence
+        : 0;
+      const econScore = facetSignal(mi.caps, ECON_RE) + 0.5 * facetSignal(mi.match, ECON_RE) + 0.2 * mi.caps.length + econPrior;
+      const cultScore = facetSignal(mi.caps, CULT_RE) + 0.6 * facetSignal(mi.match, CULT_RE)
+        + 0.15 * mi.match.reduce((s, f) => s + provenanceWeight(f), 0) + 0.20 * topVerifiedRung;
+      const vouchedCount = mi.match.filter(f => f.provenance === "vouched").length;
+      const rel = w.reliability[id];
+      const noShows = rel?.noShows ?? 0;
+      const completed = rel?.completedSinceLastNoShow ?? 0;
+      const extractPen = vec && vec.behavioral.extractionRiskScore > 0.25
+        ? 2.4 * (vec.behavioral.extractionRiskScore - 0.25)
+        : 0;
+      const discretionPen = !isBusiness && vec && vec.explicitSignals.hypeOrExtraction && vec.behavioral.discretionVouchScore < 0.45
+        ? 0.8 * (0.45 - vec.behavioral.discretionVouchScore)
+        : 0;
+      const warmScore = 0.8 * (posFbCount.get(id) ?? 0) - 1.4 * (negFbCount.get(id) ?? 0) + 0.4 * completed - 1.5 * noShows
+        + (mi.isHost ? 0.35 : 0) - (w.holds.has(id) ? 2.5 : 0) - extractPen - discretionPen;
+      const brokPrior = !isBusiness && !isDating ? 0.25 * (brokerageMap?.get(id) ?? 0) : 0;
+      const vouchPrior = !isBusiness && vec ? 0.30 * (vec.capital.social.vouchQuality.value - 0.35) : 0;
+      const socScore = 0.55 * (eigenZ.get(id) ?? 0) + 0.45 * (springZ.get(id) ?? 0) + 0.12 * Math.log1p(mi.degree) + brokPrior + vouchPrior;
+      const invId = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
+      const invLift = invId && cohortSet.has(invId) ? 0.35 * Math.max(0, eigenZ.get(invId) ?? 0) : 0;
+      const potScore = facetSignal(mi.match, POT_RE) + 0.45 * vouchedCount + invLift + 0.2 * Math.min(4, mi.caps.length)
+        + 0.15 * topVerifiedRung + (!isBusiness && vec ? 0.25 * (vec.capital.social.vouchQuality.value - 0.35) : 0);
+
+      econRaw.set(id, econScore);
+      cultRaw.set(id, cultScore);
+      socRaw.set(id, socScore);
+      warmRaw.set(id, warmScore);
+      potRaw.set(id, potScore);
+    }
+
+    const econZ = zStandardize(cohort, econRaw);
+    const cultZ = zStandardize(cohort, cultRaw);
+    const socZ = zStandardize(cohort, socRaw);
+    const warmZ = zStandardize(cohort, warmRaw);
+    const potZ = zStandardize(cohort, potRaw);
+
+    let meanAcc = 0;
+    for (const id of cohort) meanAcc += w.get(id)!.acceptance;
+    meanAcc = cohort.length ? meanAcc / cohort.length : w.cfg.acceptance.prior;
+    const baseLogit = safeLogit(meanAcc);
+
+    for (const id of cohort) {
+      const mi = w.get(id)!;
+      const dataConf = Math.min(1, mi.match.length / 6);
+      const baseSig = clampStatusSigma(0.85 - 0.30 * dataConf);
+      muWork.set(id, [
+        physGate > 0 ? (physMu.get(id) ?? 0) : 0,
+        econZ.get(id) ?? 0,
+        cultZ.get(id) ?? 0,
+        socZ.get(id) ?? 0,
+        warmZ.get(id) ?? 0,
+        potZ.get(id) ?? 0,
+      ]);
+      sigWork.set(id, [
+        physGate > 0 ? (physSig.get(id) ?? 0.95) : 1.0,
+        baseSig,
+        baseSig,
+        clampStatusSigma(0.75 - 0.25 * Math.min(1, mi.degree / 4)),
+        clampStatusSigma(0.80 - 0.25 * Math.min(1, (posFbCount.get(id) ?? 0) / 3)),
+        baseSig,
+      ]);
+      alphaOf.set(id, safeLogit(mi.acceptance) - baseLogit);
+      obsCount.set(id, 0);
+    }
   }
 
   const primaryDim = physGate > 0 ? 0 : isBusiness ? 2 : 3;
@@ -791,7 +840,7 @@ export function explorationPairAllowed(
   a: MemberId,
   b: MemberId,
   shadowPrice: ReadonlyMap<MemberId, number>,
-  p80ShadowPrice: number,
+  p80ShadowPrice: number | ((id: MemberId) => number),
 ): boolean {
   const beliefs = worldStatusBeliefs(w);
   const bA = beliefs.get(a), bB = beliefs.get(b);
@@ -811,8 +860,10 @@ export function explorationPairAllowed(
   const capA = capOf(bA), capB = capOf(bB);
   const uncalA = meanSigma(bA) > 0.65 && bA.observations < 2;
   const uncalB = meanSigma(bB) > 0.65 && bB.observations < 2;
-  const aboveA = (shadowPrice.get(a) ?? -Infinity) > p80ShadowPrice;
-  const aboveB = (shadowPrice.get(b) ?? -Infinity) > p80ShadowPrice;
+  const p80A = typeof p80ShadowPrice === "function" ? p80ShadowPrice(a) : p80ShadowPrice;
+  const p80B = typeof p80ShadowPrice === "function" ? p80ShadowPrice(b) : p80ShadowPrice;
+  const aboveA = (shadowPrice.get(a) ?? -Infinity) > p80A;
+  const aboveB = (shadowPrice.get(b) ?? -Infinity) > p80B;
   const okAToB = explorationTargetAllowed(uncalA, aboveB, memberWelcomesNewcomers(w, b), capA + K.gapFree + 0.35 >= capB);
   const okBToA = explorationTargetAllowed(uncalB, aboveA, memberWelcomesNewcomers(w, a), capB + K.gapFree + 0.35 >= capA);
   return okAToB && okBToA;

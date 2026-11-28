@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { CITY_TZ, DAY, isBusinessDomain, isCity, isDatingDomain, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, isBusinessDomain, isCity, isDatingDomain, LeakGuard, timeZoneOf } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -238,6 +238,17 @@ export class NetworkRuntime {
   private activeVenues: VenueRecord[] = [];
   private memberVenueHistory = new Map<MemberId, MemberVenueHistory>();
   private concurrentHeadcounts: Record<string, number> = {};
+  private snapCache?: {
+    snap: WorldSnapshot;
+    joinedInviteeNames: Map<string, string>;
+    addrToMember: Map<string, MemberId>;
+    memberToAddr: Map<MemberId, string>;
+    memberToEmail: Map<MemberId, string>;
+    pgSnapshot: string;
+    clockNow: number;
+    validUntil: number;
+  };
+  private snapDirty = true;
   private joinedInviteeNames = new Map<string, string>();
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
@@ -917,8 +928,8 @@ export class NetworkRuntime {
       },
       save: async (state: NetworkState) => {
         const u = this.unit;
-        // PgStore.save sets app.app_id for its own transaction; the unit's rows go in the same one.
         await this.pg.save({ ...state, legacyIntentRowsReconciled: true }, async tx => { await this.writeUnit(tx, u); await this.view.saved(tx); });
+        this.invalidateSnapshotCache();
         if (u.recordedAges) this.recordedAges.push(...u.recordedAges);
         this.committed.push(...u.sends.filter(s => !u.collected.has(s.id)));
         this.unit = newUnit();
@@ -1093,7 +1104,6 @@ export class NetworkRuntime {
     }
   }
 
-  /** Hydrate active venues, member visit/rejection history, and cross-app concurrent holds for this unit. */
   async hydrateVenueContext(windowStart?: number, windowEnd?: number): Promise<{
     venues: readonly VenueRecord[];
     memberVenueHistory: ReadonlyMap<MemberId, MemberVenueHistory>;
@@ -1123,11 +1133,49 @@ export class NetworkRuntime {
     return { venues, memberVenueHistory: history, concurrentHeadcountByVenue: headcounts };
   }
 
-  /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
+  invalidateSnapshotCache() {
+    this.snapDirty = true;
+    this.snapCache = undefined;
+  }
+
+  private nextSnapshotBoundary(snapshot: WorldSnapshot, now: number): number {
+    let until = now + 2_000;
+    const nextUtcDay = (Math.floor(now / DAY) + 1) * DAY;
+    if (nextUtcDay < until) until = nextUtcDay;
+    for (let i = 0; i < snapshot.facets.length; i++) {
+      const f = snapshot.facets[i]!;
+      if (f.validFrom !== undefined && f.validFrom > now && f.validFrom < until) until = f.validFrom;
+      if (f.validTo !== undefined && f.validTo > now && f.validTo < until) until = f.validTo;
+    }
+    for (let i = 0; i < snapshot.presence.length; i++) {
+      const p = snapshot.presence[i]!;
+      if (p.from !== undefined && p.from > now && p.from < until) until = p.from;
+      if (p.to !== undefined && p.to > now && p.to < until) until = p.to;
+    }
+    if (snapshot.events) {
+      for (let i = 0; i < snapshot.events.length; i++) {
+        const e = snapshot.events[i]!;
+        if (e.start > now && e.start < until) until = e.start;
+        if (e.end > now && e.end < until) until = e.end;
+      }
+    }
+    return until;
+  }
+
   private async refresh() {
     const app = this.app.id, now = this.clock.now(), homes = this.cities;
     await this.scoped(async tx => {
-      const [snapshot, names] = await Promise.all([
+      const [probe] = await tx<{ snap: string; xid: string | null }[]>`select pg_current_snapshot()::text as snap, pg_current_xact_id_if_assigned()::text as xid`;
+      const cached = this.snapCache;
+      if (!this.snapDirty && cached && probe && probe.xid === null && probe.snap === cached.pgSnapshot && now >= cached.clockNow && now < cached.validUntil) {
+        this.snap = cached.snap.now === now ? cached.snap : { ...cached.snap, now };
+        this.joinedInviteeNames = cached.joinedInviteeNames;
+        this.addrToMember = cached.addrToMember;
+        this.memberToAddr = cached.memberToAddr;
+        this.memberToEmail = cached.memberToEmail;
+        return;
+      }
+      const [snapshot, names, legacy, platform, emails] = await Promise.all([
         loadSnapshot(tx, now, { app, city: this.city, homeCities: homes, includeMaturedSignup: true }),
         tx<(AgeRow & { id: string; invited_by: string; name: string | null })[]>`select i.id,i.invited_by,i.name,a.age as matching_age,
             ((i.age is null or p.id is null or p.lowest_age is null) and a.birth_date is null and not a.signup_age_observed) as age_missing, ${birthColumns(tx)}
@@ -1136,30 +1184,67 @@ export class NetworkRuntime {
           left join platform.people p on p.id=i.person_id
           where i.app_id=${app} and v.home_city in ${tx([...homes])} and i.home_city not in ${tx([...homes])}
             and i.joined_at>${new Date(now - inviteJoinNoticeLifetimeMs)} and i.account_status='active' and not i.opted_out order by i.id`,
+        tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
+          join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
+          where ci.app_id = ${app} and ci.channel in ('imessage', 'sms') and m.person_id is null
+            and not exists (select 1 from platform.phone_identities ph where ph.e164 = ci.address)
+            and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
+        tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
+        tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
+          join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
+          where ci.app_id = ${app} and ci.channel = 'email'
+            and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
       ]);
-      this.snap = snapshot;
-      this.joinedInviteeNames = new Map(names.filter(row => canBeMatched(effectiveAgeOf(row, now))).flatMap(row => {
+      const joinedInviteeNames = new Map(names.filter(row => canBeMatched(effectiveAgeOf(row, now))).flatMap(row => {
         const first = row.name?.trim().split(/\s+/)[0];
         return first ? [[`${row.invited_by}\0${row.id}`, first] as const] : [];
       }));
+      const addrToMember = new Map<string, MemberId>();
+      const memberToAddr = new Map<MemberId, string>();
+      const memberToEmail = new Map<MemberId, string>();
+      for (const r of [...platform, ...legacy] as any[]) {
+        if (!this.cities.includes(r.home_city)) continue;
+        const a = normalizeAddress(r.address);
+        if (!addrToMember.has(a)) addrToMember.set(a, r.member_id);
+        if (!memberToAddr.has(r.member_id)) memberToAddr.set(r.member_id, a);
+      }
+      for (const r of emails as any[]) {
+        if (!this.cities.includes(r.home_city)) continue;
+        const email = String(r.address ?? "").trim().toLowerCase();
+        if (email && !memberToEmail.has(r.member_id)) memberToEmail.set(r.member_id, email);
+      }
+      this.snap = snapshot;
+      this.joinedInviteeNames = joinedInviteeNames;
+      this.addrToMember = addrToMember;
+      this.memberToAddr = memberToAddr;
+      this.memberToEmail = memberToEmail;
+      if (probe && probe.xid === null) {
+        this.snapCache = {
+          snap: snapshot,
+          joinedInviteeNames,
+          addrToMember,
+          memberToAddr,
+          memberToEmail,
+          pgSnapshot: probe.snap,
+          clockNow: now,
+          validUntil: this.nextSnapshotBoundary(snapshot, now),
+        };
+        this.snapDirty = false;
+      } else {
+        this.invalidateSnapshotCache();
+      }
     });
-    await this.identities();
   }
 
-  /**
-   * This app's joined members' addresses. An invited person (the invite gate has not let them in) or a
-   * removed one is not a member here. A member the platform knows (members.person_id) gets the person's
-   * verified phone (platform.phone_identities, the one place a phone lives). Members from before the
-   * platform keep their channel_identities rows (one per app and address).
-   */
   async identities() {
+    this.invalidateSnapshotCache();
     const [legacy, platform, emails] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
         where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.person_id is null
           and not exists (select 1 from platform.phone_identities ph where ph.e164 = ci.address)
           and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
-      // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
@@ -1171,7 +1256,6 @@ export class NetworkRuntime {
     for (const r of [...platform, ...legacy] as any[]) {
       if (!this.cities.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
-      // The current platform phone takes priority over a historical alias at the same address.
       if (!this.addrToMember.has(a)) this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
     }
@@ -1341,7 +1425,10 @@ export class NetworkRuntime {
         changed = true;
       }
     }
-    if (changed) await tx`update network.network_state set state=${state}::jsonb where id=${this.id}`;
+    if (changed) {
+      await tx`update network.network_state set state=${state}::jsonb where id=${this.id}`;
+      this.invalidateSnapshotCache();
+    }
   }
 
   /** Everything the unit produced, inside the save transaction (app.app_id is set). Rows that name a member not in this app's network.members are skipped. */
@@ -1943,6 +2030,7 @@ export class NetworkRuntime {
   }
 
   private cachedLeakSig = "";
+  private cachedLeakSnap?: WorldSnapshot;
   private cachedLeakIdx?: {
     memberById: Map<MemberId, WorldSnapshot["members"][number]>;
     shareableConfirmedByMember: Map<MemberId, WorldSnapshot["facets"]>;
@@ -1951,6 +2039,9 @@ export class NetworkRuntime {
   };
 
   private turnLeakIndex(snapshot: WorldSnapshot) {
+    if (this.cachedLeakIdx && this.cachedLeakSnap && this.cachedLeakSnap.members === snapshot.members && this.cachedLeakSnap.facets === snapshot.facets) {
+      return this.cachedLeakIdx;
+    }
     let h1 = 0x811c9dc5, h2 = 0x811c9dc5;
     const mix = (s: string) => {
       for (let i = 0; i < s.length; i++) {
@@ -2027,6 +2118,7 @@ export class NetworkRuntime {
     };
 
     this.cachedLeakSig = sig;
+    this.cachedLeakSnap = snapshot;
     this.cachedLeakIdx = { memberById, shareableConfirmedByMember, snapshotIdAndFactGuard, otherNamesLeak };
     return this.cachedLeakIdx;
   }

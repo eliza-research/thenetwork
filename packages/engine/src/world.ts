@@ -194,20 +194,24 @@ export class World {
       pctById.set(adultRanked[i]!, adultRanked.length <= 1 ? 0.5 : i / denom);
     }
     const spatialInputs: SpatialMemberInput[] = [];
+    const emptyVec: readonly number[] = [];
     for (const id of this.ids) {
       const mi = this.members.get(id)!;
       const isAdult = !this.minors.has(id) && canBeMatched(mi.m.age);
-      const emptyVec: readonly number[] = [];
       spatialInputs.push({
         m: mi.m,
         held: this.holds.has(id),
         tags: mi.tags,
-        profileEmb: isAdult ? mi.profileEmb : emptyVec,
-        capEmb: isAdult ? mi.capEmb : emptyVec,
-        desireEmb: isAdult ? mi.desireEmb : emptyVec,
-        capFacetEmbs: isAdult ? mi.caps.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
-        desireFacetEmbs: isAdult ? mi.desires.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
-        matchFacetEmbs: isAdult ? mi.match.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v) : undefined,
+        resolveVectors: () => isAdult
+          ? {
+              profileEmb: mi.profileEmb,
+              capEmb: mi.capEmb,
+              desireEmb: mi.desireEmb,
+              capFacetEmbs: mi.caps.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v),
+              desireFacetEmbs: mi.desires.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v),
+              matchFacetEmbs: mi.match.map(f => mi.facetEmb.get(f.id)).filter((v): v is number[] => !!v),
+            }
+          : { profileEmb: emptyVec, capEmb: emptyVec, desireEmb: emptyVec },
         presence: mi.presence,
         allFacets: this.allFacetsByMember.get(id) ?? [],
         lowExposureOrNew: mi.lowExposure || mi.lowData || mi.newcomer,

@@ -55,6 +55,7 @@ interface PoolGraph {
   readonly lane: MatchLane;
   readonly profiles: ReadonlyMap<MemberId, MatchProfile>;
   readonly edges: readonly MatchEdge[];
+  readonly edgesByEntity: ReadonlyMap<EntityId, readonly MatchEdge[]>;
   readonly pairs: readonly { readonly a: MemberId; readonly b: MemberId; readonly value: number }[];
   value(a: MemberId, b: MemberId): number | undefined;
   readonly incumbents: readonly (readonly EntityId[])[];
@@ -95,8 +96,15 @@ export function poolGraph(w: World, lane: MatchLane, ids: readonly MemberId[], s
     if (row) row.set(y, value); else links.set(x, new Map([[y, value]]));
   };
   for (const p of pairs) { link(p.a, p.b, p.value); link(p.b, p.a, p.value); }
+  const edgesByEntity = new Map<EntityId, MatchEdge[]>();
+  const addEdge = (id: EntityId, e: MatchEdge) => {
+    let list = edgesByEntity.get(id);
+    if (!list) { list = []; edgesByEntity.set(id, list); }
+    list.push(e);
+  };
+  for (const e of edges) { addEdge(e.a, e); addEdge(e.b, e); }
   return {
-    lane, profiles, edges, pairs, value: (a, b) => links.get(a)?.get(b), incumbents: repeatTables(w, id => profiles.get(id)),
+    lane, profiles, edges, edgesByEntity, pairs, value: (a, b) => links.get(a)?.get(b), incumbents: repeatTables(w, id => profiles.get(id)),
   };
 }
 
@@ -125,7 +133,22 @@ export function poolCircles(graph: PoolGraph, forced: readonly MemberId[], minim
   const incumbents = graph.incumbents
     .map(ids => ids.filter(id => byEntity.has(id)))
     .filter(ids => forcedProfiles.every(profile => ids.includes(profile.id)));
-  return buildCircles(graph.edges, byEntity, buildLimits, profile => profile.capacity, {
+  const subEdges = forced.length > 0 && byEntity.size < graph.profiles.size
+    ? (() => {
+        const seen = new Set<string>();
+        const subset: MatchEdge[] = [];
+        for (const entityId of byEntity.keys()) {
+          for (const e of graph.edgesByEntity.get(entityId) ?? []) {
+            if (!seen.has(e.key) && byEntity.has(e.a) && byEntity.has(e.b)) {
+              seen.add(e.key);
+              subset.push(e);
+            }
+          }
+        }
+        return subset;
+      })()
+    : graph.edges;
+  return buildCircles(subEdges, byEntity, buildLimits, profile => profile.capacity, {
     rankCircle: rankCircle && (c => containsForced(c) ? rankCircle(asGroup(c)) : undefined), incumbents,
     forced: forcedProfiles.map(profile => profile.id),
   })
@@ -255,10 +278,13 @@ export function composeGroup(w: World, opts: ComposeOptions): ComposedGroup | nu
   };
   const group = admit(rank(poolCircles(graph, forced, opts.minSize, opts.maxSize)));
   if (group || !opts.needHost) return group;
-  for (const host of poolIds) {
-    if (!hosts.has(host)) continue;
-    const hosted = admit(rank(poolCircles(graph, [...forced, host], opts.minSize, opts.maxSize)));
-    if (hosted) return hosted;
+  const hostProfiles = new Set<EntityId>();
+  for (const h of hosts) {
+    const p = graph.profiles.get(h);
+    if (p) hostProfiles.add(p.id);
   }
-  return null;
+  if (hostProfiles.size === 0) return null;
+  const hostCircles = poolCircles(graph, forced, opts.minSize, opts.maxSize, c =>
+    c.members.some(id => hosts.has(id)) ? c.evidence.lowestPairValue : undefined);
+  return admit(rank(hostCircles));
 }
