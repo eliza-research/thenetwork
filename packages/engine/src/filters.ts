@@ -349,15 +349,16 @@ const CHILD_AGE = "(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|
   + "\\s*-?\\s*(?:y[./]?\\s*o\\.?|y(?:rs?)?[\\s.-]?olds?|years?[\\s.-]?olds?)"
   + "(?!\\.?\\s+(?:startup|company|business|building|house|car|dog|cat|wine|whisky|whiskey)\\b)";
 const CHILD = "(?:" + CHILD_NOUN + "|" + CHILD_AGE + ")(?![a-z0-9])";
-const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?"
+const CHILD_COUNT = "(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?";
+const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+" + CHILD_COUNT
   + CHILD + "(?:\\s+" + CHILD_NOUN + ")?";
 export const SAFETY_RISK_PATTERNS: readonly string[] = [
   // Care, transport or time alone with someone's child; a child's age may be written as digits or
   // words ("my 6 year old", "my 8yo", "15 y/o", "twelve-year-old").
   `\\b(watch(ing)?|sit(ting)?|mind(ing)?|look(ing)? after|care for|caring for|stay with|hang out with|pick(ing)? up|drop(ping)? off|tutor\\w*|mentor\\w*|teach\\w*|coach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`,
   "\\b(?:pick(?:ing)?\\s+" + CHILD_PICKUP + "\\s+up|drop(?:ping)?\\s+" + CHILD_PICKUP + "\\s+off)\\b",
-  `\\b(my|our|your|their)\\s+${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
-  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD}`,
+  `\\b(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
+  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}`,
   "\\bbaby[\\s-]?sit", "(?<!(dog|pet|cat|plant|house|bird)[\\s-]?)\\bsitters?\\b",
   "\\b(school|daycare|day care|preschool|kindergarten)[\\s-]?(pick[\\s-]?ups?|drop[\\s-]?offs?|run)\\b",
   "\\bfrom (school|daycare|day care|preschool|kindergarten)\\b",
