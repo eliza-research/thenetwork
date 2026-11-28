@@ -16,7 +16,7 @@ const run = (weeks: number) => {
 
 test("friends table shows n/a for the repeat rows at 4 weeks", () => {
   const out = run(4);
-  expect(out).toContain("| Meetups held / seed | 81.0 ± 0.0 |");
+  expect(out).toContain("| Meetups held / seed | 94.0 ± 0.0 |");
   for (const label of ["**Repeat-meetup rate (>= 2 again within 30 d)**", "Repeat, same group (>= 3 again)", "Repeat, counting crew handoffs"]) {
     const row = out.split("\n").find(l => l.startsWith(`| ${label} |`));
     expect(row).toBeDefined();
@@ -27,7 +27,7 @@ test("friends table shows n/a for the repeat rows at 4 weeks", () => {
 
 test("friends table keeps the measured repeat rates at 8 weeks", () => {
   const out = run(8);
-  expect(out).toContain("| **Repeat-meetup rate (>= 2 again within 30 d)** | 30.1% ± 0.0 |");
-  expect(out).toContain("| Repeat, same group (>= 3 again) | 6.8% ± 0.0 |");
-  expect(out).toContain("| Repeat, counting crew handoffs | 30.1% ± 0.0 |");
+  expect(out).toContain("| **Repeat-meetup rate (>= 2 again within 30 d)** | 18.8% ± 0.0 |");
+  expect(out).toContain("| Repeat, same group (>= 3 again) | 5.0% ± 0.0 |");
+  expect(out).toContain("| Repeat, counting crew handoffs | 18.8% ± 0.0 |");
 }, 300_000);

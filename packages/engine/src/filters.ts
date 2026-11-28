@@ -349,15 +349,16 @@ const CHILD_AGE = "(?:1[0-7]|[1-9]|one|two|three|four|five|six|seven|eight|nine|
   + "\\s*-?\\s*(?:y[./]?\\s*o\\.?|y(?:rs?)?[\\s.-]?olds?|years?[\\s.-]?olds?)"
   + "(?!\\.?\\s+(?:startup|company|business|building|house|car|dog|cat|wine|whisky|whiskey)\\b)";
 const CHILD = "(?:" + CHILD_NOUN + "|" + CHILD_AGE + ")(?![a-z0-9])";
-const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?"
+const CHILD_COUNT = "(?:(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)\\s+)?";
+const CHILD_PICKUP = "(?:my|our|your|their|his|her|the)\\s+" + CHILD_COUNT
   + CHILD + "(?:\\s+" + CHILD_NOUN + ")?";
 export const SAFETY_RISK_PATTERNS: readonly string[] = [
   // Care, transport or time alone with someone's child; a child's age may be written as digits or
   // words ("my 6 year old", "my 8yo", "15 y/o", "twelve-year-old").
   `\\b(watch(ing)?|sit(ting)?|mind(ing)?|look(ing)? after|care for|caring for|stay with|hang out with|pick(ing)? up|drop(ping)? off|tutor\\w*|mentor\\w*|teach\\w*|coach\\w*|alone with)\\b(\\W+\\w+){0,3}?\\W+(my|our|your|their|his|her)\\s+${CHILD}`,
   "\\b(?:pick(?:ing)?\\s+" + CHILD_PICKUP + "\\s+up|drop(?:ping)?\\s+" + CHILD_PICKUP + "\\s+off)\\b",
-  `\\b(my|our|your|their)\\s+${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
-  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD}`,
+  `\\b(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}\\b(\\W+\\w+){0,4}?\\W+(a )?(ride|lift|sitter|nanny|tutor|mentor|coach)\\b`,
+  `\\b(ride|rides|lift|sitter|nanny)\\s+(for|to)\\s+(my|our|your|their)\\s+${CHILD_COUNT}${CHILD}`,
   "\\bbaby[\\s-]?sit", "(?<!(dog|pet|cat|plant|house|bird)[\\s-]?)\\bsitters?\\b",
   "\\b(school|daycare|day care|preschool|kindergarten)[\\s-]?(pick[\\s-]?ups?|drop[\\s-]?offs?|run)\\b",
   "\\bfrom (school|daycare|day care|preschool|kindergarten)\\b",
@@ -382,6 +383,21 @@ export const HOME_ENTRY_PATTERNS: readonly string[] = [
   "\\b(move|moving|movers?)\\b", "\\bcome over\\b",
 ];
 
+const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
+const CHILD_CARE_VERB = "(?:watch|baby[\\s-]?sit|mind|look after|care for|stay with|pick up|drop off|drive|tutor|teach|coach|mentor)";
+const REQUEST_FOR_OTHER = "(?:"
+  + "\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|connect(?:\\s+(?:me|us))?\\s+with|intro(?:duce)?(?:\\s+(?:me|us))?\\s+to|match(?:\\s+(?:me|us))?\\s+with|know)\\s+"
+    + "(?:some(?:one|body)|any(?:one|body)|people|folks|an?\\s+(?!time|way|chance|minute|moment|break|reason|place|spot|car|ride)\\w+(?:\\s+\\w+){0,2})(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+"
+    + "(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:need|want)(?:s|ing)?\\s+(?:some(?:one|body)|any(?:one|body))(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:(?:can|could|would|will)\\s+(?:you|some(?:one|body)|any(?:one|body))|(?:any(?:one|body)|some(?:one|body))\\s+(?:(?:here|around)\\s+)?(?:available|free|willing|able|down)\\s+to|who\\s+(?:can|could|would|will))"
+  + ")\\s+";
+const CHILD_TASK_RES = [
+  `${REQUEST_FOR_OTHER}${CHILD_CARE_VERB}\\b(?:\\W+(?!(?:to|with|at|for|from)\\b)\\w+){0,2}?\\W+(?:my|our|your|their|his|her)\\s+${CHILD_COUNT}${CHILD}(?!')`,
+  `${REQUEST_FOR_OTHER}(?:pick\\s+${CHILD_PICKUP}(?!')\\s+up|drop\\s+${CHILD_PICKUP}(?!')\\s+off)\\b`,
+  `\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|need(?:ing)?|want(?:ing)?)\\s+(?:a\\s+)?(?:baby[\\s-]?sitters?|nann(?:y|ies)|(?<!(?:dog|pet|cat|plant|house|bird|rabbit)\\s+)sitters?)\\b`,
+].map(p => new RegExp(p));
+const normalized = (text: string) => text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
 const escapeRe = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 function riskMatchers(cfg: EngineConfig): RegExp[] {
@@ -391,7 +407,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
       // Whole words / phrases only (plural allowed; "-" or "_" may stand for a space).
       ...cfg.highRiskTerms.map(t => new RegExp(`\\b${escapeRe(t.toLowerCase().replace(/_/g, " ")).replace(/ /g, "[\\s-]+")}(s|es)?\\b`)),
       ...(cfg.highRiskPatterns ?? []).map(p => new RegExp(p)),
-      ...SAFETY_RISK_PATTERNS.map(p => new RegExp(p)),
+      ...SAFETY_RES,
     ];
     riskCache.set(cfg, rs);
   }
@@ -403,7 +419,7 @@ function riskMatchers(cfg: EngineConfig): RegExp[] {
  * kids" or "lend a hand" pass while "babysit my kids" or "lend me cash" do not.
  */
 export function riskTerms(cfg: EngineConfig, text: string): string[] {
-  const norm = text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
+  const norm = normalized(text);
   const out: string[] = [];
   for (const re of riskMatchers(cfg)) {
     const m = norm.match(re);
@@ -411,9 +427,13 @@ export function riskTerms(cfg: EngineConfig, text: string): string[] {
   }
   return out;
 }
+export function asksChildCare(text: string): boolean {
+  const norm = normalized(text);
+  return CHILD_TASK_RES.some(re => re.test(norm));
+}
 const HOME_RES = HOME_ENTRY_PATTERNS.map(p => new RegExp(p));
 export function isHomeEntry(cfg: EngineConfig, text: string): boolean {
-  const low = ` ${text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'")} `;
+  const low = ` ${normalized(text)} `;
   if (cfg.homeEntryTerms.some(t => low.includes(` ${t} `) || low.includes(` ${t}.`) || low.includes(` ${t},`))) return true;
   return HOME_RES.some(re => re.test(low));
 }

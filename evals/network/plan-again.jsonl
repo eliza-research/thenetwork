@@ -66,3 +66,54 @@
 {"text": "Sign me up for a different group.", "label": "unclear"}
 {"text": "No worries. We all came.", "label": "unclear"}
 {"text": "No worries, I would meet again.", "label": "yes"}
+{"text":"Yes, sign me up for a different group.","label":"unclear"}
+{"text":"Count me in for another group.","label":"unclear"}
+{"text":"Sign me up for a new lineup.","label":"unclear"}
+{"text":"Happy to go again with a fresh group.","label":"unclear"}
+{"text":"Yeah, I'd do that hike again with other people.","label":"unclear"}
+{"text":"Count me in again with someone else.","label":"unclear"}
+{"text":"Yes, I'd go again with anybody but them.","label":"unclear"}
+{"text":"Yes, I'd go again with someone except those two.","label":"unclear"}
+{"text":"Yeah, count me in with newcomers next time.","label":"unclear"}
+{"text":"Yes, let's reshuffle the group next time.","label":"unclear"}
+{"text":"Sure, go again, just switch up who's there.","label":"unclear"}
+{"text":"Yes, seat me with guests I haven't met.","label":"unclear"}
+{"text":"Again? Yes, just not the same people.","label":"unclear"}
+{"text":"Would go again with my own crew.","label":"unclear"}
+{"text":"Yes, count me in with my friends instead.","label":"unclear"}
+{"text":"Didn't mind the rain but another group next time, yes.","label":"unclear"}
+{"text":"Didn't mind the walk though another crowd next time, yes.","label":"unclear"}
+{"text":"Didn't hate the spot just a different group next time, yeah.","label":"unclear"}
+{"text":"Didn't mind the noise, a different crew next time, yes.","label":"unclear"}
+{"text":"Would be fun meeting new people next time, yes!","label":"unclear"}
+{"text":"Not this group, though I'd go again with others.","label":"no"}
+{"text":"Yes to the dinner, not to this crowd.","label":"no"}
+{"text":"Not these folks, though I'd go again.","label":"no"}
+{"text":"No, put me in a different group.","label":"no"}
+{"text":"I don't want another group like that again.","label":"no"}
+{"text":"I don't want another group that flaky again.","label":"no"}
+{"text":"Don't want other people flaking on me again.","label":"no"}
+{"text":"I really don't want another group, or this one, again.","label":"no"}
+{"text":"Absolutely not, no other group bailed like that.","label":"no"}
+{"text":"Again yes, but without these people.","label":"unclear"}
+{"text":"I'd happily do it again, with my coworkers instead.","label":"unclear"}
+{"text":"Loved meeting new people! Yes, I'd do it again!","label":"yes"}
+{"text":"Was fun hanging out with new folks! Yes, count me in.","label":"yes"}
+{"text":"Yes! Wouldn't swap them for the world.","label":"yes"}
+{"text":"Yes, don't change the group!","label":"yes"}
+{"text":"Yes, same people, maybe switch the bar!","label":"yes"}
+{"text":"Yes, switch the bar for these people next time.","label":"yes"}
+{"text":"Yes again, match me with the same people.","label":"yes"}
+{"text":"Yes, same people rather than someone else!","label":"yes"}
+{"text":"Yes, I never want a different group!","label":"yes"}
+{"text":"Yes, I don't want a different group, keep us together!","label":"yes"}
+{"text":"Yes, I'd go again rather than join another group.","label":"yes"}
+{"text":"Yes, count me in instead of a new crowd.","label":"yes"}
+{"text":"Yes! Way better than another group, count me in!","label":"yes"}
+{"text":"Yeah, same group, and we can add another table.","label":"yes"}
+{"text":"The same group flaked again, I don't want another group.","label":"no"}
+{"text":"Yes it was ok, but I don't want another group.","label":"no"}
+{"text":"Yeah, I don't want another group.","label":"no"}
+{"text":"Same people were late, I don't want another group.","label":"no"}
+{"text":"Yep, it was fine, I don't want another group.","label":"no"}
+{"text":"Yes, same group was okay, I don't want another group.","label":"no"}

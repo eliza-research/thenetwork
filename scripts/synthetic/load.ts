@@ -114,11 +114,15 @@ if (import.meta.main) {
     const override = a.config ? JSON.parse(a.config) : {};
     const { proposals, runLog } = await runEngine(snap, { ...override, seed: Number(a.seed) });
     const ms = Math.round(performance.now() - t0);
-    const minors = new Set(d.members.filter(m => m.age < 18).map(m => m.id));
+    const declaredMinors = new Set(d.members.filter(m => m.age < 18).map(m => m.id));
     const canaries = d.facets.filter(f => f.tags.includes("sensitive")).map(f => /\(ref ([^)]+)\)/.exec(f.value)?.[1]).filter(Boolean) as string[];
     const text = JSON.stringify(proposals);
     const byGen = Object.fromEntries(GENERATOR_NAMES.map(g => [g, proposals.filter(p => p.generator === g).length]));
     const touched = new Set(proposals.flatMap(p => p.participants));
+    const personas = await loadPersonas(a.dir);
+    const trueMinors = new Set(personas.filter(p => p.hidden.trueAge < 18).map(p => p.id));
+    const hiddenMinors = new Set([...trueMinors].filter(id => !declaredMinors.has(id)));
+    const proposalMembers = (p: (typeof proposals)[number]) => [...p.participants, ...(p.alternates ?? []), ...((p as any).via ? [(p as any).via] : [])];
     const report: Record<string, unknown> = {
       engineVersion: runLog.engineVersion, seed: runLog.seed, configHash: runLog.configHash, inputHash: runLog.inputHash, wallMs: ms,
       ...(a.config ? { configOverride: override } : {}),
@@ -138,13 +142,13 @@ if (import.meta.main) {
       },
       fairness: runLog.fairness,
       checks: {
-        minorsInAnyProposal: proposals.filter(p => [...p.participants, ...(p.alternates ?? []), ...((p as any).via ? [(p as any).via] : [])].some(id => minors.has(id))).length,
+        minorsInAnyProposal: proposals.filter(p => proposalMembers(p).some(id => declaredMinors.has(id))).length,
+        hiddenMinorsInAnyProposal: proposals.filter(p => proposalMembers(p).some(id => hiddenMinors.has(id))).length,
         canaryLeaksInProposals: canaries.filter(c => text.includes(c)).length,
       },
     };
     // Stratify by the hidden richness tier (HARNESS ONLY: reads hidden_truth.jsonl for evaluation;
     // the engine above only saw the public snapshot). Oracle = packages/sim ground truth.
-    const personas = await loadPersonas(a.dir);
     const tierOf = new Map(personas.map(p => [p.id, p.hidden.richness ?? "none"]));
     if (personas.some(p => p.hidden.richness)) {
       const { Oracle } = await import("../../packages/sim/src/oracle.ts");
@@ -155,7 +159,7 @@ if (import.meta.main) {
       const proposedPairs = new Set(proposals.flatMap(p => p.participants.flatMap((x, i) => p.participants.slice(i + 1).map(y => [x, y].sort().join("|")))));
       const tiers = ["minimal", "light", "medium", "rich", "very_rich"];
       const mean = (xs: number[]) => (xs.length ? Math.round((xs.reduce((s, x) => s + x, 0) / xs.length) * 1000) / 1000 : null);
-      const adultIds = new Set(d.members.filter(m => m.age >= 18).map(m => m.id));
+      const adultIds = new Set(d.members.filter(m => !trueMinors.has(m.id)).map(m => m.id));
       // Whole-run oracle view (all tiers): precision of proposals and of one-to-one intros, pair recall.
       const intros = proposals.filter(p => p.participants.length === 2);
       const liveIntent = new Set(snap.intents.filter(i => i.status === "active" && i.createdAt + i.horizonDays * 86_400_000 > snap.now).map(i => i.memberId));

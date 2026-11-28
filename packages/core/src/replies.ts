@@ -296,9 +296,7 @@ const HEDGE_WHEN_NEGATED = /^(?:sure|certain|definitely|100%|positive|absolutely
 const BENIGN_COND = /^(?:if (?:(?:that|it|this) works|so|possible|needed|you (?:want|like|need|can|think)|they (?:want|like|can)|(?:that's|it's|thats|its) (?:ok|okay|fine|cool|alright)|you'd like|you would like|everyone)|si (?:quieres|puedes|te parece))/;
 const CONTRAST = /\b(?:but|though|tho|although|however|except|pero|aunque|excepto)\b/;
 
-interface Signal { kind: Kind; at: number; end: number; strong: boolean; sentence: number; text: string; bare?: boolean; condTime?: boolean }
-
-function mask(s: string, from: number, to: number) { return s.slice(0, from) + " ".repeat(to - from) + s.slice(to); }
+interface Signal { kind: Kind; at: number; end: number; strong: boolean; sentence: number; text: string; bare?: boolean; condTime?: boolean; condSpan?: [number, number] }
 
 function sentenceBounds(t: string): number[] {
   // Index where each sentence starts. "..." and other punctuation end a sentence.
@@ -309,9 +307,22 @@ function sentenceBounds(t: string): number[] {
   return starts;
 }
 
+function lastWords(t: string, from: number, to: number, count: number): string {
+  const words: string[] = [];
+  let i = to;
+  while (i > from && words.length < count) {
+    while (i > from && /\s/.test(t[i - 1]!)) i--;
+    if (i <= from) break;
+    let j = i;
+    while (j > from && !/\s/.test(t[j - 1]!)) j--;
+    words.unshift(t.slice(j, i));
+    i = j;
+  }
+  return words.join(" ");
+}
+
 function extract(t: string): Signal[] {
   const starts = sentenceBounds(t);
-  const sentenceOf = (i: number) => { let s = 0; for (let k = 0; k < starts.length; k++) if (starts[k]! <= i) s = k; return s; };
   let work = t;
   const out: Signal[] = [];
   for (const rule of RULES) {
@@ -324,36 +335,77 @@ function extract(t: string): Signal[] {
       found.push({ at: m.index + lead, end: m.index + m[0].length, text: m[0].trim() });
       if (m[0].length === 0) rule.re.lastIndex++;
     }
+    let sentence = 0;
     for (const f of found) {
-      work = mask(work, f.at, f.end);
-      out.push({ kind: rule.kind, at: f.at, end: f.end, strong: !!rule.strong, sentence: sentenceOf(f.at), text: f.text });
+      while (sentence + 1 < starts.length && starts[sentence + 1]! <= f.at) sentence++;
+      out.push({ kind: rule.kind, at: f.at, end: f.end, strong: !!rule.strong, sentence, text: f.text });
+    }
+    if (found.length) {
+      const parts: string[] = [];
+      let prev = 0;
+      for (const f of found) { parts.push(work.slice(prev, f.at), " ".repeat(f.end - f.at)); prev = f.end; }
+      parts.push(work.slice(prev));
+      work = parts.join("");
     }
   }
   out.sort((a, b) => a.at - b.at);
+  const condDelims: number[] = [];
+  { const re = /[.!?;,\n]/g; let m: RegExpExecArray | null; while ((m = re.exec(t))) condDelims.push(m.index); }
+  const clauseDelims: { start: number; end: number }[] = [];
+  { const re = /[,;:]|\b(?:but|though|and|pero|y)\b/g; let m: RegExpExecArray | null; while ((m = re.exec(t))) clauseDelims.push({ start: m.index, end: m.index + m[0].length }); }
+  const lastClauseDelim = (at: number) => {
+    let lo = 0, hi = clauseDelims.length - 1, ans = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (clauseDelims[mid]!.end <= at) { ans = mid; lo = mid + 1; } else hi = mid - 1; }
+    return ans;
+  };
+  const firstCondDelim = (at: number) => {
+    let lo = 0, hi = condDelims.length - 1, ans = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (condDelims[mid]! >= at) { ans = mid; hi = mid - 1; } else lo = mid + 1; }
+    return ans;
+  };
   // Negation scope: a yes word with a negator up to three words earlier in the same clause.
   for (const s of out) {
     if (s.kind !== "yes" || s.strong) continue;
-    const before = t.slice(starts[s.sentence]!, s.at);
-    const clause = before.split(/[,;:]|\b(?:but|though|and|pero|y)\b/).pop() ?? "";
-    const prev = clause.trim().split(/\s+/).filter(Boolean).slice(-3).join(" ");
+    const sentStart = starts[s.sentence]!;
+    let clauseStart = sentStart;
+    const di = lastClauseDelim(s.at);
+    if (di >= 0 && clauseDelims[di]!.start >= sentStart) clauseStart = clauseDelims[di]!.end;
+    const prev = lastWords(t, clauseStart, s.at, 3);
     if (NEGATOR.test(prev)) {
       s.kind = HEDGE_WHEN_NEGATED.test(s.text) ? "unsure" : "no";
       s.strong = s.kind === "no";
     }
   }
   // Conditions: the clause after the condition word. Time conditions constrain a yes; others make it unsure.
+  const timeSpans: { start: number; end: number }[] = [];
+  { const re = new RegExp(TIME_WORD.source, "g"); let m: RegExpExecArray | null; while ((m = re.exec(t))) timeSpans.push({ start: m.index, end: m.index + m[0].length }); }
   for (const s of out) {
     if (s.kind !== "cond") continue;
-    const rest = t.slice(s.at).split(/[.!?;,\n]/)[0]!.trim();
-    if (BENIGN_COND.test(rest)) { s.kind = "neutral"; continue; }
-    s.text = rest;
-    s.condTime = TIME_WORD.test(rest);
+    const di = firstCondDelim(s.at);
+    const clauseEnd = di >= 0 ? condDelims[di]! : t.length;
+    if (BENIGN_COND.test(t.slice(s.at, Math.min(clauseEnd, s.at + 32)))) { s.kind = "neutral"; continue; }
+    s.condSpan = [s.at, clauseEnd];
+    s.condTime = false;
+    let lo = 0, hi = timeSpans.length - 1, first = -1;
+    while (lo <= hi) { const mid = (lo + hi) >> 1; if (timeSpans[mid]!.start >= s.at) { first = mid; hi = mid - 1; } else lo = mid + 1; }
+    if (first >= 0) {
+      const span = timeSpans[first]!;
+      if (span.start < clauseEnd) {
+        if (span.end <= clauseEnd) s.condTime = true;
+        else if (TIME_WORD.test(t.slice(span.start, clauseEnd))) s.condTime = true;
+      }
+    }
   }
   // A "no" sentence with nothing else in it (bare refusal) can reverse an earlier yes.
+  const cleanedSentences = new Map<number, string>();
   for (const s of out) {
     if (s.kind !== "no") continue;
-    const sentEnd = starts[s.sentence + 1] ?? t.length;
-    const sentence = t.slice(starts[s.sentence]!, sentEnd).replace(/[^a-z' ]/g, " ").trim();
+    let sentence = cleanedSentences.get(s.sentence);
+    if (sentence === undefined) {
+      const sentEnd = starts[s.sentence + 1] ?? t.length;
+      sentence = t.slice(starts[s.sentence]!, sentEnd).replace(/[^a-z' ]/g, " ").trim();
+      cleanedSentences.set(s.sentence, sentence);
+    }
     s.bare = /^(?:(?:and|but|ok|okay|yeah|yes|sure|um+|uh+|hmm+|so|then|sorry|thanks|thank you|lol|haha)\s+)*(?:no|nope|nah|naw|no thanks|no thank you|no gracias)(?:\s+(?:thanks|thank you|sorry|lol|haha|gracias|man|dude))*$/.test(sentence);
   }
   return out;
@@ -425,7 +477,7 @@ export function parseReply(text: string): ParsedReply {
     if (laterNo.some(s => s.strong)) return done("unsure", "yes_no_conflict");
   }
   for (const s of timeNegs) constraints.push({ kind: "time", text: s.text });
-  for (const c of conds) constraints.push({ kind: c.condTime ? "time" : "condition", text: c.text });
+  for (const c of conds) constraints.push({ kind: c.condTime ? "time" : "condition", text: c.condSpan ? t.slice(c.condSpan[0], c.condSpan[1]).trim() : c.text });
   if (sig.some(s => after(s) && s.kind === "unsure")) return done("unsure", "yes_then_hedge", { leaning: "yes", counter });
   if (counter) return done("unsure", "yes_other_time", { counter: true, leaning: "yes" });
   if (conds.some(c => !c.condTime)) return done("unsure", "conditional_yes", { leaning: "yes" });
@@ -452,7 +504,7 @@ export function explicitRepeatRequest(body: string): boolean {
 }
 
 /** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it". */
-const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no)|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
+const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no|swap (?:anyone|anybody|them))|(?:don'?t|do not) (?:want|wanna) to miss|(?:don'?t|do not) (?:want|wanna) a different (?:group|crowd|crew|table|lineup|roster)(?=\s*[,!.]?\s*(?:keep us together|stick with (?:this|the same)|same (?:group|people|crowd|crew)))|not gonna lie|not to lie)\b/g;
 
 /**
  * The answer to "Would you do it again with this group?" after a plan (plans ask 8): yes, no, or
@@ -460,12 +512,45 @@ const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?
  * not an answer about the group. A no-word inside a yes idiom is removed first; a negation before
  * "again" ("I would not do it again") is a no.
  */
+const PLAN_ROSTER_CLAUSE_SPLIT = /[.!?;,:\n—–]+|(?<!\b(?:anyone|anybody|someone|somebody|everyone|everybody)\s)\bbut\b|\b(?:though|just)\b/;
+const PLAN_ROSTER_CHANGE_DIRECT = /\b(not (?:with )?the same (?:group|people|crowd|crew|table|folks|members|bunch|ones)|without (?:them|these|those|this (?:group|crowd|crew|table|bunch|lineup))|(?:anyone|anybody|someone|somebody) (?:else|(?:but|except|other than) (?:them|these|those|this))|(?:with|for) (?:others|strangers|newcomers)|(?:my|our) own (?:friends|coworkers|colleagues|crowd|crew|group|people)|with (?:my|our) (?:friends|coworkers|colleagues|roommates) instead)\b/g;
+const PLAN_ROSTER_SHUFFLE_VERB = /\b(?:(?:re)?(?:mix|switch|swap|change|rotate|shuffle)(?:ing)?|(?:pair|match|seat|group)(?:ing)? (?:me|us))\b/g;
+const PLAN_ROSTER_SHUFFLE_TARGET = /^\s*(?:(?:up|out|around)\s+)?(?:with\s+|to\s+)?(?:a\s+|an\s+|the\s+|our\s+|this\s+|my\s+|some\s+)?(?:groups?|people|crowd|crew|table|folks|members|bunch|roster|lineup|company|strangers|guests|diners|who(?:'s| is)?|anyone|anybody|someone)\b/;
+const PLAN_ALT_ROSTER_NP = /\b(different|another|other|fresh|new)\s+(?:(?:set|group|bunch|cast)\s+of\s+)?(groups?|people|crowd|crew|table|folks|members|bunch|mix|faces|ones|lineup|roster|company|guests|diners|strangers)\b/g;
+const PLAN_ALT_ROSTER_NEG_OR_COMP = /\b(?:not|no|never|without|don'?t|do not|didn'?t|did not|rather than|instead of|better than|beats?)\b/;
+const PLAN_ALT_ROSTER_ADDITIVE = /\b(?:add|adding|combine|merge)\s+$/;
+const PLAN_RETROSPECTIVE_NEW = /\b(?:loved|liked|enjoyed|was\s+(?:so\s+|really\s+)?(?:great|fun|nice))\s+(?:to\s+)?(?:meet(?:ing)?|be(?:ing)?(?:\s+(?:in|with|around))?|hang(?:ing)?(?:\s+out)?\s+with|get(?:ting)?\s+to\s+know|talk(?:ing)?\s+(?:to|with)|chat(?:ting)?\s+with)\s+(?:a\s+|the\s+|some\s+)?$/;
+
+function asksForDifferentGroup(s: string): boolean {
+  for (const raw of s.split(PLAN_ROSTER_CLAUSE_SPLIT)) {
+    const clause = raw.trim();
+    if (!clause) continue;
+    for (const d of clause.matchAll(PLAN_ROSTER_CHANGE_DIRECT)) {
+      if (!d[0].startsWith("not ") && !d[0].startsWith("without ") && PLAN_ALT_ROSTER_NEG_OR_COMP.test(clause.slice(0, d.index!))) continue;
+      return true;
+    }
+    for (const v of clause.matchAll(PLAN_ROSTER_SHUFFLE_VERB)) {
+      if (PLAN_ALT_ROSTER_NEG_OR_COMP.test(clause.slice(0, v.index!))) continue;
+      const after = clause.slice(v.index! + v[0].length);
+      if (!/\bthe same\b/.test(after) && PLAN_ROSTER_SHUFFLE_TARGET.test(after)) return true;
+    }
+    for (const m of clause.matchAll(PLAN_ALT_ROSTER_NP)) {
+      const prefix = clause.slice(0, m.index!);
+      if (PLAN_ALT_ROSTER_NEG_OR_COMP.test(prefix) || PLAN_ALT_ROSTER_ADDITIVE.test(prefix)) continue;
+      if (m[1] === "new" && PLAN_RETROSPECTIVE_NEW.test(prefix)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
   const afterCourtesy = t.replace(PLAN_REPEAT_COURTESY, "");
   const s = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not (?:with (?:this|that|the|these|those|them)|(?:(?:to|for) )?(?:(?:this|that) (?:group|crowd|crew|table|bunch|lineup)|(?:these|those) (?:people|folks|guys|ones|members)))|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (asksForDifferentGroup(s)) return "unclear";
   if (afterCourtesy !== t) {
     // After a courtesy opener, require a direct answer to this plan. Ignore plain attendance and sentiment.
     const answers = s.split(/[.!;,:\n—–]+/).map(clause => clause.trim())

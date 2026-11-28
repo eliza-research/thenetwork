@@ -177,9 +177,9 @@ export function classify(body: string): Classified {
   let risk = 0;
   // Abuse is read per sentence: a sentence that tells what someone else did is a disclosure.
   const sents = sentencesOf(t);
-  const hit = (rx: RegExp, kind: Abuse, points: number, also?: (text: string) => boolean) => {
+  const hit = (rx: RegExp, kind: Abuse, points: number, also?: (text: string, at: number) => boolean) => {
     let own = false, told = false;
-    for (const s of sents) if (rx.test(s.text) || also?.(s.text)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
+    for (const s of sents) if (rx.test(s.text) || also?.(s.text, s.at)) { if (describesAnotherPerson(s.text)) told = true; else own = true; }
     if (own) { abuse.push(kind); risk += points; } else if (told) disclosed.push(kind);
   };
   const link = RX.link.test(t);
@@ -192,7 +192,7 @@ export function classify(body: string): Classified {
     && sents.some(({ text }) => INTENT_TO_CONTACT_DIRECTLY.test(text) && !describesAnotherPerson(text));
   hit(CONTACT_EXTRACTION, "contact_extraction", contactExtractionRisk(explicitContactBypass));
   if (RX.injection.test(t)) { abuse.push("prompt_injection"); risk += 3; }
-  hit(RX.harassment, "harassment", 3, hasOrElseThreat);
+  hit(RX.harassment, "harassment", 3, (s, at) => hasOrElseThreat(t, { start: at, end: at + s.length }));
   if (!abuse.includes("harassment")) hit(RX.sexual, "harassment", 3);
   const { age, explicit, oldest } = agesStated(t);
   const minorSignal = minorSignOf(low) || (validAge(age) && isMinor(age));

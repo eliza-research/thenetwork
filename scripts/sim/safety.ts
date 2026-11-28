@@ -21,9 +21,9 @@ import {
 import { makeClefRater } from "../../packages/engine/src/packs/slop/clef.ts";
 import { appearanceFacet } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { DEFAULT_CLEF_WEIGHTS } from "../../packages/engine/src/packs/slop/clefWeights.ts";
-import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { DEFAULT_CONFIG, resolveConfig } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
-import { memberReason, memberReliabilityTier } from "../../packages/engine/src/filters.ts";
+import { memberReason, memberReliabilityTier, riskTerms } from "../../packages/engine/src/filters.ts";
 import { computeComponents } from "../../packages/engine/src/scoring.ts";
 import { baseMember, emptyInput } from "../../packages/engine/src/testkit.ts";
 import type { Candidate } from "../../packages/engine/src/types.ts";
@@ -172,6 +172,16 @@ function offlineWorld(o: { rater?: boolean } = {}) {
 }
 
 export async function safetyBlock(b: Block): Promise<void> {
+  await b.run("high risk: the child-care rules read a count before the child noun (\"my 2 kids need a ride\"); ordinary speech still passes", () => {
+    const flagged = (text: string) => riskTerms(DEFAULT_CONFIG, text).length > 0;
+    for (const text of ["my 2 kids need a ride", "my two kids need a ride", "my 3 kids need a lift", "a ride for my 2 kids", "a lift to my 3 kids", "my 2 kids need a sitter", "my two kids need a nanny", "pick my 2 kids up", "drop my two kids off", "watch my 2 kids", "watch my 5 y.o.", "pick my kid up"]) {
+      expect(flagged(text)).toBe(true);
+    }
+    for (const text of ["pick up the tab", "pick up my dry cleaning", "pick me up at the airport", "i pick up shifts at the hospital", "drop me off at the airport", "i need a ride to the airport", "my car needs a ride service", "a 5 year old startup", "parents with young kids", "dog sitter available", "diet coke please", "mushroom foraging", "i have 2 kids", "my kids are great"]) {
+      expect(flagged(text)).toBe(false);
+    }
+  });
+
   // ------------------------------------------------------------------ photos: adults only
   await b.run("photos: a member aged 13-17 or of unknown age uploads on the site: 0 photo rows, 0 bytes stored, 0 rater calls", async () => {
     const w = offlineWorld();
