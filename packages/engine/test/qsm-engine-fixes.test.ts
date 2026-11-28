@@ -8,7 +8,7 @@ import { slopWorld } from "../../../scripts/sim/slop.ts";
 import { slopOnboardTags, extractSlopProfile } from "../src/packs/slop/extract.ts";
 import { SLOP_ONBOARD_QUESTIONS } from "../src/packs/slop/onboard.ts";
 import { SLOP_ASK_QUESTIONS } from "../src/packs/slop/copy.ts";
-import { missingFields } from "../src/packs/slop/rules.ts";
+import { missingFields, slopHardPairCurrent } from "../src/packs/slop/rules.ts";
 import { SLOP_DEFAULT_OPTIONS } from "../src/packs/slop/options.ts";
 import { slopProfiles } from "../src/packs/slop/profile.ts";
 
@@ -50,6 +50,30 @@ describe("QSM ported engine fixes", () => {
     const fields = missingFields(profiles.get("rae")!, SLOP_DEFAULT_OPTIONS);
     expect(fields).toContain("location");
     expect(SLOP_ONBOARD_QUESTIONS.slop_location?.text).toBe(SLOP_ASK_QUESTIONS.slop_location);
+  });
+
+  test("SD-209: a repeat zip question left unanswered for a week uses the silent fallback", () => {
+    const ana = adultSlopMember("ana", undefined, ["slop:zip:99999"]);
+    const ben = adultSlopMember("ben", undefined, ["slop:zip:10003"]);
+    ben.facets[0]!.tags = ["romance:is:man", "romance:seeks:woman", "romance:age:25-38", "slop:scope:radius:10", "slop:max_miles:10", "slop:zip:10003"];
+    const input: EngineInput = {
+      now: NOW,
+      members: [ana.member, ben.member],
+      facets: [...ana.facets, ...ben.facets],
+      intents: [],
+      presence: [...ana.presence, ...ben.presence],
+      edges: [],
+      recentProposals: [],
+      recentAsks: [
+        { memberId: "ana", reason: "slop_zip", at: NOW - 15 * DAY, answeredAt: NOW - 14 * DAY },
+        { memberId: "ana", reason: "slop_zip", at: NOW - 8 * DAY },
+      ],
+    };
+    const profile = slopProfiles(input).get("ana")!;
+    expect(profile.zipUnknown).toBe(true);
+    expect(profile.silentAsks).toContain("zip");
+    expect(missingFields(profile, SLOP_DEFAULT_OPTIONS)).not.toContain("zip");
+    expect(slopHardPairCurrent(input, ["ana", "ben"], "nyc", SLOP_DEFAULT_OPTIONS)).toBe(true);
   });
 
   test("SD-207: slopAssign respects each member's interruption budget", async () => {

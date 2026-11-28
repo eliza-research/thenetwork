@@ -134,16 +134,22 @@ function buildProfiles(input: EngineInput, C: (id: MemberId) => MemberId): Map<M
   }
   const hist = histories(input, C);
   const silent = new Map<MemberId, string[]>();
-  const answeredAny = new Map<string, boolean>();
-  for (const a of input.recentAsks ?? []) { const k = `${C(a.memberId)}|${a.reason}`; answeredAny.set(k, (answeredAny.get(k) ?? false) || (a.answeredAt !== undefined && a.answeredAt <= now)); }
+  const answeredAskAt = new Map<string, number>();
+  for (const a of input.recentAsks ?? []) {
+    if (a.answeredAt === undefined || a.answeredAt > now) continue;
+    const k = `${C(a.memberId)}|${a.reason}`;
+    answeredAskAt.set(k, Math.max(answeredAskAt.get(k) ?? -Infinity, a.at));
+  }
   const open = new Map<MemberId, string[]>();
   const counts = new Map<MemberId, Record<string, number>>();
   for (const a of input.recentAsks ?? []) { const c = counts.get(C(a.memberId)) ?? {}; c[a.reason] = (c[a.reason] ?? 0) + 1; counts.set(C(a.memberId), c); }
   for (const a of input.recentAsks ?? []) {
     const id = C(a.memberId), k = `${id}|${a.reason}`;
     const askField = a.reason.startsWith("dating_") ? a.reason.slice(7) : a.reason.startsWith("slop_") ? a.reason.slice(5) : undefined;
-    if (askField && !answeredAny.get(k) && now - a.at < SILENT_AFTER_DAYS * DAY) { const l = open.get(id) ?? []; if (!l.includes(askField)) l.push(askField); open.set(id, l.sort()); }
-    if (!askField || answeredAny.get(k) || now - a.at < SILENT_AFTER_DAYS * DAY) continue;
+    const answered = a.answeredAt !== undefined && a.answeredAt <= now;
+    const superseded = a.at <= (answeredAskAt.get(k) ?? -Infinity);
+    if (askField && !answered && !superseded && now - a.at < SILENT_AFTER_DAYS * DAY) { const l = open.get(id) ?? []; if (!l.includes(askField)) l.push(askField); open.set(id, l.sort()); }
+    if (!askField || answered || superseded || now - a.at < SILENT_AFTER_DAYS * DAY) continue;
     const l = silent.get(id) ?? [];
     if (!l.includes(askField)) l.push(askField);
     silent.set(id, l.sort());
