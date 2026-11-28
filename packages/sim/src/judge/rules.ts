@@ -47,7 +47,7 @@ const BANNED = /\b(as an ai language model|i cannot browse|dear valued member)\b
 
 /** Count questions: question marks, ignoring repeated "??" and quoted text. */
 export function countQuestions(text: string): number {
-  const unquoted = text.replace(/"[^"]*"/g, "").replace(/\?{2,}/g, "?");
+  const unquoted = text.replace(/"[^"]*"|\u201c[^\u201d]*\u201d/g, "").replace(/\?{2,}/g, "?");
   return (unquoted.match(/\?/g) ?? []).length;
 }
 
