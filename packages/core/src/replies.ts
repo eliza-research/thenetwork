@@ -520,7 +520,7 @@ export function explicitRepeatRequest(body: string): boolean {
 }
 
 /** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it". */
-const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no)|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
+const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no|swap (?:anyone|anybody|them))|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
 
 /**
  * The answer to "Would you do it again with this group?" after a plan (plans ask 8): yes, no, or
@@ -528,12 +528,50 @@ const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?
  * not an answer about the group. A no-word inside a yes idiom is removed first; a negation before
  * "again" ("I would not do it again") is a no.
  */
+const PLAN_ROSTER_CLAUSE_SPLIT = /[.!?;,:\n—–]+|(?<!\b(?:anyone|anybody|someone|somebody|everyone|everybody)\s)\bbut\b|\b(?:though|just)\b/;
+const PLAN_ROSTER_CHANGE_DIRECT = /\b(not (?:with )?the same (?:group|people|crowd|crew|table|folks|members|bunch|ones)|without (?:them|these|those|this (?:group|crowd|crew|table|bunch|lineup))|(?:anyone|anybody|someone|somebody) (?:else|(?:but|except|other than) (?:them|these|those|this))|(?:with|for) (?:others|strangers|newcomers)|(?:my|our) own (?:friends|coworkers|colleagues|crowd|crew|group|people)|with (?:my|our) (?:friends|coworkers|colleagues|roommates) instead)\b/g;
+const PLAN_ROSTER_SHUFFLE_VERB = /\b(?:(?:re)?(?:mix|switch|swap|change|rotate|shuffle)(?:ing)?|(?:pair|match|seat|group)(?:ing)? (?:me|us))\b/g;
+const PLAN_ROSTER_SHUFFLE_TARGET = /^\s*(?:(?:up|out|around)\s+)?(?:with\s+|to\s+)?(?:a\s+|an\s+|the\s+|our\s+|this\s+|my\s+|some\s+)?(?:groups?|people|crowd|crew|table|folks|members|bunch|roster|lineup|company|strangers|guests|diners|who(?:'s| is)?|anyone|anybody|someone)\b/;
+const PLAN_ALT_ROSTER_NP = /\b(different|another|other|fresh|new)\s+(?:(?:set|group|bunch|cast)\s+of\s+)?(groups?|people|crowd|crew|table|folks|members|bunch|mix|faces|ones|lineup|roster|company|guests|diners|strangers)\b/g;
+const PLAN_ALT_ROSTER_NEG_OR_COMP = /\b(?:not|no|never|without|don'?t|do not|didn'?t|did not|rather than|instead of|better than|beats?)\b/;
+const PLAN_ALT_ROSTER_ADDITIVE = /\b(?:add|adding|combine|merge)\s+$/;
+const PLAN_RETROSPECTIVE_NEW = /\b(?:loved|liked|enjoyed|was\s+(?:so\s+|really\s+)?(?:great|fun|nice))\s+(?:to\s+)?(?:meet(?:ing)?|be(?:ing)?(?:\s+(?:in|with|around))?|hang(?:ing)?(?:\s+out)?\s+with|get(?:ting)?\s+to\s+know|talk(?:ing)?\s+(?:to|with)|chat(?:ting)?\s+with)\s+(?:a\s+|the\s+|some\s+)?$/;
+const PLAN_SAME_GROUP_AFFIRM = /\b(?:yes(?!\s+to\s+the\b)|yeah|yep|yup|count me in|keep us together|same (?:group|people|crowd|crew|folks))\b/;
+const PLAN_LOYAL_NO_OTHER_GROUP = /\b(?:don'?t|do not) (?:really )?(?:want|wanna) (?:a |any )?(?:different|other|another) (?:groups?|crowd|crew|table|people|folks|lineup|roster)(?:\s+(?:instead|next time))?(?=$|[.!?;,:\n—–])/g;
+
+function asksForDifferentGroup(s: string): boolean {
+  for (const raw of s.split(PLAN_ROSTER_CLAUSE_SPLIT)) {
+    const clause = raw.trim();
+    if (!clause) continue;
+    for (const d of clause.matchAll(PLAN_ROSTER_CHANGE_DIRECT)) {
+      if (!d[0].startsWith("not ") && !d[0].startsWith("without ") && PLAN_ALT_ROSTER_NEG_OR_COMP.test(clause.slice(0, d.index!))) continue;
+      return true;
+    }
+    for (const v of clause.matchAll(PLAN_ROSTER_SHUFFLE_VERB)) {
+      if (PLAN_ALT_ROSTER_NEG_OR_COMP.test(clause.slice(0, v.index!))) continue;
+      const after = clause.slice(v.index! + v[0].length);
+      if (!/\bthe same\b/.test(after) && PLAN_ROSTER_SHUFFLE_TARGET.test(after)) return true;
+    }
+    for (const m of clause.matchAll(PLAN_ALT_ROSTER_NP)) {
+      const prefix = clause.slice(0, m.index!);
+      if (PLAN_ALT_ROSTER_NEG_OR_COMP.test(prefix) || PLAN_ALT_ROSTER_ADDITIVE.test(prefix)) continue;
+      if (m[1] === "new" && PLAN_RETROSPECTIVE_NEW.test(prefix)) continue;
+      return true;
+    }
+  }
+  return false;
+}
+
 export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
   const afterCourtesy = t.replace(PLAN_REPEAT_COURTESY, "");
-  const s = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
-  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not with (?:this|that|the|these|those|them)|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  const base = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
+  const s = PLAN_SAME_GROUP_AFFIRM.test(base) && !/\b(?:or|nor) this (?:one|group|crowd|crew|table|bunch)\b/.test(base)
+    ? base.replace(PLAN_LOYAL_NO_OTHER_GROUP, " ")
+    : base;
+  if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not (?:with (?:this|that|the|these|those|them)|(?:(?:to|for) )?(?:(?:this|that) (?:group|crowd|crew|table|bunch|lineup)|(?:these|those) (?:people|folks|guys|ones|members)))|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
+  if (asksForDifferentGroup(s)) return "unclear";
   if (afterCourtesy !== t) {
     // After a courtesy opener, require a direct answer to this plan. Ignore plain attendance and sentiment.
     const answers = s.split(/[.!;,:\n—–]+/).map(clause => clause.trim())
