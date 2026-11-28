@@ -1,8 +1,16 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "vitest";
-import { HOUR, MINUTE } from "@thenetwork/core";
-import { PLAN_VENUES } from "../src/plans.ts";
+import { DAY, HOUR, MINUTE, SimClock } from "@thenetwork/core";
+import { calendarPreloadPath, calendarSource } from "../../core/src/generated/calendarFreeBusy.ts";
+import type { CalendarPreloadRequest } from "../../core/src/svc/calendar-scheduling.ts";
+import { TURN_PATH, type TurnRequest } from "../../core/src/svc/contract.ts";
+import { svcSign } from "../../core/src/svc/svc-auth.ts";
+import { APPS } from "../../platform/src/apps.ts";
+import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
+import { NetworkService } from "../service/service.ts";
+import { PLAN_VENUES, planVenuesForCity } from "../src/plans.ts";
 import { describeBookingStart, localBookingStart, rescheduleNoticeCurrent, rescheduleOfferKey, rescheduleUpdateKey } from "../src/rescheduling.ts";
-import { Mini } from "./mini.ts";
+import { Mini, START } from "./mini.ts";
 
 const ids = ["a", "b", "c"];
 const originalAt = Date.UTC(2026, 9, 10, 17);
@@ -155,3 +163,140 @@ test("committed reschedule moves the arrival pre-brief, arrival relay, and no-sh
     newArrivalRelayed: true,
   });
 });
+
+test("a member outside New York reschedules with the starts their booking message shows", async () => {
+  const w = new Mini([], { city: "sf", engine: { cities: ["sf"] }, plans: false });
+  for (const [id, name, area] of [["s1", "Ana Diaz", "Mission"], ["s2", "Ben Ito", "Hayes Valley"]] as const) {
+    w.members.push({
+      id, name, homeCity: "sf", state: "normal", joinedAt: w.clock.now(), age: 30, unansweredProactive: 0,
+      prefs: { categoriesOptIn: ["social", "hobby"], quietHours: [23, 7], romanceOptIn: false, formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false },
+    });
+    w.presence.push({ memberId: id, city: "sf", type: "home", areas: [area] });
+    for (const tag of ["climbing", "hiking"]) w.facets.push({ id: `${id}:interest:${tag}`, memberId: id, kind: "interest", value: tag, tags: [tag], scope: "matchable", provenance: "said", confidence: 0.9, validFrom: w.clock.now(), source: "chat", observedAt: w.clock.now(), inferred: false, confirmedByMember: true });
+    w.intents.push({ id: `${id}:want:0`, memberId: id, objective: "find climbing partners", category: "hobby", horizonDays: 60, status: "active", createdAt: w.clock.now() });
+  }
+  await w.onboard("s1", "s2");
+  const id = w.propose(["s1", "s2"]);
+  await w.answerProbes(["s1", "s2"]);
+  expect(w.meetings).toHaveLength(1);
+  const state = w.net.exportState();
+  const o = state.opps.find(item => item.id === id)!;
+  expect(o.stage).toBe("scheduled");
+  const venue = planVenuesForCity("sf")[0]!;
+  Object.assign(o, { meetingAt: originalAt, venue: venue.name, venueArea: venue.area });
+  w.net.importState(state);
+  const booking = () => w.net.exportState().opps.find(item => item.id === id)!;
+
+  await w.say("s1", request);
+  expect(booking().reschedule).toBeUndefined();
+  const cityRequest = `RESCHEDULE ${localBookingStart(originalAt, "America/Los_Angeles")} TO ${localBookingStart(proposedAt, "America/Los_Angeles")}`;
+  await w.say("s1", cityRequest);
+  expect(booking().reschedule, JSON.stringify({ replies: w.to("s1").map(s => s.body), refusals: w.log("send_refused") })).toMatchObject({ originalAt, proposedAt });
+  const offer = w.to("s2").find(message => message.body.includes("Reply RESCHEDULE YES"))?.body;
+  expect(offer).toContain(describeBookingStart(proposedAt, "America/Los_Angeles"));
+  expect(offer).not.toContain("New York");
+});
+
+test.skipIf(!pgAvailable)("a service turn in a San Francisco runtime parses reschedule starts in Pacific time for calendar preloads", async () => {
+  const url = await migratedDb("network_reschedule_sf_service");
+  const clock = new SimClock(START);
+  const app = APPS.friends;
+  const turnSecret = "synthetic-sf-reschedule-turn-secret";
+  const calendarSecret = "synthetic-sf-reschedule-calendar-secret";
+  const safetyToken = "synthetic-sf-reschedule-safety-token";
+  const connectionId = "22222222-2222-4222-8222-222222222222";
+  const phones = ["+14155550181", "+14155550182"] as const;
+  const reads: CalendarPreloadRequest[] = [];
+  const service = new NetworkService({
+    url, clock, photoStorage: null, log: () => {}, notify: false,
+    tokens: `safety@friends:${safetyToken}`,
+    env: {
+      PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: turnSecret,
+      NETWORK_CALENDAR_FREE_BUSY_SECRET: calendarSecret,
+      NETWORK_CLOUD_DELIVERY_ORIGIN: "https://calendar.invalid",
+    },
+    networks: [{ id: "friends:sf", matchingEnabled: false }],
+    calendarFreeBusyFetch: async (destination, init) => {
+      const req = new Request(destination, init);
+      expect(req.url).toBe(`https://calendar.invalid${calendarPreloadPath}`);
+      const raw = await req.text();
+      const parsed = JSON.parse(raw) as CalendarPreloadRequest;
+      reads.push(parsed);
+      const now = clock.now();
+      const source = { app: parsed.app, memberId: parsed.memberId, purpose: parsed.purpose, provider: calendarSource, connectionId };
+      const body = JSON.stringify({
+        app: parsed.app, personId: parsed.personId, memberId: parsed.memberId, purpose: parsed.purpose,
+        requestSha256: createHash("sha256").update(raw).digest("hex"), issuedAt: now, expiresAt: now + 29_000,
+        grant: { ...source, active: true, grantedAt: START, expiresAt: now + 5 * MINUTE },
+        observation: { ...source, observedAt: now, coverage: parsed.coverage, busy: [] },
+      });
+      const headers = await svcSign(calendarSecret, { method: "POST", path: calendarPreloadPath, id: `calendar-read:${parsed.nonce}:proof`, body, nowS: Math.floor(now / 1000) });
+      return new Response(body, { headers });
+    },
+  });
+  const turn = async (id: string, text: string, from: string) => {
+    const input: TurnRequest = { app: app.id, from, messageId: id, text, channel: "blooio", transport: "imessage", receivedAt: clock.now(), to: null };
+    const body = JSON.stringify(input);
+    const auth = await svcSign(turnSecret, { method: "POST", path: TURN_PATH, id, body, nowS: Math.floor(clock.now() / 1000) });
+    return service.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { "Content-Type": "application/json", ...auth }, body }));
+  };
+
+  try {
+    await service.start();
+    const members: { id: string; name: string; area: string }[] = [];
+    for (const [i, e164] of phones.entries()) {
+      const name = i === 0 ? "Ana Diaz" : "Ben Ito";
+      const area = i === 0 ? "Mission" : "Hayes Valley";
+      const joined = await service.accounts.join(app, { e164, personId: null }, {
+        firstName: name.split(" ")[0]!, age: 30, homeCity: "sf", consent: { sms: true, wording: app.consent.text },
+      });
+      if (!joined.ok) throw new Error(`Fixture join refused for ${name}`);
+      const id = joined.membership.memberId;
+      for (const check of ["age", "liveness"]) {
+        const verified = await service.fetch(new Request(`http://localhost/apps/friends/members/${encodeURIComponent(id)}/verify`, {
+          method: "POST",
+          headers: { authorization: `Bearer ${safetyToken}`, "content-type": "application/json" },
+          body: JSON.stringify({ check, result: "pass", note: "Adult SF reschedule fixture" }),
+        }));
+        expect(await verified.json()).toEqual({ ok: true });
+      }
+      members.push({ id, name, area });
+    }
+    const [first, second] = members as [typeof members[number], typeof members[number]];
+    const world = new Mini([], { app: app.id, city: "sf", engine: { cities: ["sf"] }, growth: false, plans: false });
+    for (const m of members) {
+      world.members.push({
+        id: m.id, name: m.name, homeCity: "sf", state: "normal", joinedAt: world.clock.now(), age: 30, unansweredProactive: 0,
+        prefs: { categoriesOptIn: ["social", "hobby"], quietHours: [23, 7], romanceOptIn: false, formats: ["one_to_one", "small_group"], maxTravelMinutes: 45, onlyWhenAsked: false },
+      });
+      world.presence.push({ memberId: m.id, city: "sf", type: "home", areas: [m.area] });
+      for (const tag of ["climbing", "hiking"]) world.facets.push({ id: `${m.id}:interest:${tag}`, memberId: m.id, kind: "interest", value: tag, tags: [tag], scope: "matchable", provenance: "said", confidence: 0.9, validFrom: world.clock.now(), source: "chat", observedAt: world.clock.now(), inferred: false, confirmedByMember: true });
+      world.intents.push({ id: `${m.id}:want:0`, memberId: m.id, objective: "find climbing partners", category: "hobby", horizonDays: 60, status: "active", createdAt: world.clock.now() });
+    }
+    world.verify(first.id, second.id);
+    await world.onboard(first.id, second.id);
+    const oppId = world.propose([first.id, second.id]);
+    await world.answerProbes([first.id, second.id]);
+    const fixture = world.net.exportState();
+    const booked = fixture.opps.find(item => item.id === oppId)!;
+    const venue = planVenuesForCity("sf")[0]!;
+    Object.assign(booked, { meetingAt: originalAt, venue: venue.name, venueArea: venue.area });
+    const unrelated = { ...booked, id: "unrelated-sf-booking", meetingAt: originalAt + 2 * DAY };
+    clock.set(world.clock.now());
+    const rt = service.runtimes.get("friends:sf")!;
+    await rt.unitOfWork(n => n.importState({ ...n.exportState(), members: fixture.members, opps: [booked, unrelated] }));
+
+    expect((await turn("sf-calendar-enable", "CALENDAR", phones[0])).status).toBe(200);
+    reads.length = 0;
+    expect((await turn("sf-reschedule-ny-tz", request, phones[1])).status).toBe(200);
+    expect(reads).toEqual([]);
+
+    const sfRequest = `RESCHEDULE ${localBookingStart(originalAt, "America/Los_Angeles")} TO ${localBookingStart(proposedAt, "America/Los_Angeles")}`;
+    expect((await turn("sf-reschedule-pacific-tz", sfRequest, phones[1])).status).toBe(200);
+    expect(reads.map(r => r.memberId)).toEqual([first.id]);
+    expect((await rt.pg.load())?.opps.find(item => item.id === oppId)?.reschedule).toMatchObject({ originalAt, proposedAt });
+  } finally {
+    await service.close();
+    await dropDb(url);
+  }
+}, 120_000);
