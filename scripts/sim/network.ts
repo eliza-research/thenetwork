@@ -5,14 +5,14 @@ import { isDeepStrictEqual } from "node:util";
 // attention and plans invariants on the consent arms; and the shared conformance rules for networkPack.
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
 import { spawnProcessSync } from "../../packages/core/src/runtime/process.ts";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { canBeMatched, classifyYesNo, DAY, earliestDayKeyOf, EngineRng, hash32, HOUR, latestDayKeyOf, MINUTE, Rng as SimRng, SimClock, type Facet, type MemberId, type NetworkContext, type NetworkUnderTest, type QualitySignals, type SimMessage, type SimMeta } from "../../packages/core/src/index.ts";
 import { bookedCancellationPrefix } from "../../packages/core/src/generated/outboundAdmission.ts";
 import { resolveConfig } from "../../packages/engine/src/config.ts";
 import { availabilityProb, standingFromFacets } from "../../packages/engine/src/attention.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
-import { DEFAULT_ATTENTION } from "../../packages/engine/src/index.ts";
+import { DEFAULT_ATTENTION, runEngine } from "../../packages/engine/src/index.ts";
 import { memberQualityBandOf, memberReason, memberVampireTierOf, pairLeagueAndVampireReason } from "../../packages/engine/src/filters.ts";
 import { exposureFloor } from "../../packages/engine/src/policy.ts";
 import { computeComponents } from "../../packages/engine/src/scoring.ts";
@@ -41,6 +41,7 @@ import { Store } from "../../apps/observatory/src/store.ts";
 import { styleViolations } from "../../packages/network/src/copy.ts";
 import { Mini, START } from "../../packages/network/test/mini.ts";
 import { DATA_DIR } from "../synthetic/common.ts";
+import { loadSnapshot } from "../synthetic/load.ts";
 import { feedbackAfterFraudGate, fraudReversalEligibilityGate, vouchCreditEligibilityGate, vouchPeriodGate, vouchStakeEligibilityGate } from "./capital.ts";
 import { conformance, teenConformance } from "./conformance.ts";
 import { teenJudgeGates } from "./teen-judge.ts";
@@ -681,9 +682,33 @@ export async function generatorDryRunGate(b: Block): Promise<void> {
   });
 }
 
+export async function engineReportMinorsGate(b: Block): Promise<void> {
+  await b.run("synthetic load --engine: minorsInAnyProposal counts declared minors (0) and hiddenMinorsInAnyProposal counts age-liars separately", async () => {
+    const root = `${import.meta.dirname}/../..`;
+    const result = spawnProcessSync([
+      process.execPath, "--import", "tsx", "scripts/synthetic/load.ts", "--engine", "--no-write",
+    ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+    expect(result.exitCode).toBe(0);
+    const report = JSON.parse(result.stdout.toString()).engine;
+    const hidden = readFileSync(`${DATA_DIR}/hidden_truth.jsonl`, "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l));
+    const hiddenMinorIds = new Set(hidden.filter(h => h.hidden.trueAge < 18 && h.personaPublic.claimedAge >= 18).map(h => h.memberId));
+    expect(hiddenMinorIds.size).toBeGreaterThan(0);
+    const trueMinorIds = new Set(hidden.filter(h => h.hidden.trueAge < 18).map(h => h.memberId));
+    const snap = await loadSnapshot(DATA_DIR);
+    const { proposals } = await runEngine(snap, { seed: report.seed });
+    const membersOf = (p: (typeof proposals)[number]) => [...p.participants, ...(p.alternates ?? []), ...((p as any).via ? [(p as any).via] : [])];
+    const expectedHidden = proposals.filter(p => membersOf(p).some(id => hiddenMinorIds.has(id))).length;
+    expect(report.checks.minorsInAnyProposal).toBe(0);
+    expect(report.checks.hiddenMinorsInAnyProposal).toBe(expectedHidden);
+    expect(report.checks.proposalRosters).toBeUndefined();
+    expect(report.oracle.adults).toBe(snap.members.length - trueMinorIds.size);
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await generatorDryRunGate(b);
+  await engineReportMinorsGate(b);
   await scenarioAttendanceEvidenceGates(b);
   await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
