@@ -349,6 +349,7 @@ class ObsStore {
   private deciding = new Set<string>();
   focusHistory: Focus[] = [];
   private appBackTarget?: NonNullable<Focus>;
+  private browserFocusDepth = 0;
   ui: UIState = {
     focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS }, colorBy: "community",
     edgeTypes: Object.fromEntries(EDGE_TYPES.map(t => [t, t !== "invited_by" && t !== "vouched_for"])), showOpps: true, legendOpen: false,
@@ -369,7 +370,11 @@ class ObsStore {
   private reconnectTimer?: ReturnType<typeof setTimeout>;
 
   constructor() {
-    if (typeof window !== "undefined") window.addEventListener("popstate", () => this.onPopState());
+    if (typeof window !== "undefined") {
+      this.browserFocusDepth = this.readBrowserFocusDepth();
+      if (typeof (history.state as { obsDepth?: number } | null)?.obsDepth !== "number") this.writeBrowserFocusDepth(0);
+      window.addEventListener("popstate", () => this.onPopState());
+    }
   }
 
   subscribe = (fn: () => void) => {
@@ -955,14 +960,17 @@ class ObsStore {
     const prev = this.focusHistory.at(-1) ?? null;
     const nav = this.nav();
     if (!prev || !canGoBack(nav, subjectOf(prev))) return;
-    if (((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
+    if (this.readBrowserFocusDepth() > 0) {
       if (this.appBackTarget) return;
       this.appBackTarget = prev;
       try { history.back(); } catch { this.appBackTarget = undefined; }
       return;
     }
     this.commitNav(goBack(nav, subjectOf(prev)), { focus: prev, history: this.focusHistory.slice(0, -1) });
-    try { history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app)); } catch { return; }
+    try {
+      history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app));
+      this.browserFocusDepth = 0;
+    } catch { return; }
   }
   /** Back to the overview: the generated `clearFocus`. */
   clearFocus() {
@@ -971,15 +979,31 @@ class ObsStore {
     this.commitNav(clearNavFocus(nav));
     this.pushHash(null);
   }
+  private readBrowserFocusDepth() {
+    return (history.state as { obsDepth?: number } | null)?.obsDepth ?? 0;
+  }
+  private writeBrowserFocusDepth(depth: number) {
+    try {
+      const state = history.state as Record<string, unknown> | null;
+      history.replaceState({ ...(state && typeof state === "object" ? state : {}), obsDepth: depth }, "", location.pathname + location.search + location.hash);
+    } catch { return; }
+  }
   private pushHash(f: Focus) {
     try {
-      const depth = ((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) + 1;
+      const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
+      const depth = (typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth) + 1;
       history.pushState({ obsDepth: depth }, "", location.pathname + location.search + hashOf(f, this.app));
+      this.browserFocusDepth = depth;
     } catch { return; }
   }
   private onPopState() {
     const appBackTarget = this.appBackTarget;
     this.appBackTarget = undefined;
+    const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
+    const depth = typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth + 1;
+    if (typeof rawDepth !== "number") this.writeBrowserFocusDepth(depth);
+    const stepsBack = this.browserFocusDepth - depth;
+    this.browserFocusDepth = depth;
     const page = parsePage(), app = parseApp();
     const popped = parseHash();
     // The snapshot can prune a subject from the inspector history without removing
@@ -987,7 +1011,7 @@ class ObsStore {
     if (appBackTarget && page.kind === "app" && this.page.kind === "app" && this.app === app &&
         popped && !this.focusExists(popped) && this.focusExists(appBackTarget) &&
         sameFocus(appBackTarget, this.focusHistory.at(-1) ?? null) &&
-        ((history.state as { obsDepth?: number } | null)?.obsDepth ?? 0) > 0) {
+        depth > 0) {
       this.appBackTarget = appBackTarget;
       try { history.back(); } catch { this.appBackTarget = undefined; }
       return;
@@ -1002,9 +1026,16 @@ class ObsStore {
     const nav = this.nav();
     if (!f || !this.focusExists(f)) { if (canClearFocus(nav)) this.commitNav(clearNavFocus(nav)); return; }
     const top = this.focusHistory.at(-1) ?? null;
-    if (top && sameFocus(top, f) && canGoBack(nav, subjectOf(f))) { this.commitNav(goBack(nav, subjectOf(f)), { focus: f, history: this.focusHistory.slice(0, -1) }); return; }
+    if (stepsBack >= 0 && top && sameFocus(top, f) && canGoBack(nav, subjectOf(f))) { this.commitNav(goBack(nav, subjectOf(f)), { focus: f, history: this.focusHistory.slice(0, -1) }); return; }
     const cur = this.ui.focus;
-    if (canFocusOn(nav, subjectOf(f), false)) this.commitNav(focusOn(nav, subjectOf(f), false), { focus: f, history: cur ? [...this.focusHistory, cur] : this.focusHistory });
+    if (!canFocusOn(nav, subjectOf(f), false)) return;
+    const next = focusOn(nav, subjectOf(f), false);
+    if (stepsBack > 0) {
+      const prior = this.focusHistory.slice(0, Math.max(0, this.focusHistory.length - stepsBack));
+      this.commitNav({ ...next, depth: prior.length }, { focus: f, history: prior });
+      return;
+    }
+    this.commitNav(next, { focus: f, history: cur ? [...this.focusHistory, cur] : this.focusHistory });
   }
   // spec/consoleNavigation.md, "Escape closes one thing at a time"
   /** Esc does the one step that the generated `pressEscape` takes: close the popover, clear the search, clear the picks or clear the focus. */
