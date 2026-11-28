@@ -79,3 +79,20 @@ describe("probe reply parsing on mention-dense repeats", () => {
     expect(ms).toBeLessThan(10000);
   }, 60_000);
 });
+
+describe("probe conditional clause checks on clause-dense repeats", () => {
+  const options = [
+    { key: "a", start: Date.UTC(2026, 11, 4, 15), end: Date.UTC(2026, 11, 4, 16), label: "Friday 3pm" },
+    { key: "b", start: Date.UTC(2026, 11, 5, 15), end: Date.UTC(2026, 11, 5, 16), label: "Saturday 3pm" },
+  ];
+
+  test("many clocks in one long sentence stay fast and read the same", () => {
+    const clocks = "3pm or 4pm, ".repeat(1200);
+    const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
+    const t0 = performance.now();
+    const r = parseProbeReply(clocks + "blah, ".repeat(6000), options as never, false, ctx);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply(clocks, options as never, false, ctx));
+    expect(ms).toBeLessThan(2500);
+  }, 60_000);
+});
