@@ -1736,6 +1736,8 @@ const DIRECT_SHORT_DAY_REFUSAL = new RegExp(
 const RESTATED_CLOCK_PART = new RegExp(String.raw`^(?:morning|afternoon|evening|night)(?:\s+(?:on\s+)?(?:${DAY_TOKEN}))?$`);
 
 const LEADING_TIME_REFUSAL = /(?:\b(?:i'?m|i am|im|we'?re|we are)\s+(?:not\s+(?:free|available)|busy|unavailable|booked(?:\s+up)?|slammed|swamped|out(?:\s+of\s+town)?|away|working)\s+(?:on\s+)?|\b(?:i'?m|i am|im|we'?re|we are)\s+at\s+work\s+(?:on\s+)?|\b(?:i|we)\s+(?:work|have\s+(?:work|(?:(?:a|an)\s+)?(?:shift|meeting|class|appointment)))\s+(?:on\s+)?(?:(?:late|early)\s+)?|\bi\s+have\s+plans\s+(?:on\s+)?)$/;
+const BARE_WORKS_CLOCK = /\b(?:1[0-2]|[1-9])(?::[0-5]\d)?\s+works?\b/;
+const WORK_COMMITMENT_REFUSAL = /\b(?:i|we)\s+(?:work|have\s+(?:work|(?:(?:a|an)\s+)?(?:shift|meeting|class|appointment)))\b|\b(?:i'?m|i am|im|we'?re|we are)\s+at\s+work\b|\bmy work day\b/;
 const LEADING_REFUSAL_PART_LIMIT = /^\s*(?:(?:until|till|before|after)\s+(?:\d{1,2}(?::[0-5]\d)?\s*(?:[ap]m)?|noon|midnight)\b|during the day\b)/;
 
 function leadingTimeRefusalAt(t: string, at: number, end?: number): number {
@@ -2509,6 +2511,8 @@ export function parseProbeReply(
   if (past || refusedGroup && !/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/.test(t)) return { ...unclear, why: "slot" };
   if (explicitTimesOnly) return unclear;
   const droppedNamedTime = mentions.some(m => !memberChoiceAt(m.at) && matchingOffered(m).length > 0);
+  if (c.answer === "yes" && BARE_WORKS_CLOCK.test(t)
+    && [...refusedClauses].some(clause => WORK_COMMITMENT_REFUSAL.test(clause))) return { ...unclear, why: "slot" };
   if (c.answer === "yes" && authoredYes(t) && !droppedNamedTime
     && (neg.size === 0 || yesBooksRefusedRemainder(remainderRefused(t), remainderAffirmed(t)))) {
     return { answer: "yes", keys: open, why: c.why };
