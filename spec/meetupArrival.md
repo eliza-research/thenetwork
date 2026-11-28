@@ -106,6 +106,10 @@ pure val senderAgeValues = Set(12, 13, 17, 18, 25, 121)
 pure val recipientAgeValues = Set(12, 13, 17, 18, 25, 121)
 ```
 
+### A group arrival update refused by the send path stays pending for that recipient
+
+A group meetup sends arrival updates as a short digest. When the send path refuses the digest for one recipient (for example, the conversation streak cap), the updates stay pending for that recipient and go out with a later digest while the meetup is still in `ActiveArrival`. Other recipients are not sent them twice. The sender is told "I've updated the group" only when no recipient was refused; otherwise the sender is told the update will go to the group shortly. Pending updates end when the meetup closes, is met, or pivots, like every other pending digest update.
+
 ## Story: Escalate no-shows and pivot to a verified backup venue
 
 > As an attendee waiting at a meetup, I want timely late check-ins and a clean pivot to a verified backup venue if the primary venue is closed.

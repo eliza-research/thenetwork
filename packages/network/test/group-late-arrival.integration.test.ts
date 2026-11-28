@@ -233,3 +233,55 @@ test.skipIf(!pgAvailable).each([
     await dropDb(url);
   }
 });
+
+async function tickUntil(world: Mini, at: number) {
+  while (world.clock.now() < at) {
+    world.clock.advance(MINUTE);
+    await world.net.tick(world.clock.now());
+  }
+}
+
+const digestsTo = (world: Mini, from: number, id: string) =>
+  world.sent.slice(from).filter(message => message.to === id && message.body.startsWith("Arrival update:"));
+
+async function fourAfterReminder() {
+  const booking = await booked(["a", "b", "c", "d"]);
+  booking.world.clock.set(booking.meetingAt - 70 * MINUTE);
+  await booking.world.net.tick(booking.world.clock.now());
+  booking.world.clock.set(booking.meetingAt - 12 * MINUTE);
+  return booking;
+}
+
+// spec/meetupArrival.md, "A group arrival update refused by the send path stays pending for that recipient"
+test("a group arrival digest refused by the conversation streak cap reaches the recipient after they reply", async () => {
+  const { world, meetingAt } = await fourAfterReminder();
+  const mark = world.mark();
+  await world.say("b", "I'm here");
+  world.clock.set(meetingAt - 11 * MINUTE);
+  await world.say("d", "I can't make it anymore");
+  await tickUntil(world, meetingAt - 10 * MINUTE);
+  expect(digestsTo(world, mark, "a")).toHaveLength(0);
+
+  await world.say("a", "ok thanks");
+  await tickUntil(world, meetingAt - 8 * MINUTE);
+  const toA = digestsTo(world, mark, "a");
+  expect(toA).toHaveLength(1);
+  expect(toA[0]!.body).toContain("Ben");
+  await tickUntil(world, meetingAt - 5 * MINUTE);
+  expect(digestsTo(world, mark, "a")).toHaveLength(1);
+});
+
+// spec/meetupArrival.md, "A group arrival update refused by the send path stays pending for that recipient"
+test("the sender is not told the group was updated when the streak cap refused the digest", async () => {
+  const { world, meetingAt } = await fourAfterReminder();
+  await world.say("b", "I'm here");
+  await tickUntil(world, meetingAt - 10 * MINUTE);
+  world.clock.set(meetingAt - 8 * MINUTE);
+  const mark = world.mark();
+  await world.say("c", "just arrived");
+  const acks = world.sent.slice(mark).filter(message => message.to === "c").map(message => message.body);
+  expect(acks).not.toContain("Got it — I've updated the group.");
+  expect(acks).toContain("Got it — I'll pass that along to the group shortly.");
+  expect(digestsTo(world, mark, "b")).toHaveLength(1);
+  expect(digestsTo(world, mark, "a")).toHaveLength(0);
+});
