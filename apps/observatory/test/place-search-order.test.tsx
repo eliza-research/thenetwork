@@ -27,25 +27,26 @@ const opportunity = (id: string): ObsOpportunity => ({
   state: "SCHEDULED", status: { m1: "accepted", m2: "accepted" }, enjoyment: {}, createdAt: 1, updatedAt: 2,
 });
 const stats = (): ObsStats => ({
-  members: 4, joined: 4, byCity: { nyc: 4 }, byState: { joined: 4 }, messages: 0, inbound: 0, outbound: 0,
+  members: 6, joined: 6, byCity: { nyc: 4, sf: 2 }, byState: { joined: 6 }, messages: 0, inbound: 0, outbound: 0,
   proactive: 0, proposals: 0, proposalsBySource: {}, oppsByState: {}, invites: 0, accepts: 0, declines: 0,
   meetingsScheduled: 0, meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0,
   enjoymentSum: 0, enjoymentN: 0, blocks: 0, optOuts: 0, adversarialAttempts: 0, invariantViolations: 0,
   errors: 0, compatible: 0, unsafe: 0, oracleJudged: 0, edgesByType: {},
 });
 
-test("typing the exact place name Harlem offers it first and Enter only picks a visible hit", async () => {
+test("place search ranks Harlem first, preserves dismissal, and opens places from the snapshot", async () => {
   const state: ObsState = {
     env: {
       mode: "game", app: "ntwrk", label: "SIMULATION seed 1 · synthetic v1", dataset: "synthetic v1",
       capabilities: { canStep: true, canIntervene: true, hiddenTruth: false, readOnly: false },
     },
     clock: clock(10), version: 10,
-    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
+    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea"),
+      { ...member("sf1", "Jamie Ellis", "Dogpatch"), city: "sf" },
+      { ...member("sf2", "Ari Chen", "Dogpatch"), city: "sf" },
+    ],
     edges: [], opportunities: [], feed: [], stats: stats(), engineRuns: [],
   };
-  // A snapshot need not send opportunities in ID order. The first three
-  // are valid prefix matches for the exact ID in the fourth slot.
   state.opportunities = ["nw-42-10", "nw-42-11", "nw-42-12", "nw-42-1"].map(opportunity);
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
@@ -136,7 +137,11 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     const options = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     // The exact place name comes first; the longer name that merely contains it comes after.
-    expect(options.slice(0, 2)).toEqual(["Harlem · Manhattan", "East Harlem · Manhattan"]);
+    expect(options.slice(0, 3)).toEqual([
+      "Harlem · Manhattan",
+      "Harlem / Morningside · NYC · Midtown & Flatiron",
+      "East Harlem · Manhattan",
+    ]);
     const press = async (key: string) => {
       await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
     };
@@ -182,6 +187,17 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     expect(store.ui.focus).toEqual({ kind: "member", id: "m3" });
     await act(async () => { filterEscape(false); });
     expect(store.ui.focus).toBeNull();
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "dogpatch");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => el.textContent?.includes("Dogpatch")), "updated Dogpatch results");
+    const placeHits = [...window.document.querySelectorAll('[role="option"]')]
+      .filter(el => el.textContent?.startsWith("Dogpatch"));
+    expect(placeHits.map(el => el.textContent)).toEqual(["Dogpatch · Member area"]);
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Dogpatch" });
   } finally {
     await act(async () => { appRoot?.unmount(); });
     disconnectStore?.();

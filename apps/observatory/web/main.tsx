@@ -49,7 +49,6 @@ export function App() {
       const target = e.target as Element | null;
       const field = target?.closest?.("input, textarea, select");
       if (e.key === "Escape") { store.escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
-      // The filter comboboxes handle letter keys for typeahead, even when closed.
       if (field || target?.closest?.('[role="combobox"], [role="listbox"]') || e.metaKey || e.ctrlKey || e.altKey) return;
       const canStep = !!store.env?.capabilities.canStep && store.canSim();
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
@@ -224,6 +223,13 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
       const zoneName = spec.zones.find(z => z.id === n.zone)?.name ?? spec.shortName;
       allPlaces.push({ name: n.name, meta: `${spec.shortName} · ${zoneName}` });
     }
+  }
+  for (const { area } of store.members.values()) {
+    if (!area) continue;
+    const k = area.toLowerCase();
+    if (seenPlaces.has(k)) continue;
+    seenPlaces.add(k);
+    allPlaces.push({ name: area, meta: "Member area" });
   }
   for (const n of allPlaces.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) {
     hits.push({ key: `n${n.name}`, label: n.name, meta: n.meta, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
