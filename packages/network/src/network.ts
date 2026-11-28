@@ -2383,6 +2383,43 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.alternates = [];
     const city = this.networkCity(), tz = this.cityTz();
     o.followupAt = computeFollowupTimestamp(o.plan ? o.plan.window.end : draft.proposedAt + HOUR, tz).scheduledAt;
+    const existingMeetup = this.meetups.getMeetup(o.id);
+    if (existingMeetup || (!o.workIntro && !o.seat)) {
+      const primaryVenueId = o.plan?.venueId ?? o.venueId ?? existingMeetup?.activeVenueId ?? existingMeetup?.primaryVenueId ?? o.id;
+      const facetsByMember = this.snapshotRows().facets;
+      const backupPick = this.venues.pickForMatch({
+        city,
+        mode: draft.roster.length >= 3 ? "group" : "date",
+        startMs: draft.proposedAt,
+        memberAreas: draft.roster.map(id => this.member(id).area).filter((a): a is string => !!a),
+        members: draft.roster.map(id => this.memberVenuePrefsOf(id, facetsByMember, [primaryVenueId]).prefs),
+        teenFriendAllowed: o.teenRuleAt !== undefined,
+        targetHobbies: o.tags,
+      }, now);
+      const pickedBackup = backupPick.primary?.venue.id !== primaryVenueId ? backupPick.primary?.venue : backupPick.backup?.venue;
+      o.backupVenueId = pickedBackup && pickedBackup.id !== primaryVenueId ? pickedBackup.id : undefined;
+      const venueRec = this.venues.getVenue(primaryVenueId);
+      const sameVenue = existingMeetup !== undefined
+        && (existingMeetup.activeVenueId === primaryVenueId || existingMeetup.primaryVenueId === primaryVenueId)
+        && (!o.venue || existingMeetup.venueName === o.venue);
+      const venueName = o.plan?.place.name ?? o.venue ?? venueRec?.name ?? existingMeetup?.venueName;
+      const venueAddress = venueRec?.address ?? (sameVenue ? existingMeetup?.venueAddress : undefined);
+      const arrivalLandmark = venueRec?.arrivalLandmark ?? (sameVenue ? existingMeetup?.arrivalLandmark : undefined);
+      this.meetups.registerMeetup({
+        meetupId: o.id,
+        ...(existingMeetup?.oppId ? { oppId: existingMeetup.oppId } : {}),
+        app: this.app.id,
+        city,
+        startMs: draft.proposedAt,
+        participants: [...draft.roster],
+        confirmed: [...draft.roster],
+        primaryVenueId,
+        ...(o.backupVenueId ? { backupVenueId: o.backupVenueId } : {}),
+        ...(venueName ? { venueName } : {}),
+        ...(venueAddress ? { venueAddress } : {}),
+        ...(arrivalLandmark ? { arrivalLandmark } : {}),
+      });
+    }
     this.ctx.recordMeeting({ proposalId: o.id, participants: draft.roster, at: draft.proposedAt, previousAt: draft.originalAt, city, kind: o.kind });
     this.ctx.log("meeting_rescheduled", { oppId: o.id, revision: o.scheduleRevision, previousAt: draft.originalAt, at: draft.proposedAt, changedAt: now });
     const tzLabel = timezoneLabel(city);
