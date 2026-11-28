@@ -91,3 +91,54 @@ test.skipIf(!pgAvailable)("signed participation controls commit with the reply a
     await dropDb(url);
   }
 }, 120_000);
+
+test.skipIf(!pgAvailable)("a pause text naming a weekday stores a paused window ending that day", async () => {
+  // spec/participationWindow.md, "A window starts inclusively and ends exclusively";
+  // spec/product/stories.md F20, "Interpret plain-language categories, quiet hours, pause and resume"
+  const url = await migratedDb("participation_pause_until");
+  const sql = new SQL(url);
+  const clock = new SimClock(Date.UTC(2026, 10, 18, 16));
+  const phone = "+12125550175";
+  const secret = "synthetic-participation-pause-until-fixture";
+  let service: NetworkService | undefined;
+  let turnCount = 0;
+  const send = async (text: string) => {
+    clock.advance(MINUTE);
+    const input: TurnRequest = { app: "friends", text, from: phone, messageId: `pause-until-${++turnCount}`, channel: "blooio", transport: "imessage", receivedAt: clock.now(), to: null };
+    const body = JSON.stringify(input);
+    const auth = await svcSign(secret, { method: "POST", path: TURN_PATH, id: input.messageId, body, nowS: Math.floor(clock.now() / 1000) });
+    return service!.fetch(new Request(`http://localhost${TURN_PATH}`, { method: "POST", headers: { "content-type": "application/json", ...auth }, body }));
+  };
+  const member = async () => (await sql`select * from network.members where app_id='friends'`)[0];
+  try {
+    service = new NetworkService({
+      url, clock, log: () => {}, photoStorage: null, adapter: () => new DryRunAdapter(() => {}),
+      env: { PLATFORM_ENV: "dev", SERVICE_TURN_SECRET: secret },
+      networks: [{ id: "friends:nyc", matchingEnabled: false }],
+    });
+    await service.start();
+    for (const message of ["friends.help", "Ari, 29", "I enjoy hiking and cooking", "Saturday afternoons work for me", "Small groups are good"]) {
+      expect((await send(message)).status).toBe(200);
+    }
+    expect(await (await send("Pause my texts until Monday")).json()).toMatchObject({
+      outcome: "handled", reason: "participation_controls", replies: [expect.stringContaining("until Monday")],
+    });
+    expect(await member()).toMatchObject({
+      participation_state: "paused", opted_out: false,
+      participation_window: { state: "paused", until: "2026-11-23T05:00:00.000Z" },
+    });
+    expect(await (await send("Resume matching")).json()).toMatchObject({ replies: [expect.stringContaining("Matching is no longer paused")] });
+    expect(await member()).toMatchObject({ participation_state: "normal", participation_window: null });
+    expect(await (await send("Pause matching until Friday")).json()).toMatchObject({
+      outcome: "handled", reason: "participation_controls", replies: [expect.stringContaining("until Friday")],
+    });
+    expect(await member()).toMatchObject({
+      participation_state: "paused",
+      participation_window: { state: "paused", until: "2026-11-20T05:00:00.000Z" },
+    });
+  } finally {
+    await service?.close();
+    await sql.close();
+    await dropDb(url);
+  }
+}, 120_000);

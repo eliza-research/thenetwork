@@ -515,6 +515,11 @@ describe("Pass 3 Wave 2: MCP red-lines, anti-double-ping, reschedule, survey, an
 
     expect(participationCommand("quiet hours 10:30pm to 7:30am")).toEqual({ kind: "quiet", hours: [22.5, 7.5] });
     expect(participationCommand("pause me for a week")).toEqual({ kind: "mode", pause: true, durationDays: 7 });
+    expect(participationCommand("pause my texts until Monday")).toEqual({ kind: "mode", pause: true, untilWeekday: 0 });
+    expect(participationCommand("pause matching until Friday")).toEqual({ kind: "mode", pause: true, untilWeekday: 4 });
+    expect(participationCommand("take a break until tomorrow")).toEqual({ kind: "mode", pause: true, untilTomorrow: true });
+    expect(participationCommand("she said pause my texts until Monday")).toBeUndefined();
+    expect(participationCommand("pause my texts until Monday?")).toBeUndefined();
     expect(participationCommand("no more work stuff")).toEqual({ kind: "category", category: "professional", enable: false });
 
     expect(memberFactCommand("what do you know about me")).toEqual({ kind: "list", page: 1 });
