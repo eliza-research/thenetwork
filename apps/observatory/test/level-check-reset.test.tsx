@@ -1,14 +1,14 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import { act, createElement } from "react";
 import { Window } from "happy-dom";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { installDom } from "./dom.ts";
 
 type CheckResult = { ok: true; data: { pass: boolean; checks: { name: string; pass: boolean; detail: string }[] } };
 const checkResult = (name: string): CheckResult => ({ ok: true, data: { pass: true, checks: [{ name, pass: true, detail: "" }] } });
 
-test("a pending level check cannot repopulate the result after resetting the same level", async () => {
+test("reset invalidates a pending level check and clears a completed check when the world resets elsewhere", async () => {
   const oldCheck = Promise.withResolvers<CheckResult>();
   const newCheck = Promise.withResolvers<CheckResult>();
   const controls: { type: string; scenario?: string | null; network?: string }[] = [];
@@ -86,6 +86,24 @@ test("a pending level check cannot repopulate the result after resetting the sam
     await wait(() => checkCalls === 2, "second check request sent");
     await act(async () => { newCheck.resolve(checkResult("Fresh world result")); });
     await wait(() => (box.textContent ?? "").includes("Fresh world result"), "fresh result rendered");
+
+    const reload = vi.spyOn(store, "load").mockImplementation(async () => { store.notify(); });
+    try {
+      await act(async () => {
+        store["applyDelta"]({ version: 0, clock: { now: 0, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false } });
+        await sleep(40);
+      });
+      expect(reload).toHaveBeenCalledOnce();
+      expect(box.textContent).toContain("Fresh world result");
+      await act(async () => {
+        store["applyDelta"]({ reset: true, version: 0, clock: { now: 0, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false } });
+        await sleep(40);
+      });
+      expect(reload).toHaveBeenCalledTimes(2);
+      expect(box.textContent).not.toContain("Fresh world result");
+    } finally {
+      reload.mockRestore();
+    }
   } finally {
     await act(async () => { root.unmount(); await sleep(40); });
     globalThis.fetch = nativeFetch;
