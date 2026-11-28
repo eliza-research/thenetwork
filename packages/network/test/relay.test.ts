@@ -348,6 +348,11 @@ test.each([
   "Send him my number. Let me think it over first.",
   "Send him my number. Hmm idk.",
   "Send him my number. Lol nevermind he's weird.",
+  "Give him my number, should he ask.",
+  "Give Ari my number should Ari ask.",
+  "Give him my number in the event that he asks.",
+  "Give him my number, assuming he asks.",
+  "Give him my number as soon as he asks.",
 ])("a trailing condition cannot arm or complete a signed number swap: %s", async text => {
   const id = "conditional-swap-" + randomUUID();
   await resetSwapMatch(id);
@@ -455,6 +460,11 @@ test.each([
   "My number is off limits, send Ari my number",
   "I can't believe it, “send Ari my number”",
   "I would not send Ari my number. I can still make Saturday.",
+  "Give Ari my phone charger",
+  "Give Ari my email password",
+  "He can have my number one spot in line",
+  "He can have my number?",
+  "She can have my phone number, please?",
 ])("the relay does not send a private item after %s", async (text) => {
   const id = "refused-share-" + randomUUID();
   const before = await sharesQueued();
