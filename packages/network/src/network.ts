@@ -2683,19 +2683,28 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private queueInviteJoin(inv: MemberState, notice: InviteJoinNotice) {
-    if (this.inviteJoinCopy(inv, notice) === undefined) return;
+    if (this.inviteJoinReceipt(inv, notice) === undefined) return;
     inv.pendingInviteJoins = [...(inv.pendingInviteJoins ?? []).filter(x => this.now() - x.at < inviteJoinNoticeLifetimeMs && x.inviteeId !== notice.inviteeId), notice];
     if (!inv.onlyWhenAsked) this.send(inv, "", { type: "info" }, "invite_notice", { about: [notice.inviteeId], hook: { t: "invite_notice", notice } });
   }
 
-  private inviteJoinCopy(inviter: MemberState, notice: InviteJoinNotice): { first: string; text: string } | undefined {
+  // spec/outreachPolicy.md, "An eligible join receipt can ride on a current reply": the receipt stays
+  // pending until it goes out or goes stale; consent and eligibility are checked when it goes out.
+  private inviteJoinReceipt(inviter: MemberState, notice: InviteJoinNotice): { first: string; inviteeConsents: boolean; ageMs: number } | undefined {
     const invitee = this.members.get(notice.inviteeId);
     const verifiedExternalName = !invitee ? this.ctx.verifiedJoinedInviteeName?.(inviter.id, notice.inviteeId) : undefined;
     const first = invitee?.first ?? verifiedExternalName;
     if (!first) return;
-    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply: false }).ok;
     const attributed = (invitee?.invitedBy === inviter.id || !!verifiedExternalName) && this.invitedIds.has(notice.inviteeId);
-    if (inviteJoinNoticeCurrent(attributed, !invitee?.optedOut, eligible, this.now() - notice.at)) return { first, text: copy.inviteeJoined(first) };
+    const ageMs = this.now() - notice.at;
+    if (inviteJoinNoticeCurrent(attributed, true, true, ageMs)) return { first, inviteeConsents: !invitee?.optedOut, ageMs };
+  }
+
+  private inviteJoinCopy(inviter: MemberState, notice: InviteJoinNotice, reply = false): { first: string; text: string } | undefined {
+    const receipt = this.inviteJoinReceipt(inviter, notice);
+    if (!receipt) return;
+    const eligible = this.checkRecipient(inviter.id, "invite_notice", { about: [notice.inviteeId], reply }).ok;
+    if (inviteJoinNoticeCurrent(true, receipt.inviteeConsents, eligible, receipt.ageMs)) return { first: receipt.first, text: copy.inviteeJoined(receipt.first) };
   }
 
   /**
@@ -9966,9 +9975,10 @@ export class ConsentNetwork implements NetworkUnderTest {
       const roles = new Set([...(noticeOpportunity?.participants ?? []), ...(noticeOpportunity?.alternates ?? []), ...(noticeOpportunity?.contacted ?? [])]);
       const roleNames = new Set([...roles].map(id => this.members.get(id)?.first.toLowerCase()));
       for (const notice of m.pendingInviteJoins) {
-        const status = this.inviteJoinCopy(m, notice);
-        if (status === undefined) continue;
+        if (this.inviteJoinReceipt(m, notice) === undefined) continue;
         current.push(notice);
+        const status = this.inviteJoinCopy(m, notice, true);
+        if (status === undefined) continue;
         const conflicts = inviteJoinNoticeConflictsWithRole(roles.has(notice.inviteeId), roleNames.has(status.first.toLowerCase()));
         if (!inviteJoinNoticeMayRideReply(directMemberTurn, reply, carriesMemberText, conflicts)) continue;
         if (body.length + status.text.length + 1 <= INVITE_REPLY_MAX_CHARS && !this.guardCheck(status.text, m.id).length) {
