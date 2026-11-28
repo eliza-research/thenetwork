@@ -847,7 +847,7 @@ function bookingCancellationDay(timeWord: string, receivedAt: number, tz = NY): 
 }
 
 const ATTENDANCE_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i\s+)?(?:can'?t|cannot|won'?t|will not)\s+(?:make it|come|attend)|(?:i'?m\s+|i am\s+)?not\s+(?:coming|attending|comfortable meeting)|i\s+(?:need|have)\s+to\s+(?:cancel|call it off))(?:\s+anymore)?[.,!]*$/i;
-const ATTENDANCE_JOIN = /[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
+const ATTENDANCE_JOIN = /[.!?;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/gi;
 const NO_SWAP_OR_MEETING = /^(?:please[,]?\s+)?(?:i\s+(?:do not|don'?t)\s+want to|i'?m\s+not)\b[^.!?;]+\b(?:or|nor)\s+meet(?:ing)?\s+(?:you|them)\b[.!]*$/i;
 
 function declinesAttendanceAlongsideSwap(body: string): boolean {
@@ -860,6 +860,33 @@ function declinesAttendanceAlongsideSwap(body: string): boolean {
     start = end.index + end[0].length;
   }
   return !quoteStillOpen(text.slice(0, start)) && ATTENDANCE_CLAUSE.test(text.slice(start).trim());
+}
+
+const PROBE_PLAN_CLAUSE = /^(?:sorry[,]?\s+)?(?:(?:i'?m\s+|i am\s+)?(?:withdrawing|withdraw|withdrew|withdrawn)\s+from\s+(?:this|that|it|the\s+(?:plan|meeting|proposal))|not\s+anymore|not\s+any\s+more|no\s+longer|(?:i'?m|i\s+am)\s+(?:out|done|leaving|not\s+in)|count\s+me\s+out|leave\s+me\s+out|(?:drop|remove|take)\s+me\s+(?:out|off)(?:\s+(?:this|that|it|the\s+(?:plan|meeting|proposal|list)))?|forget\s+it|never\s+mind|i'?ll\s+pass)[.,!]*$/i;
+
+const BARE_REFUSAL_CLAUSE = /^(?:no+|nope|nah|sorry|thanks|thank you|please)[.,!]*$/i;
+
+function declinesProbeAlongsideSwap(body: string): boolean {
+  if (declinesAttendanceAlongsideSwap(body)) return true;
+  const text = body.toLowerCase().replace(/[‘’ʼ`´]/g, "'").replace(/[“”]/g, '"');
+  const boundaries = [...text.matchAll(ATTENDANCE_JOIN)];
+  const clauses: string[] = [];
+  let start = 0;
+  for (const end of boundaries) {
+    if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start, end.index).trim());
+    start = end.index + end[0].length;
+  }
+  if (!quoteStillOpen(text.slice(0, start))) clauses.push(text.slice(start).trim());
+  if (clauses.some(clause => clause !== "" && !BARE_REFUSAL_CLAUSE.test(clause) && !withdrawsSwap(clause)
+    && (PROBE_PLAN_CLAUSE.test(clause) || consentOf(clause).answer === "no"))) return true;
+  for (let i = 0; i < clauses.length; i++) {
+    if (!/^(?:no+|nope|nah)[.,!]*$/.test(clauses[i]!)) continue;
+    const plan: string[] = [];
+    for (let j = i + 1; j < clauses.length && !withdrawsSwap(clauses[j]!); j++) plan.push(clauses[j]!);
+    if (plan.length > 0 && !plan.some(clause => /\b(?:still in|still coming|still come|still on|see you|count me in|i'?ll be there|i'?m in)\b/.test(clause))
+      && consentOf([clauses[i]!, ...plan].join(", ")).answer === "no") return true;
+  }
+  return false;
 }
 
 /** The source text for a booked reply, with independent transfer and attendance evidence. */
@@ -2084,7 +2111,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         }
       }
     }
-    if (!msg.reaction && !c.pastAbsence && !withdrawsSwap(body) && !bookedReplyKeepsMeeting(bookingText)
+    if (!msg.reaction && !c.pastAbsence && (!withdrawsSwap(body) || declinesProbeAlongsideSwap(body)) && !bookedReplyKeepsMeeting(bookingText)
       && this.withdrawAcceptedProbe(m, body, replyOpen || !!aw)) return;
     if (cancellation && this.handleExplicitCancellation(m, cancellation, now)) return;
     if (aw?.kind === "checkin") {

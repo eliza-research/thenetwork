@@ -530,6 +530,10 @@ const SWAP_REFUSAL_VERB = /\b(?:refus(?:e|ed|ing)|declin(?:e|ed|ing))\s+(?:(?:to
 const TRANSFER = "send|share|give|pass|forward|text|disclose|reveal";
 const SWAP_MODAL_REFUSAL = new RegExp(SHARE_NEG.source + "\\s+(?:ever\\s+)?(?:" + TRANSFER + ")\\b");
 const REFUSES_MATCH_ACCESS = new RegExp("\\b(?:they|he|she)\\s+" + SHARE_NEG.source + "\\s+(?:have|get)\\b");
+const NEW_SWAP_VERB = "(?:withhold|withholds|withholding|withheld|withdraw|withdraws|withdrawing|withdrawn|withdrew|revoke|revokes|revoking|revoked)";
+const NEW_SWAP_OBJECT = `(?:my\\s+(?:${CONTACT_SWAP_NAME})|(?:my\\s+)?(?:consent|permission)\\s+to\\s+(?:${TRANSFER})\\s+my\\s+(?:${CONTACT_SWAP_NAME})|(?:number|numbers)\\s+swap|(?:the|that|our)\\s+(?:number\\s+)?swap|swapping\\s+numbers)`;
+const NEW_SWAP_FROM = `(?:withdraw|withdraws|withdrawing|withdrawn|withdrew)\\s+from\\s+(?:(?:this|that|it)\\s+and\\s+from\\s+)?(?:(?:the|that|our)\\s+(?:number\\s+)?swap|(?:number|numbers)\\s+swap|swapping\\s+numbers)`;
+const NEW_SWAP_WITHDRAWAL = new RegExp(`^\\s*(?:(?:actually|please|pls|no|never mind|nvm|sorry)\\s+)*(?:i(?:'m|'d|'ve)?\\s+(?:like\\s+to\\s+|want\\s+to\\s+|need\\s+to\\s+|am\\s+|have\\s+|had\\s+)?)?(?:${NEW_SWAP_VERB}\\s+${NEW_SWAP_OBJECT}|${NEW_SWAP_FROM})\\b`);
 const PENDING_SWAP_RECIPIENT = "(?:them|him|her|my (?:match|date))";
 const DIRECT_TRANSFER_REFUSAL = String.raw`(?:(?:don'?t|do\s+not)(?:\s+(?:want\s+(?:you\s+)?to|(?:you\s+)?dare))?|never|${SHARE_NEG.source})`;
 const DECLINES_PENDING_SEND = new RegExp(
@@ -832,7 +836,7 @@ function refusesNumberSwap(text: string, clauses = relayClauses(text)): boolean 
   const pairedRefusal = text.split(RELAY_SENTENCE).some(sentence => PAIRED_CONTACT_REFUSAL.test(sentence));
   return pendingSwapWithdrawn(pairedRefusal, pairedRefusal, false) || clauses.some(clause => pendingSwapWithdrawn(
     OWN_SWAP_ITEM.test(clause),
-    SWAP_WITHHOLDING.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
+    SWAP_WITHHOLDING.test(clause) || NEW_SWAP_WITHDRAWAL.test(clause) || SWAP_PROPERTY.test(clause) || SWAP_REFUSAL_VERB.test(clause)
       || SWAP_MODAL_REFUSAL.test(clause) || REFUSES_MATCH_ACCESS.test(clause),
     DECLINES_PENDING_SEND.test(clause),
   ));
