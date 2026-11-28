@@ -1314,7 +1314,7 @@ const EXPLICIT_KEY_LIST = /\b[abc]\b(?:\s*(?:,\s*(?:(?:or|and)\b)?|\b(?:or|and)\
 const EXPLICIT_KEY_CLAUSE = /(^\s*|[,;.!\n]\s*|\b(?:and|or)\s+)([abc])\s+(?:works?(?: for me)?|is (?:fine|good|perfect)|for me|please)\b/g;
 const EXPLICIT_NO_OFFERED_TIMES = /^\s*(?:(?:sorry|thanks|thank you)[, ]+)?none of (?:(?:those|these)(?: times| options)?|them|the (?:times|options)) works?(?: for me)?(?:[, ]+(?:sorry|thanks|thank you))?[.!\s]*$/;
 // A day and clock label cannot establish consent to a relative or separately named date.
-const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|tmr|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
+const UNBOUND_OFFER_DATE = /\b(?:today|tonight|tomorrow|tmr|yesterday)\b|\b(?:next|last|following)\s+(?:mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b|\b\d{1,2}(?:st|nd|rd|th)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\b\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|\bthe\s+(?:(?:[5-9]|[12]\d|3[01])(?:st|nd|rd|th)|fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[- ]first|twenty[- ]second|twenty[- ]third|twenty[- ]fourth|twenty[- ]fifth|twenty[- ]sixth|twenty[- ]seventh|twenty[- ]eighth|twenty[- ]ninth|thirtieth|thirty[- ]first)\b|\b\d{1,4}[-/]\d{1,2}(?:[-/]\d{1,4})?\b/;
 const PROBE_DURATION = String.raw`(?:\d+|a|an|one|two|three|four|a few|a couple(?: of)?|half an?)\s+(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?|weeks?|months?|years?)\b`;
 const RELATIVE_PROBE_DURATION = new RegExp(String.raw`\b(?:in|within)\s+${PROBE_DURATION}|\b${PROBE_DURATION}\s+from\b`);
 const UNBOUND_PROBE_WINDOW = /\bthis\s+(?:morning|afternoon|evening|night)\b|\b(?:next|following)\s+(?:week|month|year)\b|\bafter next\b/;
@@ -1802,6 +1802,59 @@ function separateUnboundProbeTimes(text: string): { current: string; unbound: bo
   return { current: unbound ? current.join(" ").trim() : text, unbound };
 }
 
+const OFFER_MONTH = String.raw`jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?`;
+const OFFER_DAY_WORD = String.raw`fifth|sixth|seventh|eighth|ninth|tenth|eleventh|twelfth|thirteenth|fourteenth|fifteenth|sixteenth|seventeenth|eighteenth|nineteenth|twentieth|twenty[- ]first|twenty[- ]second|twenty[- ]third|twenty[- ]fourth|twenty[- ]fifth|twenty[- ]sixth|twenty[- ]seventh|twenty[- ]eighth|twenty[- ]ninth|thirtieth|thirty[- ]first`;
+const BOUNDABLE_OFFER_DATE = new RegExp(String.raw`\b(?:(${OFFER_MONTH})\.?\s+(\d{1,2})(?:st|nd|rd|th)\b|(\d{1,2})(st|nd|rd|th)?\s+(${OFFER_MONTH})\b|the\s+(?:((?:[5-9]|[12]\d|3[01]))(?:st|nd|rd|th)|(${OFFER_DAY_WORD}))\b)`, "g");
+const OFFER_MONTH_NUMBER = new Map([["jan", 1], ["january", 1], ["feb", 2], ["february", 2], ["mar", 3], ["march", 3], ["apr", 4], ["april", 4], ["may", 5], ["jun", 6], ["june", 6], ["jul", 7], ["july", 7], ["aug", 8], ["august", 8], ["sep", 9], ["sept", 9], ["september", 9], ["oct", 10], ["october", 10], ["nov", 11], ["november", 11], ["dec", 12], ["december", 12]]);
+const OFFER_DAY_NUMBER = new Map([["fifth", 5], ["sixth", 6], ["seventh", 7], ["eighth", 8], ["ninth", 9], ["tenth", 10], ["eleventh", 11], ["twelfth", 12], ["thirteenth", 13], ["fourteenth", 14], ["fifteenth", 15], ["sixteenth", 16], ["seventeenth", 17], ["eighteenth", 18], ["nineteenth", 19], ["twentieth", 20], ["twenty-first", 21], ["twenty first", 21], ["twenty-second", 22], ["twenty second", 22], ["twenty-third", 23], ["twenty third", 23], ["twenty-fourth", 24], ["twenty fourth", 24], ["twenty-fifth", 25], ["twenty fifth", 25], ["twenty-sixth", 26], ["twenty sixth", 26], ["twenty-seventh", 27], ["twenty seventh", 27], ["twenty-eighth", 28], ["twenty eighth", 28], ["twenty-ninth", 29], ["twenty ninth", 29], ["thirtieth", 30], ["thirty-first", 31], ["thirty first", 31]]);
+const boundDateGap = (gap: string) => !/[.!?\n]/.test(gap.replace(/\.{2,}/g, "").replace(/\.(?=[,;:)\]])/g, ""))
+  && !/\w/.test(gap.replace(/\b(?:at|on|the)\b/g, ""));
+
+function removeBoundOfferDates(text: string, options: readonly TimeOption[]): string {
+  const slots = options.flatMap(option => {
+    if (typeof option.start !== "number") return [];
+    const day = option.label.split(" ")[0];
+    const clock = [...option.label.toLowerCase().matchAll(CLOCK_MENTION)].at(-1);
+    const minute = clock ? clockMinute(clock) : undefined;
+    let month: number | undefined, dayOfMonth: number | undefined;
+    if (day !== undefined && DAY_NAMES.some(([name]) => name === day)) {
+      const base = new Date(option.start);
+      for (const offset of [-1, 0, 1]) {
+        const date = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + offset));
+        if (DAY_NAMES[date.getUTCDay()]![0] === day) { month = date.getUTCMonth() + 1; dayOfMonth = date.getUTCDate(); break; }
+      }
+    }
+    return month === undefined || dayOfMonth === undefined ? [] : [{ day, month, dayOfMonth, minute }];
+  });
+  if (!slots.length) return text;
+  const mentions = timeMentions(text).filter(mention => mention.day || mention.minute !== undefined);
+  const spans: [number, number][] = [];
+  for (const match of text.matchAll(BOUNDABLE_OFFER_DATE)) {
+    let month: number | undefined, dayOfMonth: number | undefined;
+    if (match[1]) { month = OFFER_MONTH_NUMBER.get(match[1]); dayOfMonth = Number(match[2]); }
+    else if (match[3]) {
+      month = OFFER_MONTH_NUMBER.get(match[5]!);
+      if (month === 5 && !match[4]) continue;
+      dayOfMonth = Number(match[3]);
+    } else dayOfMonth = match[6] ? Number(match[6]) : OFFER_DAY_NUMBER.get(match[7]!);
+    if (dayOfMonth === undefined || dayOfMonth < 1 || dayOfMonth > 31) continue;
+    const candidates = slots.filter(slot => slot.dayOfMonth === dayOfMonth && (month === undefined || slot.month === month));
+    if (!candidates.length) continue;
+    const at = match.index!, end = at + match[0].length;
+    let bound = options.length === 1;
+    if (!bound) {
+      const adjacent = mentions.filter(mention => (mention.end <= at && boundDateGap(text.slice(mention.end, at)))
+        || (mention.at >= end && boundDateGap(text.slice(end, mention.at))));
+      bound = candidates.some(slot => adjacent.length > 0
+        && adjacent.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute)));
+    }
+    if (bound) spans.push([at, end]);
+  }
+  let out = text;
+  for (const [at, end] of spans.sort(([first], [second]) => second - first)) out = out.slice(0, at) + " ".repeat(end - at) + out.slice(end);
+  return out;
+}
+
 function remainderAffirmed(t: string): boolean {
   if (GENERAL_AVAILABILITY.test(t) && !remainderRefused(t)) return true;
   const phrase = REMAINDER_PHRASE.exec(t);
@@ -1894,7 +1947,7 @@ export function parseProbeReply(
   const workingNormalized = relativeRewritten.text;
   const historic = options.length ? separatePastProbeTimes(workingNormalized) : { current: workingNormalized, past: false };
   const { past } = historic;
-  const { current: t, unbound } = separateUnboundProbeTimes(historic.current);
+  const { current: t, unbound } = separateUnboundProbeTimes(options.length ? removeBoundOfferDates(historic.current, options) : historic.current);
   const original = consentScan(body);
   const scoped = (past || unbound && original.answer !== "counter") && original.why !== "conditional" && original.why !== "hedged";
   let c = scoped ? consentScan(t) : original;
