@@ -1750,22 +1750,50 @@ function probeTimeIsRefused(text: string, at: number, end: number): boolean {
 
 function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, memberChoiceAt: (at: number) => boolean, dayLists: readonly ProbeSpan[]): TimeMention[] {
   const mentions = timeMentions(text, recoverTrailingPair);
+  const coverAt: number[] = [];
+  const coverEnd: number[] = [];
+  const coverMax: number[] = [];
+  const coverAdd = (at: number, end: number) => {
+    let lo = 0, hi = coverAt.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (coverAt[mid]! <= at) lo = mid + 1; else hi = mid; }
+    coverAt.splice(lo, 0, at);
+    coverEnd.splice(lo, 0, end);
+    coverMax.splice(lo, 0, end);
+    let run = lo > 0 ? coverMax[lo - 1]! : Number.NEGATIVE_INFINITY;
+    for (let i = lo; i < coverMax.length; i++) { run = Math.max(run, coverEnd[i]!); coverMax[i] = run; }
+  };
+  const coverHas = (at: number, end: number): boolean => {
+    let lo = 0, hi = coverAt.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (coverAt[mid]! <= at) lo = mid + 1; else hi = mid; }
+    return lo > 0 && coverMax[lo - 1]! >= end;
+  };
+  for (const mention of [...mentions].sort((a, b) => a.at - b.at)) {
+    coverAt.push(mention.at);
+    coverEnd.push(mention.end);
+    coverMax.push(Math.max(mention.end, coverMax.at(-1) ?? Number.NEGATIVE_INFINITY));
+  }
   for (const list of dayLists) for (const token of text.slice(list.at, list.end).matchAll(PROBE_DAY_LIST_TOKEN)) {
     const at = list.at + token.index, end = at + token[0].length;
-    if (mentions.some(mention => mention.at <= at && end <= mention.end)) continue;
+    if (coverHas(at, end)) continue;
     const day = DAY_WORDS.find(([word]) => token[0].search(word) === 0)?.[1];
-    if (day) mentions.push({ at, end, day });
+    if (day) { mentions.push({ at, end, day }); coverAdd(at, end); }
   }
   // A matching restatement keeps the exact clock and can supply its trailing day.
+  const partByStart = new Map<number, TimeMention>();
+  for (const mention of mentions) if (mention.part !== undefined && !partByStart.has(mention.at)) partByStart.set(mention.at, mention);
+  const restatedLead = /\s+in the\s+/y;
   for (const clock of mentions.filter(mention => mention.minute !== undefined)) {
-    const alias = mentions.find(part => !part.group && part.minute === undefined && part.part === partOf(clock.minute!)
-      && (!part.day || !clock.day || part.day === clock.day)
-      && RESTATED_CLOCK_PART.test(text.slice(part.at, part.end))
-      && /^\s+in the\s+$/.test(text.slice(clock.end, part.at)));
-    if (!alias) continue;
+    restatedLead.lastIndex = clock.end;
+    const lead = restatedLead.exec(text);
+    if (!lead) continue;
+    const alias = partByStart.get(clock.end + lead[0].length);
+    if (!alias || alias.group || alias.minute !== undefined || alias.part !== partOf(clock.minute!)
+      || (alias.day && clock.day && alias.day !== clock.day)
+      || !RESTATED_CLOCK_PART.test(text.slice(alias.at, alias.end))) continue;
     clock.day ??= alias.day;
     clock.end = alias.end;
     mentions.splice(mentions.indexOf(alias), 1);
+    partByStart.delete(alias.at);
   }
   // Recover a short day only at the start of a direct refusal or after a named time and a bare join.
   const byStart = new Set(mentions.map(mention => mention.at));

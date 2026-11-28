@@ -79,3 +79,16 @@ describe("probe reply parsing on mention-dense repeats", () => {
     expect(ms).toBeLessThan(10000);
   }, 60_000);
 });
+
+describe("probe time mention completion on mention-dense repeats", () => {
+  const options = [
+    { key: "a", start: Date.UTC(2026, 11, 4, 15), end: Date.UTC(2026, 11, 4, 16), label: "Friday 3pm" },
+  ];
+
+  test("repeated restated clock mentions read the same", () => {
+    const unit = "3pm in the afternoon or 4pm in the evening, ";
+    const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
+    const r = parseProbeReply(unit.repeat(1600), options as never, false, ctx);
+    expect(r).toEqual(parseProbeReply(unit, options as never, false, ctx));
+  }, 60_000);
+});
