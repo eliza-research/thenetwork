@@ -177,6 +177,66 @@ describe("Pass 3 Wave 1: LLM telemetry, repair, and bounded caching", () => {
     expect(calls[1]!.opts?.promptCacheKey).toBe("repair_prefix_v1");
   });
 
+  test("tryChatJson anchors the deadline once on first preflight without double-reading the clock", async () => {
+    let now = 1_000;
+    let clockReads = 0;
+    const tickingClock = {
+      now() {
+        clockReads += 1;
+        return ++now;
+      },
+    };
+    const deadlines: Array<number | undefined> = [];
+    const llm: LLM = {
+      async chat(_messages, opts) {
+        deadlines.push(opts?.deadlineMs);
+        if (deadlines.length === 1) {
+          now += 249;
+          return "{\"ok\": 123}";
+        }
+        return "{\"ok\": true}";
+      },
+    };
+    const parse = (raw: unknown) => {
+      const obj = raw as { ok?: unknown };
+      if (obj?.ok !== true) throw new Error("expected ok=true");
+      return { ok: true as const };
+    };
+    const baseMessages: ChatMessage[] = [{ role: "user", content: "check" }];
+
+    const res = await tryChatJson(llm, baseMessages, parse, {
+      attempts: 2,
+      deadlineMs: 30_000,
+      clock: tickingClock,
+    });
+    expect(res).toEqual({ ok: true, value: { ok: true }, attempts: 2 });
+    expect(deadlines).toEqual([30_000, 29_750]);
+    expect(clockReads).toBe(2);
+
+    const aborted = new AbortController();
+    aborted.abort();
+    const beforeAbortReads = clockReads;
+    const abortedRes = await tryChatJson(llm, baseMessages, parse, {
+      attempts: 1,
+      deadlineMs: 30_000,
+      signal: aborted.signal,
+      clock: tickingClock,
+    });
+    expect(abortedRes).toMatchObject({ ok: false, stopped: true, attempts: 0 });
+    expect(clockReads).toBe(beforeAbortReads);
+
+    let hookClock = 5_000;
+    const expiredRes = await tryChatJson(llm, baseMessages, parse, {
+      attempts: 1,
+      deadlineMs: 1_000,
+      clock: { now: () => hookClock },
+      beforeAttempt: () => {
+        hookClock += 1_500;
+      },
+    });
+    expect(expiredRes).toMatchObject({ ok: false, stopped: true, attempts: 0 });
+  });
+
   test("rerankTopVenuesWithLLM caches canonicalized inputs per LLM and re-validates leak guards on hit", async () => {
     const sfVenues = seedVenuesForCity("sf");
     const noonPdt = Date.UTC(2026, 9, 8, 19, 0);
