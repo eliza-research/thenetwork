@@ -5,7 +5,7 @@
 // network.channel_identities (phones and emails).
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import {
-  ADULT_AGE, DAY, isAppId, temporaryPresenceWindow,
+  ADULT_AGE, DAY, isAppId, isBusinessDomain, temporaryPresenceWindow,
   type Edge, type EdgeType, type Facet, type Intent, type Member, type MemberId, type ParticipationState,
   type Presence, type Proposal, type QualitySignals, type ReliabilityEvidence, type VampireTelemetry, type WorldSnapshot,
 } from "@thenetwork/core";
@@ -15,7 +15,7 @@ import { participationOverride, participationWindowModeKnown, validWindow, windo
 import { presenceWindowCurrentOrFuture } from "../../core/src/generated/travelPresence.ts";
 import { durableStaffHoldSnapshotStatus, staffBanSnapshotStatus } from "../../core/src/generated/staffSafetyService.ts";
 import type { SetStateRequest } from "../../core/src/svc/contract.ts";
-import { peonSeats } from "@thenetwork/engine";
+import { businessSeats } from "@thenetwork/engine";
 import { earliestDayKeyOf } from "../../core/src/birth-date.ts";
 import { birthDateExact, effectiveAge, effectiveBirthKey, readingsConflict, type BirthReadings } from "../../core/src/generated/memberAge.ts";
 import { mergeAgeReadings } from "../../core/src/generated/siteEnrollment.ts";
@@ -395,5 +395,5 @@ export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope =
   // peon: each job posting (a hiring manager's intent "peon:job ...") is a job seat with capacity =
   // openings (engine peonSeats). Read from the same rows, never stored twice. The pack hook keeps the
   // capacity left (packs.ts). Only adult managers get seats; nothing else changes for other apps.
-  return app === "peon" ? peonSeats(snap) : snap;
+  return isBusinessDomain(app) ? businessSeats(snap) : snap;
 }

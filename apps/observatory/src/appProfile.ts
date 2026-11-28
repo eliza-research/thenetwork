@@ -10,7 +10,7 @@
 //  - peon: the roles a job seat hires for and the member's introductions (applications). Proxy tags
 //    (zip, graduation year, gaps: peon:proxy:*) are never shown.
 import { canBeMatched, type Facet } from "@thenetwork/core";
-import type { AppProfile360, MemberDetail, PeonProfile360, SlopPrefs, SlopProfile360 } from "./types.ts";
+import type { AppProfile360, BusinessProfile360, DatingPrefs, DatingProfile360, MemberDetail } from "./types.ts";
 
 /** A score or rating of a person by its name (older rows and other raters). */
 const SCORE = /(^|[:_.])(desirability|attractiveness|attractive|attraction|hotness|looks|beauty|rating|ratings|elo|score|scores)([:_.=]|$)/i;
@@ -27,13 +27,22 @@ const isRating = (f: Facet) =>
 /** A score or rating of a person: never shown, revealed or not (PRD 40.5: never photo attractiveness scores). */
 export const isScoreFacet = (f: Facet) => isRating(f) || f.tags.some(t => SCORE.test(t)) || SCORE.test(f.kind) || /\b(attractiveness|desirability|hotness)\b/i.test(f.value);
 
-/** slop's dating facts: the pack's tag families (romance:, slop:, verify:, safety:). */
+/** Dating facts: the dating tag families (romance:, slop:, verify:, safety:). */
 const DATING = /^(romance|slop|verify|safety):/;
 const isDating = (f: Facet) => f.tags.some(t => DATING.test(t));
 
-/** The facets a member detail may carry for this app: never a score; on slop, dating facts only while revealed. */
+/** Dating-pack preference tags that stay hidden on unified ntwrk until revealed. */
+const DATING_PACK = /^slop:/;
+
+/** The facets a member detail may carry for this app: never a score; dating facts only while revealed. */
 export function memberFacets(app: string, facets: Facet[], revealed: boolean): Facet[] {
-  return facets.filter(f => !isScoreFacet(f) && (app !== "slop" || revealed || !isDating(f)));
+  return facets.filter(f => {
+    if (isScoreFacet(f)) return false;
+    if (revealed) return true;
+    if (app === "slop") return !isDating(f);
+    if (app === "ntwrk") return !f.tags.some(t => DATING_PACK.test(t));
+    return true;
+  });
 }
 
 const tagsOf = (facets: Facet[]) => facets.filter(f => !isScoreFacet(f)).flatMap(f => f.tags);
@@ -57,7 +66,7 @@ function ageCheckFailed(d: MemberDetail): boolean {
 }
 
 /**
- * May staff see this member's photos (slop)? "ok", or why not. Founder decision 9: no ID check, a stated
+ * May staff see this member's photos? "ok", or why not. Founder decision 9: no ID check, a stated
  * age of 18+ is enough; only a failed age check refuses an adult.
  */
 export function photosAllowed(d: MemberDetail): "ok" | "never_minor" | "needs_verification" {
@@ -65,7 +74,7 @@ export function photosAllowed(d: MemberDetail): "ok" | "never_minor" | "needs_ve
   return ageCheckFailed(d) ? "needs_verification" : "ok";
 }
 
-export function slopPrefs(facets: Facet[]): SlopPrefs {
+export function datingPrefs(facets: Facet[]): DatingPrefs {
   const t = tagsOf(facets);
   const one = (p: string) => after(t, p)[0];
   const age = one("romance:age:")?.split("-").map(Number);
@@ -81,25 +90,40 @@ export function slopPrefs(facets: Facet[]): SlopPrefs {
     verification: t.filter(x => x.startsWith("verify:")), safety: t.filter(x => x.startsWith("safety:")),
   };
 }
+export const slopPrefs = datingPrefs;
 
-function slopProfile(d: MemberDetail, revealed: boolean): SlopProfile360 {
+export function hasDatingData(d: MemberDetail): boolean {
+  return d.member.domains?.includes("dating") === true
+    || d.facets.some(f => !isScoreFacet(f) && isDating(f))
+    || d.intents.some(i => i.category === "romance")
+    || d.opportunities.some(o => o.domain === "dating" || o.category === "romance");
+}
+
+export function hasBusinessData(d: MemberDetail): boolean {
+  return d.member.domains?.includes("business") === true
+    || d.facets.some(f => !isScoreFacet(f) && f.tags.some(t => t.startsWith("peon:") && !t.startsWith("peon:proxy:")))
+    || d.intents.some(i => i.category === "professional" || i.details === "peon:job" || /^hire:/i.test(i.objective))
+    || d.opportunities.some(o => o.domain === "business" || o.category === "professional" || o.workIntroChannel !== undefined);
+}
+
+export function datingProfile(d: MemberDetail, revealed: boolean, app: "slop" | "ntwrk" = "slop"): DatingProfile360 {
   const dating = d.facets.filter(f => !isScoreFacet(f) && isDating(f));
   const why = photosAllowed(d);
   return {
-    app: "slop", adult: adultOf(d), ageVerified: ageVerifiedOf(d),
-    prefs: revealed ? { hidden: false, prefs: slopPrefs(dating) } : { hidden: true, count: dating.length },
+    app, adult: adultOf(d), ageVerified: ageVerifiedOf(d),
+    prefs: revealed ? { hidden: false, prefs: datingPrefs(dating) } : { hidden: true, count: dating.length },
     photos: why === "ok" ? "reason_required" : why,
   };
 }
 
-function peonProfile(d: MemberDetail): PeonProfile360 {
+export function businessProfile(d: MemberDetail, app: "peon" | "ntwrk" = "peon"): BusinessProfile360 {
   // Proxies (zip, graduation year, gaps) never: whatever their scope.
   const t = tagsOf(d.facets).filter(x => !x.startsWith("peon:proxy:"));
   const one = (p: string) => after(t, p)[0];
   const entity = one("peon:entity:");
   const num = (p: string) => { const v = one(p); return v !== undefined && Number.isFinite(Number(v)) ? Number(v) : undefined; };
   const job = d.intents.find(i => i.details === "peon:job" || /^hire:/i.test(i.objective));
-  const roles: PeonProfile360["roles"] = entity === "job"
+  const roles: BusinessProfile360["roles"] = entity === "job"
     ? [{
       ...(job ? { title: job.objective.replace(/^hire:\s*/i, "") } : {}), ...(one("peon:family:") ? { family: one("peon:family:") } : {}),
       ...(num("peon:seniority:") !== undefined ? { seniority: num("peon:seniority:") } : {}), ...(one("peon:pay:") ? { pay: `$${one("peon:pay:")}k` } : {}),
@@ -107,15 +131,24 @@ function peonProfile(d: MemberDetail): PeonProfile360 {
       ...(num("peon:openings:") !== undefined ? { openings: num("peon:openings:") } : {}), verified: t.includes("peon:verified"),
     }]
     : after(t, "peon:family:").map(family => ({ family, ...(num("peon:seniority:") !== undefined ? { seniority: num("peon:seniority:") } : {}), ...(after(t, "peon:mode:").length ? { mode: after(t, "peon:mode:").join("/") } : {}) }));
+  const appsOpps = d.opportunities.filter(o =>
+    o.source !== "shadow" && (app === "peon" || o.domain === "business" || o.category === "professional" || o.workIntroChannel !== undefined),
+  );
   return {
-    app: "peon", entity: entity === "job" || entity === "candidate" ? entity : "unknown", roles,
-    applications: d.opportunities.filter(o => o.source !== "shadow").map(o => ({ opportunityId: o.id, state: o.state, ...(o.status[d.member.id] ? { status: o.status[d.member.id] } : {}), at: o.updatedAt })),
+    app, entity: entity === "job" || entity === "candidate" ? entity : "unknown", roles,
+    applications: appsOpps.map(o => ({ opportunityId: o.id, state: o.state, ...(o.status[d.member.id] ? { status: o.status[d.member.id] } : {}), at: o.updatedAt })),
   };
 }
 
-/** The app's own panel for one member. `revealed`: an active reveal for this member (safety or admin). */
+/** The member's domain panel(s). `revealed`: an active reveal for this member (safety or admin). */
 export function appProfile(app: string, d: MemberDetail, o: { revealed: boolean }): AppProfile360 {
-  if (app === "slop") return slopProfile(d, o.revealed);
-  if (app === "peon") return peonProfile(d);
+  if (app === "slop") return datingProfile(d, o.revealed, "slop");
+  if (app === "peon") return businessProfile(d, "peon");
+  if (app === "ntwrk") {
+    const dating = hasDatingData(d) ? datingProfile(d, o.revealed, "ntwrk") : undefined;
+    const business = hasBusinessData(d) ? businessProfile(d, "ntwrk") : undefined;
+    if (dating || business) return { app: "ntwrk", ...(dating ? { dating } : {}), ...(business ? { business } : {}) };
+    return { app: "ntwrk", none: true };
+  }
   return { app, none: true };
 }

@@ -13,8 +13,8 @@ import { maskPii } from "../../../packages/core/src/pii.ts";
 import { Lab, LAB_LIMITS, LabQueueFullError, validateLab, type LabOptions } from "./lab.ts";
 import { runDiff } from "./runDiff.ts";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
-import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, isAppId, slaHours, toNetworkReason, type AppId } from "./apps.ts";
-import { appProfile, memberFacets, photosAllowed } from "./appProfile.ts";
+import { APP_IDS, appUrlEnv, consoleApps, DEFAULT_APP, DOMAIN_IDS, DOMAIN_TO_APP, inferDomain, isAppId, isDomainId, slaHours, toNetworkReason, type AppId, type DomainId } from "./apps.ts";
+import { appProfile, hasDatingData, memberFacets, photosAllowed } from "./appProfile.ts";
 import { countsMember, countsOpp, shapeDelta, shapeState, viewClass, type ViewClass } from "./shape.ts";
 import { appHealth } from "./health.ts";
 import { PeopleView, peopleUrl } from "./people.ts";
@@ -22,14 +22,14 @@ import { CostView } from "./ops.ts";
 import { gatheringId, type GatheringRequest } from "./gatherings.ts";
 import { staffStepRoutes } from "./staffSteps.ts";
 import {
-  AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, globalRolesFor, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
+  AccessVerifier, allowed, appsFor, authenticateStaff, canCrossApp, createAudit, domainsFor, globalRolesFor, hasDomainRole, hasEverywhere, parseRoles, parseTokenGrants, PgStaffRoles, rolesFor, ssoGrants, staffUser,
   type AccessConfig, type AuditSink,
 } from "./staff.ts";
 import type { GameOptions } from "./sources/game.ts";
 import { HIDDEN_MESSAGE, RealSource, type RealOptions } from "./sources/real.ts";
 import { isTimeout, PreviewUnavailableError, SERVICE_TIMEOUT, serviceFromEnv, ServiceUnreachableError } from "./sources/service.ts";
 import { historyQuery, type DataSource } from "./sources/source.ts";
-import type { AppHealth, AuditEntry, ControlCommand, ControlResult, EnvInfo, Mode, ObsDelta, ObsMember, RevealGrant, SafetyAction, StaffRole, StaffUser } from "./types.ts";
+import type { AppHealth, AuditEntry, ControlCommand, ControlResult, EnvInfo, Mode, ObsCitySummary, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, RevealGrant, SafetyAction, SafetyInfo, SearchHit, StaffRole, StaffUser } from "./types.ts";
 
 export interface ServerOptions {
   port?: number;
@@ -351,10 +351,27 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (v === null || v === "") return DEFAULT_APP;
     return isAppId(v) ? v : json({ error: `unknown app "${v}" (one of ${APP_IDS.join(", ")})`, code: "unknown_app" }, 400);
   }
+  function explicitAppParam(req: Request): AppId | undefined {
+    const v = new URL(req.url).searchParams.get("app");
+    return v && isAppId(v) ? v : undefined;
+  }
+  function parseDomainsParam(req: Request): DomainId[] | undefined | Response {
+    const raw = new URL(req.url).searchParams.get("domains");
+    if (raw === null) return undefined;
+    const parts = raw.split(",").map(s => s.trim().toLowerCase()).filter(Boolean);
+    if (!parts.length) return json({ error: `domains must include at least one of ${DOMAIN_IDS.join(", ")}`, code: "unknown_domain" }, 400);
+    const chosen = new Set<DomainId>();
+    for (const part of parts) {
+      if (!isDomainId(part)) return json({ error: `unknown domain "${part}" (one of ${DOMAIN_IDS.join(", ")})`, code: "unknown_domain" }, 400);
+      chosen.add(part);
+    }
+    return DOMAIN_IDS.filter(d => chosen.has(d));
+  }
   const forbidden = (text: string) => json({ error: `forbidden: ${text}`, code: "forbidden" }, 403);
   const modeChanged = () => json({ ok: false, error: `the console switched to ${mode} mode: reload before you act`, code: "mode_changed" }, 409);
   type Req = Request & { params: Record<string, string> };
   type Handler = (req: Req, user: StaffUser, app: AppId, seen: Mode) => Response | Promise<Response>;
+  type DomainHandler = (req: Req, user: StaffUser, app: AppId, seen: Mode, domains?: DomainId[]) => Response | Promise<Response>;
   const admitRoute = (req: Request, roles: StaffRole[], need: readonly StaffRole[] | undefined, appRoute: boolean, seen: Mode = mode) => {
     const said = req.headers.get(MODE_HEADER);
     const decision = stepStaffRoute(initialRoute, {
@@ -377,6 +394,50 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
     if (route.decision === "ModeChanged") return modeChanged();
     return forbidden(`no role for ${app}${seen === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
   };
+  const domainGuard = (h: DomainHandler, need?: readonly StaffRole[]) => async (req: Req) => {
+    const u = await identify(req);
+    if (u instanceof Response) return u;
+    const app = appOf(req);
+    if (app instanceof Response) return app;
+    const domains = parseDomainsParam(req);
+    if (domains instanceof Response) return domains;
+    const explicit = explicitAppParam(req);
+    const seen = mode;
+    if (domains === undefined || (explicit !== undefined && explicit !== DEFAULT_APP)) {
+      const route = admitRoute(req, [...rolesFor(u, app, seen)], need, true, seen);
+      if (route.phase === "RouteRunning") {
+        try { return await h(req, u, app, seen, domains); } catch (e) { return fail(e); }
+      }
+      if (route.decision === "NeedsRole") return forbidden(`needs ${["admin", ...(need ?? [])].join(" or ")} for ${app}`);
+      if (route.decision === "ModeChanged") return modeChanged();
+      return forbidden(`no role for ${app}${seen === "real" && u.roles.includes("engineer") ? " (engineer: simulated worlds only)" : ""}`);
+    }
+    const said = req.headers.get(MODE_HEADER);
+    if (req.method !== "GET" && said && said !== seen) return modeChanged();
+    for (const d of domains) {
+      if (!hasDomainRole(u, d, seen, need)) return forbidden(`no access to domain ${d}`);
+    }
+    try { return await h(req, u, app, seen, domains); } catch (e) { return fail(e); }
+  };
+  function unifiedAppsForDomains(u: StaffUser, seen: Mode, domains: readonly DomainId[], need?: readonly StaffRole[]): AppId[] {
+    const permitted = (a: AppId) => {
+      const held = rolesFor(u, a, seen);
+      if (!held.size) return false;
+      return need === undefined || allowed(u, need, a, seen);
+    };
+    if (seen === "game") {
+      if (permitted(DEFAULT_APP)) return [DEFAULT_APP];
+      for (const d of domains) { const a = DOMAIN_TO_APP[d]; if (permitted(a)) return [a]; }
+      return [];
+    }
+    const apps: AppId[] = [];
+    if (permitted(DEFAULT_APP)) apps.push(DEFAULT_APP);
+    for (const d of domains) {
+      const a = DOMAIN_TO_APP[d];
+      if (permitted(a) && !apps.includes(a)) apps.push(a);
+    }
+    return apps;
+  }
   const global = (h: (req: Req, user: StaffUser) => Response | Promise<Response>, need?: readonly StaffRole[], identityCheck = false) => async (req: Req) => {
     const u = await identify(req, identityCheck);
     if (u instanceof Response) return u;
@@ -520,7 +581,7 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       ...webRoutes,
       "/healthz": () => new Response(JSON.stringify({ ok: true }), { headers: { ...SECURITY_HEADERS, "content-type": "application/json" } }),
       "/api/health": global(() => json({ ok: true, mode })),
-      "/api/me": global((_r, u) => json({ ...u, secondFactor: u.secondFactor === true, realOnly, apps: appsFor(u, mode), crossApp: canCrossApp(u), appInfo: consoleApps(sla) }), undefined, true),
+      "/api/me": global((_r, u) => json({ ...u, secondFactor: u.secondFactor === true, realOnly, apps: appsFor(u, mode), domains: domainsFor(u, mode), crossApp: canCrossApp(u), appInfo: consoleApps(sla) }), undefined, true),
       "/api/apps/health": global(async (_r, u) => {
         const out: AppHealth[] = [];
         for (const app of appsFor(u, mode)) {
@@ -545,14 +606,37 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           return json({ ok: true, mode });
         }, []),
       },
-      "/api/state": guard(async (_r, u, app) => {
-        const truth = truthFor(u, app);
-        return json(withAuth(shapeState((await source(mode, app)).state({ truth }), viewClass(rolesFor(u, app, mode)), truth)));
+      "/api/state": domainGuard(async (_r, u, app, seen, domains) => {
+        if (!domains) {
+          const truth = truthFor(u, app);
+          return json(withAuth(shapeState((await source(seen, app)).state({ truth }), viewClass(rolesFor(u, app, seen)), truth)));
+        }
+        const explicit = explicitAppParam(_r);
+        const apps = explicit && explicit !== DEFAULT_APP ? [app] : unifiedAppsForDomains(u, seen, domains);
+        const shaped = await Promise.all(apps.map(async a => {
+          const truth = truthFor(u, a);
+          const s = (await source(seen, a)).state({ truth });
+          return { app: a, state: shapeState(s, viewClass(rolesFor(u, a, seen)), truth) };
+        }));
+        const base = shaped.length === 1 ? shaped[0]!.state : mergeStates(shaped);
+        return json(withAuth(filterStateByDomains(base, domains)));
       }),
-      "/api/cities": guard(async (_r, _u, app) => {
-        const src = await source(mode, app);
-        const cities = src.loadCities ? await src.loadCities() : [];
-        return json({ cities });
+      "/api/cities": domainGuard(async (req, u, app, seen, domains) => {
+        if (!domains) {
+          const src = await source(seen, app);
+          const cities = src.loadCities ? await src.loadCities() : [];
+          return json({ cities });
+        }
+        const explicit = explicitAppParam(req);
+        const apps = explicit && explicit !== DEFAULT_APP ? [app] : unifiedAppsForDomains(u, seen, domains);
+        const sourcesList = await Promise.all(apps.map(a => source(seen, a)));
+        const baseCities: ObsCitySummary[] = sourcesList[0]?.loadCities ? await sourcesList[0].loadCities() : [];
+        const shaped = sourcesList.map((src, i) => ({ app: apps[i]!, state: src.state() }));
+        const filtered = filterStateByDomains(shaped.length === 1 ? shaped[0]!.state : mergeStates(shaped), domains);
+        const memberCounts = new Map<string, number>(), oppCounts = new Map<string, number>();
+        for (const m of filtered.members) if (!m.declined) memberCounts.set(m.city, (memberCounts.get(m.city) ?? 0) + 1);
+        for (const o of filtered.opportunities) if (o.source !== "shadow") oppCounts.set(o.city, (oppCounts.get(o.city) ?? 0) + 1);
+        return json({ cities: baseCities.map(c => ({ ...c, memberCount: memberCounts.get(c.id) ?? 0, opportunityCount: oppCounts.get(c.id) ?? 0 })) });
       }),
       "/api/venues": guard(async (req, _u, app) => {
         const rawCity = new URL(req.url).searchParams.get("city")?.trim().toLowerCase() ?? "";
@@ -617,12 +701,13 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
           if (parsed instanceof Response) return parsed;
           const b = parsed.body;
           const reason = String(b.reason ?? "").trim();
-          if (app !== "slop") return json({ ok: false, error: "photos exist only on slop", code: "no_photos" }, 404);
+          if (app !== "slop" && app !== "ntwrk") return json({ ok: false, error: "photos are only available for dating members", code: "no_photos" }, 404);
           if (reason.length < PERSON_REASON_MIN) return json({ ok: false, error: `a reason (at least ${PERSON_REASON_MIN} characters) is required`, code: "reason_required" }, 400);
           if (revision !== modeRevision) return modeChanged();
           const src = await source(seen, app);
           const d = await src.member(id, { reveal: true });
           if (!d) return json({ ok: false, error: "not found" }, 404);
+          if (app === "ntwrk" && !hasDatingData(d)) return json({ ok: false, error: "photos are only available for dating members", code: "no_photos" }, 404);
           const why = photosAllowed(d);
           if (why !== "ok") {
             const no = await record(u, app, { action: "read_photos", targetType: "member", targetId: id, reason, ok: false, detail: { refused: why } });
@@ -663,10 +748,21 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
       "/api/review/:id/plan": { GET: reviewPreviewRoute("plan") },
       "/api/review/:id/probes": { GET: reviewPreviewRoute("probes") },
       "/api/reveal": {
-        GET: guard((_r, u, app) => {
-          const prefix = `${u.id}|${mode}|${app}|`;
-          return json([...reveals.entries()].flatMap(([key, grant]) =>
-            key.startsWith(prefix) && revealFor(u, app, grant.memberId) === grant ? [grant] : []));
+        GET: domainGuard((req, u, app, seen, domains) => {
+          const explicit = explicitAppParam(req);
+          const apps = !domains || (explicit && explicit !== DEFAULT_APP) ? [app] : unifiedAppsForDomains(u, seen, domains);
+          const grants: RevealGrant[] = [];
+          const seenIds = new Set<string>();
+          for (const a of apps) {
+            const prefix = `${u.id}|${seen}|${a}|`;
+            for (const [key, grant] of reveals.entries()) {
+              if (key.startsWith(prefix) && revealFor(u, a, grant.memberId, seen) === grant && !seenIds.has(grant.memberId)) {
+                seenIds.add(grant.memberId);
+                grants.push(grant);
+              }
+            }
+          }
+          return json(grants);
         }),
         POST: guard(async (req, u, app) => {
           const readMode = mode, revision = modeRevision;
@@ -743,13 +839,25 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         }),
       },
       "/api/safety": {
-        GET: guard(async (_r, u, app) => {
-          const readMode = mode, revision = modeRevision;
-          const no = await record(u, app, { action: "read_safety", ok: true });
+        GET: domainGuard(async (req, u, app, seen, domains) => {
+          const readMode = seen, revision = modeRevision;
+          const no = await record(u, app, { action: "read_safety", ok: true, ...(domains ? { detail: { domains } } : {}) }, readMode);
           if (no) return no;
           if (revision !== modeRevision) return modeChanged();
-          const safety = await (await source(readMode, app)).safety();
-          return revision === modeRevision ? json(safety) : modeChanged();
+          if (!domains) {
+            const safety = await (await source(readMode, app)).safety();
+            return revision === modeRevision ? json(safety) : modeChanged();
+          }
+          const explicit = explicitAppParam(req);
+          const apps = explicit && explicit !== DEFAULT_APP ? [app] : unifiedAppsForDomains(u, readMode, domains, ["safety"]);
+          const parts = await Promise.all(apps.map(async a => {
+            const src = await source(readMode, a);
+            const st = src.state();
+            const info = await src.safety();
+            return filterSafetyByDomains(info, st.members, st.opportunities, domains);
+          }));
+          if (revision !== modeRevision) return modeChanged();
+          return json(parts.length === 1 ? parts[0]! : mergeSafety(parts));
         }, ["safety"]),
         POST: guard(async (req, u, app, seen) => {
           const revision = modeRevision;
@@ -884,12 +992,29 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         const rows = await audit.list({ limit: Math.min(1000, Number(q.get("limit")) || 200), actor: q.get("actor") ?? undefined, targetType: q.get("targetType") ?? undefined, targetId: q.get("targetId") ?? undefined, ...(every ? {} : { apps: [app] }) });
         return json({ sink: audit.kind, entries: rows });
       }, []),
-      "/api/search": guard(async (req, u, app) => {
+      "/api/search": domainGuard(async (req, u, app, seen, domains) => {
         const q = (new URL(req.url).searchParams.get("q") ?? "").trim();
         if (q.length < 2 || q.length > 200) return json({ error: "q must be 2-200 characters" }, 400);
-        const no = await record(u, app, { action: "search", targetType: "search", ok: true, detail: { qLength: q.length } });
+        const no = await record(u, app, { action: "search", targetType: "search", ok: true, detail: { qLength: q.length, ...(domains ? { domains } : {}) } }, seen);
         if (no) return no;
-        return json(await (await source(mode, app)).search(q));
+        if (!domains) return json(await (await source(seen, app)).search(q));
+        const explicit = explicitAppParam(req);
+        const apps = explicit && explicit !== DEFAULT_APP ? [app] : unifiedAppsForDomains(u, seen, domains, ["safety"]);
+        const allow = new Set(domains);
+        const hitGroups = await Promise.all(apps.map(async a => {
+          const src = await source(seen, a);
+          const st = src.state();
+          const memberMap = new Map(st.members.map(m => [m.id, m]));
+          const oppMap = new Map(st.opportunities.map(o => [o.id, o]));
+          const hits = await src.search(q);
+          return hits.filter(h => {
+            const opp = h.opportunityId ? oppMap.get(h.opportunityId) : undefined;
+            if (opp) return allow.has(oppDomainOf(opp));
+            const m = memberMap.get(h.memberId);
+            return m ? memberDomainsOf(m).some(d => allow.has(d)) : allow.has(inferDomain({ app: a }));
+          });
+        }));
+        return json(hitGroups.flat().sort((a, b) => b.t - a.t).slice(0, 100));
       }, ["safety"]),
       "/api/runs/diff": guard(async (req, _u, app) => {
         const q = new URL(req.url).searchParams;
@@ -1039,6 +1164,189 @@ export async function createServer(opts: ServerOptions = {}): Promise<Observator
         await rolesSql?.close();
       }
     },
+  };
+}
+
+function memberDomainsOf(m: ObsMember): readonly DomainId[] {
+  if (m.domains?.length) return m.domains;
+  return [inferDomain({ app: m.sourceApp })];
+}
+
+function oppDomainOf(o: ObsOpportunity): DomainId {
+  return o.domain ?? inferDomain({ app: o.sourceApp, category: o.category, generator: o.generator, workIntroChannel: o.workIntroChannel });
+}
+
+function requestDomainOf(r: ObsRequest): DomainId {
+  return r.domain ?? inferDomain({ category: r.category });
+}
+
+function filterStateByDomains(s: ObsState, domains: readonly DomainId[]): ObsState {
+  const allow = new Set(domains);
+  const members = s.members.filter(m => memberDomainsOf(m).some(d => allow.has(d)));
+  const memberIds = new Set(members.map(m => m.id));
+  const memberMap = new Map(s.members.map(m => [m.id, m]));
+  const opportunities = s.opportunities.filter(o => allow.has(oppDomainOf(o)));
+  const oppMap = new Map(s.opportunities.map(o => [o.id, o]));
+  const edges = s.edges.filter(e => memberIds.has(e.from) && memberIds.has(e.to));
+  const feed = s.feed.filter(x => {
+    if (x.domain) return allow.has(x.domain);
+    const o = x.opportunityId ? oppMap.get(x.opportunityId) : undefined;
+    if (o) return allow.has(oppDomainOf(o));
+    const ms = (x.members ?? []).map(id => memberMap.get(id)).filter((m): m is ObsMember => !!m);
+    if (ms.length) return ms.some(m => memberDomainsOf(m).some(d => allow.has(d)));
+    return allow.has("friendship");
+  });
+  const requests = s.requests?.filter(r => allow.has(requestDomainOf(r)));
+  const byCity: Record<string, number> = {}, byState: Record<string, number> = {};
+  let joined = 0;
+  for (const m of members) {
+    byState[m.state] = (byState[m.state] ?? 0) + 1;
+    if (m.joined) { joined++; byCity[m.city] = (byCity[m.city] ?? 0) + 1; }
+  }
+  const proposalsBySource: Record<string, number> = {}, oppsByState: Record<string, number> = {};
+  let proposals = 0;
+  for (const o of opportunities) {
+    if (o.source === "shadow") continue;
+    proposals++;
+    proposalsBySource[o.source] = (proposalsBySource[o.source] ?? 0) + 1;
+    oppsByState[o.state] = (oppsByState[o.state] ?? 0) + 1;
+  }
+  const edgesByType: Record<string, number> = {};
+  for (const e of edges) edgesByType[e.type] = (edgesByType[e.type] ?? 0) + 1;
+  return {
+    ...s,
+    members, edges, opportunities, feed,
+    ...(requests ? { requests } : {}),
+    stats: { ...s.stats, members: members.length, joined, byCity, byState, proposals, proposalsBySource, oppsByState, edgesByType },
+  };
+}
+
+function sumMaps(maps: Record<string, number>[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const m of maps) for (const [k, v] of Object.entries(m)) out[k] = (out[k] ?? 0) + v;
+  return out;
+}
+
+function mergeStates(parts: { app: AppId; state: ObsState }[]): ObsState {
+  const first = parts[0]!.state;
+  const members = new Map<string, ObsMember>();
+  const edges = new Map<string, ObsEdge>();
+  const opps = new Map<string, ObsOpportunity>();
+  const reqs = new Map<string, ObsRequest>();
+  const runs = new Map<string, ObsState["engineRuns"][number]>();
+  const feed: ObsFeedItem[] = [];
+  for (const { app, state } of parts) {
+    for (const m of state.members) {
+      const prev = members.get(m.id);
+      if (prev) {
+        const merged = new Set<DomainId>([...memberDomainsOf(prev), ...memberDomainsOf(m)]);
+        members.set(m.id, { ...prev, domains: DOMAIN_IDS.filter(d => merged.has(d)) });
+      } else {
+        members.set(m.id, { ...m, sourceApp: m.sourceApp ?? app });
+      }
+    }
+    for (const e of state.edges) if (!edges.has(e.id)) edges.set(e.id, e);
+    for (const o of state.opportunities) if (!opps.has(o.id)) opps.set(o.id, { ...o, sourceApp: o.sourceApp ?? app });
+    for (const r of state.requests ?? []) if (!reqs.has(r.id)) reqs.set(r.id, r);
+    for (const run of state.engineRuns) if (!runs.has(run.id)) runs.set(run.id, run);
+    for (const f of state.feed) feed.push(f);
+  }
+  feed.sort((a, b) => a.t - b.t || a.seq - b.seq);
+  const reindexedFeed = feed.slice(-400).map((f, i) => ({ ...f, seq: i + 1 }));
+  const statsList = parts.map(p => p.state.stats);
+  const sum = (f: (s: ObsStats) => number) => statsList.reduce((acc, s) => acc + f(s), 0);
+  const mergedStats: ObsStats = {
+    ...first.stats,
+    members: members.size,
+    joined: [...members.values()].filter(m => m.joined).length,
+    byCity: sumMaps(statsList.map(s => s.byCity)),
+    byState: sumMaps(statsList.map(s => s.byState)),
+    messages: sum(s => s.messages), inbound: sum(s => s.inbound), outbound: sum(s => s.outbound), proactive: sum(s => s.proactive),
+    proposals: sum(s => s.proposals), proposalsBySource: sumMaps(statsList.map(s => s.proposalsBySource)),
+    oppsByState: sumMaps(statsList.map(s => s.oppsByState)), invites: sum(s => s.invites), accepts: sum(s => s.accepts), declines: sum(s => s.declines),
+    meetingsScheduled: sum(s => s.meetingsScheduled), meetingsHeld: sum(s => s.meetingsHeld), attended: sum(s => s.attended),
+    noShows: sum(s => s.noShows), cancelledWithNotice: sum(s => s.cancelledWithNotice),
+    enjoymentSum: sum(s => s.enjoymentSum), enjoymentN: sum(s => s.enjoymentN),
+    blocks: sum(s => s.blocks), optOuts: sum(s => s.optOuts), adversarialAttempts: sum(s => s.adversarialAttempts),
+    invariantViolations: sum(s => s.invariantViolations), errors: sum(s => s.errors),
+    compatible: sum(s => s.compatible), unsafe: sum(s => s.unsafe), oracleJudged: sum(s => s.oracleJudged),
+    edgesByType: sumMaps(statsList.map(s => s.edgesByType)),
+  };
+  const okEnv = parts.find(p => !p.state.env.error)?.state.env ?? first.env;
+  const maxVersion = Math.max(...parts.map(p => p.state.version));
+  const maxNow = Math.max(...parts.map(p => p.state.clock.now));
+  const minStart = Math.min(...parts.map(p => p.state.clock.start));
+  return {
+    ...first,
+    env: { ...okEnv, app: DEFAULT_APP },
+    clock: { ...first.clock, now: maxNow, start: minStart },
+    members: [...members.values()],
+    edges: [...edges.values()],
+    opportunities: [...opps.values()],
+    feed: reindexedFeed,
+    stats: mergedStats,
+    engineRuns: [...runs.values()].sort((a, b) => a.at - b.at),
+    requests: [...reqs.values()].sort((a, b) => b.openedAt - a.openedAt),
+    version: maxVersion,
+  };
+}
+
+function filterSafetyByDomains(info: SafetyInfo, members: readonly ObsMember[], opps: readonly ObsOpportunity[], domains: readonly DomainId[]): SafetyInfo {
+  const allow = new Set(domains);
+  const memberMap = new Map(members.map(m => [m.id, m]));
+  const oppMap = new Map(opps.map(o => [o.id, o]));
+  const okMember = (id: string) => { const m = memberMap.get(id); return m ? memberDomainsOf(m).some(d => allow.has(d)) : false; };
+  return {
+    ...info,
+    cases: info.cases.filter(c => okMember(c.memberId)),
+    watch: info.watch.filter(okMember),
+    hold: info.hold.filter(okMember),
+    minors: {
+      members: info.minors.members.filter(okMember),
+      unknownAge: info.minors.unknownAge.filter(okMember),
+      inOpportunities: info.minors.inOpportunities.filter(x => {
+        const o = oppMap.get(x.opportunityId);
+        return o ? allow.has(oppDomainOf(o)) : okMember(x.memberId);
+      }),
+    },
+    ...(info.reports ? {
+      reports: info.reports.filter(r => {
+        const o = r.opportunityId ? oppMap.get(r.opportunityId) : undefined;
+        return o ? allow.has(oppDomainOf(o)) : okMember(r.subjectId);
+      }),
+    } : {}),
+  };
+}
+
+function mergeSafety(infos: SafetyInfo[]): SafetyInfo {
+  const cases = new Map<string, SafetyInfo["cases"][number]>();
+  const watch = new Set<string>(), hold = new Set<string>();
+  const minorMembers = new Set<string>(), unknownAge = new Set<string>();
+  const inOpps = new Map<string, SafetyInfo["minors"]["inOpportunities"][number]>();
+  const reports = new Map<string, NonNullable<SafetyInfo["reports"]>[number]>();
+  let hasReports = false, canAct = false, canBan = false;
+  for (const info of infos) {
+    if (info.canAct) canAct = true;
+    if (info.canBan) canBan = true;
+    for (const c of info.cases) if (!cases.has(c.id)) cases.set(c.id, c);
+    for (const id of info.watch) watch.add(id);
+    for (const id of info.hold) hold.add(id);
+    for (const id of info.minors.members) minorMembers.add(id);
+    for (const id of info.minors.unknownAge) unknownAge.add(id);
+    for (const x of info.minors.inOpportunities) inOpps.set(`${x.opportunityId}:${x.memberId}`, x);
+    if (info.reports) {
+      hasReports = true;
+      for (const r of info.reports) if (!reports.has(r.id)) reports.set(r.id, r);
+    }
+  }
+  return {
+    cases: [...cases.values()],
+    watch: [...watch],
+    hold: [...hold],
+    minors: { members: [...minorMembers], unknownAge: [...unknownAge], inOpportunities: [...inOpps.values()] },
+    canAct,
+    ...(hasReports ? { reports: [...reports.values()] } : {}),
+    ...(canBan ? { canBan } : {}),
   };
 }
 

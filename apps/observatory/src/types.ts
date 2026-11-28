@@ -2,13 +2,16 @@
 // every panel works in both. Game mode builds it event-sourced from simulator run records; real
 // mode builds it from network.* rows. See docs/observatory.md.
 import type {
-  Category, City, CityId, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
+  AppId, Category, City, CityId, DomainId, EdgeType, Facet, Intent, MemberId, OpportunityKind, OpportunityState,
   ParticipationState, Presence, ScoreComponents, VenueCategory, VenuePriceTier, VenueStatus, WorkIntroChannel,
 } from "@thenetwork/core";
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
 import type { JudgeVerdictName } from "@thenetwork/engine/src/reviewJudge.ts";
 import type { ReviewPlanPreview, ReviewProbePreview, ReviewProbeText } from "../../../packages/network/src/network.ts";
+
+export type NetworkDomain = DomainId;
+export type { DomainId };
 
 export type StaffPlanPreview = ReviewPlanPreview & { app: string };
 export type StaffProbePreview = ReviewProbePreview & { app: string };
@@ -91,6 +94,10 @@ export interface ObsMember {
   calendar?: boolean;
   /** Said WEEKLY: gets "What's your week like?" on Sundays (never members aged 13-17). */
   weekly?: boolean;
+  /** Active network domains for this member (dating, friendship, business). */
+  domains?: DomainId[];
+  /** Source app partition when merged into the unified view. */
+  sourceApp?: AppId;
 }
 
 /** Hidden ground truth summary per member (game only; shown when the truth lens is on). */
@@ -156,6 +163,10 @@ export interface ObsOpportunity {
   times?: Record<MemberId, { offered: TimeChoice[]; picked?: string[] }>;
   /** The booked plan (the reveal with an opt-out): booked when everyone said yes; silence is a yes. */
   booked?: BookedPlan;
+  /** Network domain this opportunity belongs to (dating, friendship, business). */
+  domain?: DomainId;
+  /** Source app partition when merged into the unified view. */
+  sourceApp?: AppId;
 }
 
 /** One offered time (SimMeta.timeOptions without the end). */
@@ -201,6 +212,7 @@ export type FeedKind =
 export interface ObsFeedItem {
   seq: number; t: number; kind: FeedKind; text: string;
   members?: MemberId[]; opportunityId?: string; severity?: "info" | "good" | "warn" | "bad";
+  domain?: DomainId;
 }
 
 export interface EngineRunSummary {
@@ -339,6 +351,7 @@ export interface ObsRequest {
   outcome: "probing" | "fulfilled" | "booked" | "none" | "answered" | "open";
   tries: number; openedAt: number; ageHours: number;
   fulfilledAt?: number; hoursToFulfil?: number; opportunityId?: string;
+  domain?: DomainId;
 }
 
 export interface NetworkInfo {
@@ -685,9 +698,9 @@ export interface ControlResult {
   reach?: "app" | "all";
 }
 
-// ---------------------------------------------------------------- per-app Member 360 (admin-console 3.3.1)
-/** A slop dating preference as staff see it after a reveal. Never a score or rating of the member. */
-export interface SlopPrefs {
+// ---------------------------------------------------------------- domain Member 360 (admin-console 3.3.1)
+/** Dating preferences as staff see them after a reveal. Never a score or rating of the member. */
+export interface DatingPrefs {
   is?: string; seeks: string[]; ageRange?: [number, number];
   scope?: string; maxMiles?: number; goal?: string;
   values: Record<string, string>; dealbreakers: string[]; activities: string[]; free: string[];
@@ -696,26 +709,34 @@ export interface SlopPrefs {
   /** Safety cues the agent noticed (safety:<cue>). */
   safety: string[];
 }
-export interface SlopProfile360 {
-  app: "slop";
+export type SlopPrefs = DatingPrefs;
+export interface DatingProfile360 {
+  app: "slop" | "ntwrk";
   /** Treated as an adult: a valid age of 18 or more, not flagged under 18 by the Network. */
   adult: boolean;
   /** Age verified (verify:age:pass). Photos need adult and verified. */
   ageVerified: boolean;
   /** Dating preferences are hidden until a safety or admin reveal for this member (audited). */
-  prefs: { hidden: true; count: number } | { hidden: false; prefs: SlopPrefs };
+  prefs: { hidden: true; count: number } | { hidden: false; prefs: DatingPrefs };
   /** Who may see photos: never for members under 18; admin or safety with a typed reason for verified adults. */
   photos: "never_minor" | "needs_verification" | "reason_required";
 }
-export interface PeonProfile360 {
-  app: "peon";
+export type SlopProfile360 = DatingProfile360;
+export interface BusinessProfile360 {
+  app: "peon" | "ntwrk";
   entity: "candidate" | "job" | "unknown";
   /** Job seats: the role (title, family, seniority, pay range, work mode, market, openings, employer verified). Candidates: the families and modes they want. */
   roles: { title?: string; family?: string; seniority?: number; pay?: string; mode?: string; market?: string; openings?: number; verified?: boolean }[];
   /** Introductions (applications): one row per opportunity the member is in. */
   applications: { opportunityId: string; state: string; status?: string; at: number }[];
 }
-export type AppProfile360 = SlopProfile360 | PeonProfile360 | { app: string; none: true };
+export type PeonProfile360 = BusinessProfile360;
+export interface UnifiedProfile360 {
+  app: "ntwrk";
+  dating?: DatingProfile360;
+  business?: BusinessProfile360;
+}
+export type AppProfile360 = DatingProfile360 | BusinessProfile360 | UnifiedProfile360 | { app: string; none: true };
 export interface MemberPhoto { id: string; url: string; expiresAt?: number }
 
 // ---------------------------------------------------------------- four apps (platform plan section 5)

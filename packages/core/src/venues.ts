@@ -56,21 +56,27 @@ import {
   maxFollowupReminders,
 } from "./generated/encounterFollowup.ts";
 import { chooseWorkIntroChannel } from "./generated/workIntroChannel.ts";
-import type {
-  AppId,
-  CityId,
-  ConnectionOntologySpecLike,
-  FollowupSchedule,
-  MeetingModality,
-  MeetupPhase,
-  MemberVenuePrefs,
-  OutcomePolicyProfile,
-  VenueCandidateResult,
-  VenueCategory,
-  VenueFeedbackReport,
-  VenueNoiseLevel,
-  VenueRecord,
-  WorkIntroChannel,
+import {
+  DOMAIN_TO_APP,
+  isBusinessDomain,
+  isDatingDomain,
+  isDomainId,
+  isFriendshipDomain,
+  type AppId,
+  type CityId,
+  type ConnectionOntologySpecLike,
+  type DomainId,
+  type FollowupSchedule,
+  type MeetingModality,
+  type MeetupPhase,
+  type MemberVenuePrefs,
+  type OutcomePolicyProfile,
+  type VenueCandidateResult,
+  type VenueCategory,
+  type VenueFeedbackReport,
+  type VenueNoiseLevel,
+  type VenueRecord,
+  type WorkIntroChannel,
 } from "./types.ts";
 
 export const MAX_SUGGESTION_PIVOTS = maxSuggestionPivots;
@@ -98,7 +104,8 @@ export interface VenueRankRequest {
   members: MemberVenuePrefs[];
   startMs: number;
   mode: "date" | "group" | "solo" | "professional";
-  app?: AppId;
+  app?: AppId | DomainId;
+  domain?: DomainId;
   isWeekendOrHoliday?: boolean;
   badWeatherOrAfterDark?: boolean;
   overrideTravelLimitMin?: number;
@@ -422,11 +429,15 @@ export function rankVenuesForMatch(
   const isAfterDark = startParts.hour >= 19 || startParts.hour < 7;
   const isWeekend = request.isWeekendOrHoliday ?? (startParts.weekday >= 5);
   const badWeatherOrAfterDark = request.badWeatherOrAfterDark ?? isAfterDark;
-  const isProfessional = request.mode === "professional" || request.app === "peon";
+  const effectiveScope = request.domain ?? request.app;
+  const isProfessional = request.mode === "professional" || (effectiveScope !== undefined && isBusinessDomain(effectiveScope));
   const isFirstMeet = request.isFirstMeet ?? (request.mode === "date" || isProfessional);
   const hasReservation = request.hasReservation ?? false;
   const teenFriendAllowed = isProfessional ? false : (request.teenFriendAllowed ?? false);
-  const scoreMode = request.app === "friends" || (request.app === undefined && request.mode === "group") ? "friends" : "slop";
+  const scoreMode = (effectiveScope !== undefined && isFriendshipDomain(effectiveScope))
+    || (effectiveScope === undefined && request.mode === "group")
+    ? "friends"
+    : "slop";
 
   const minParticipantAge =
     request.members.length > 0 ? Math.min(...request.members.map(m => m.age)) : 0;
@@ -1077,19 +1088,20 @@ const SANCTIONED_EVENT_ONTOLOGIES = new Set([
  * and `crossAppScoreFirewall` (slop aesthetic/external prospects strictly isolated from peon/friends/ntwrk).
  */
 export function mapOntologyToOutcomePolicy(
-  app: AppId,
+  app: AppId | DomainId,
   spec: ConnectionOntologySpecLike,
   opts: { hasMinor?: boolean } = {}
 ): OutcomePolicyProfile {
-  const isPeon = app === "peon";
-  const isSlop = app === "slop";
-  const isFriends = app === "friends";
-  const teenFriendEligible = isFriends || (app === "ntwrk" && spec.id === "friendship");
+  const resolvedApp: AppId = isDomainId(app) ? DOMAIN_TO_APP[app] : app;
+  const isBusiness = isBusinessDomain(app);
+  const isDating = isDatingDomain(app);
+  const isFriendship = isFriendshipDomain(app);
+  const teenFriendEligible = isFriendship || (resolvedApp === "ntwrk" && spec.id === "friendship");
   const hasMinor = opts.hasMinor === true;
 
-  const venueMode: OutcomePolicyProfile["venueMode"] = isPeon || spec.defaultCategory === "professional"
+  const venueMode: OutcomePolicyProfile["venueMode"] = isBusiness || spec.defaultCategory === "professional"
     ? "professional"
-    : isSlop || spec.id === "dating"
+    : isDating || spec.id === "dating"
       ? "date"
       : spec.defaultFormat === "small_group" || spec.sizeRange[1] >= 3
         ? "group"
@@ -1098,9 +1110,9 @@ export function mapOntologyToOutcomePolicy(
           : "date";
 
   let modality: MeetingModality;
-  if (isPeon && ASYNC_OR_VIDEO_PEON_ONTOLOGIES.has(spec.id)) {
+  if (isBusiness && ASYNC_OR_VIDEO_PEON_ONTOLOGIES.has(spec.id)) {
     modality = "async_or_video";
-  } else if (!hasMinor && !isSlop && (spec.defaultFormat === "event" || SANCTIONED_EVENT_ONTOLOGIES.has(spec.id))) {
+  } else if (!hasMinor && !isDating && (spec.defaultFormat === "event" || SANCTIONED_EVENT_ONTOLOGIES.has(spec.id))) {
     modality = "sanctioned_event";
   } else {
     modality = "irl_venue";
@@ -1111,7 +1123,7 @@ export function mapOntologyToOutcomePolicy(
     : Math.max(1, spec.sizeRange[1]);
 
   return {
-    app,
+    app: resolvedApp,
     ontologyId: spec.id,
     modality,
     venueMode,
@@ -1123,12 +1135,12 @@ export function mapOntologyToOutcomePolicy(
     lowNoiseRequired: spec.requiresHighDiscretion || venueMode === "professional",
     daytimeOnly: venueMode === "professional",
     alcoholExcluded: venueMode === "professional" || spec.id === "habit_accountability" || (teenFriendEligible && hasMinor),
-    aestheticReadAllowed: isSlop,
-    peonCapitalAllowed: isPeon,
-    externalProspectReadAllowed: isSlop,
-    externalEventsAllowed: !isSlop && !hasMinor,
-    followupCadence: isPeon ? "work_48h_90d" : "next_day_local",
-    firewallScope: app,
+    aestheticReadAllowed: isDating,
+    peonCapitalAllowed: isBusiness,
+    externalProspectReadAllowed: isDating,
+    externalEventsAllowed: !isDating && !hasMinor,
+    followupCadence: isBusiness ? "work_48h_90d" : "next_day_local",
+    firewallScope: resolvedApp,
   };
 }
 
@@ -1155,8 +1167,12 @@ export function evaluateNextSuggestionAction(
 }
 
 /** Thin wrapper around generated `computeDensityTier`. */
-export function evaluateDensityTier(appKind: "friends" | "slop" | "ntwrk", qualifiedLocalCount: number): DensityTier {
-  return computeDensityTier(appKind, qualifiedLocalCount) as DensityTier;
+export function evaluateDensityTier(
+  appKind: "friends" | "slop" | "ntwrk" | "dating" | "friendship",
+  qualifiedLocalCount: number
+): DensityTier {
+  const normalized = isFriendshipDomain(appKind) ? "friends" : isDatingDomain(appKind) ? "slop" : "ntwrk";
+  return computeDensityTier(normalized, qualifiedLocalCount) as DensityTier;
 }
 
 /** Thin wrapper around generated `dateActivityAllowed`. */

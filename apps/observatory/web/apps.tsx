@@ -69,7 +69,7 @@ function AllApps() {
 }
 
 /** Finds a person by a member id in one app, or opens a person id. */
-function PersonLookup() {
+export function PersonLookup() {
   const s = useStore();
   const [app, setApp] = useState(s.app);
   const [member, setMember] = useState("");
@@ -104,7 +104,7 @@ function PersonView({ id }: { id: string }) {
   }, [id]);
   const blocks = p ? [...p.blocks.made.map(b => `→ ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`), ...p.blocks.received.map(b => `← ${b.person.slice(0, 8)}${b.originApp === "*" ? "" : ` (${b.originApp})`}`)] : [];
   return (
-    <InspectorSection className="mx-auto w-full max-w-4xl" title={`Person ${id.slice(0, 8)}`} action={<Button variant="outline" size="sm" onClick={() => store.setApp("all")}>Close</Button>}>
+    <InspectorSection className="mx-auto w-full max-w-4xl" title={`Person ${id.slice(0, 8)}`} action={<Button variant="outline" size="sm" onClick={() => store.setApp("ntwrk")}>Close</Button>}>
       {error && <Alert variant="destructive">{error}</Alert>}
       {!p && !error && <Spinner label="Loading" />}
       {p && (

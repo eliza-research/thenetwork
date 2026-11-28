@@ -1,8 +1,8 @@
 import type { City, Facet, Member, MemberId, Presence } from "@thenetwork/core";
 import { ADULT_AGE, canBeMatched, DAY, EngineRng, findNeighborhood } from "@thenetwork/core";
 import { tokenize } from "./embed.ts";
-import { hood } from "./packs/friends/geo.ts";
-import { MARKET_ANCHOR_ZIP, normalizeZip, zipCentroid, zipForArea } from "./packs/slop/zips.ts";
+import { hood } from "./packs/friendship/geo.ts";
+import { MARKET_ANCHOR_ZIP, normalizeZip, zipCentroid, zipForArea } from "./packs/dating/zips.ts";
 
 export function canIndexMember(age: number, adultMin: number, held: boolean, paused: boolean): boolean {
   if (!canBeMatched(age) || !(age >= adultMin)) return false;
@@ -254,8 +254,8 @@ function resolveMemberCoords(m: Member, presence: readonly Presence[], allFacets
     const f = allFacets[i]!;
     for (let t = 0; t < f.tags.length; t++) {
       const tag = f.tags[t]!;
-      if (tag.startsWith("slop:zip:")) {
-        const z = zipCentroid(tag.slice("slop:zip:".length));
+      if (tag.startsWith("dating:zip:") || tag.startsWith("slop:zip:")) {
+        const z = zipCentroid(tag.startsWith("dating:zip:") ? tag.slice("dating:zip:".length) : tag.slice("slop:zip:".length));
         if (z) {
           coords.push({ lat: z.lat, lon: z.lon });
           cities.add(z.market);

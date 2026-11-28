@@ -1,7 +1,26 @@
+import {
+  APP_TO_DOMAIN, DOMAIN_IDS, DOMAIN_LABELS, DOMAIN_TO_APP, isBusinessDomain, isDatingDomain, isDomainId, isFriendshipDomain, toDomainId,
+  type DomainId,
+} from "@thenetwork/core";
 import { APP_IDS, APPS, isAppId, type AppId } from "../../../packages/platform/src/apps.ts";
 import { REVIEW_REASONS, type ReviewReason } from "./types.ts";
 
-export { APP_IDS, APPS, isAppId, type AppId };
+export {
+  APP_IDS, APP_TO_DOMAIN, APPS, DOMAIN_IDS, DOMAIN_LABELS, DOMAIN_TO_APP, isAppId, isBusinessDomain, isDatingDomain,
+  isDomainId, isFriendshipDomain, toDomainId, type AppId, type DomainId,
+};
+
+export function inferDomain(input: { app?: string; category?: string; generator?: string; workIntroChannel?: unknown }): DomainId {
+  if (input.app === "slop" || input.category === "romance" || /^(?:slop_|dating_)/i.test(input.generator ?? "")) return "dating";
+  if (input.app === "peon" || input.category === "professional" || input.workIntroChannel !== undefined || /^(?:peon_|work_|business_)/i.test(input.generator ?? "")) return "business";
+  return "friendship";
+}
+
+export function domainAppsFor(domain: DomainId): readonly AppId[] {
+  if (domain === "dating") return ["slop"];
+  if (domain === "business") return ["peon"];
+  return ["friends", "ntwrk"];
+}
 
 /** A role grant's app: one app, or every app ("*"). */
 export type AppScope = AppId | "*";

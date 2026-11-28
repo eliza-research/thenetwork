@@ -161,7 +161,7 @@ export class MapView {
     let pinsMoved = false;
     for (const m of store.members.values()) {
       let mk = this.members.get(m.id);
-      const shown = store.inBorough(m) || !!bright?.has(m.id);
+      const shown = (store.inBorough(m) && store.matchMemberDomain(m)) || !!bright?.has(m.id);
       if (!shown) { if (mk) { mk.remove(); this.members.delete(m.id); pinsMoved = true; } continue; }
       if (!mk) {
         mk = L.circleMarker(this.point(m), { renderer: this.renderer, radius: 4 });
@@ -179,7 +179,7 @@ export class MapView {
         }
       }
       const picked = ui.picks.includes(m.id);
-      const dim = (bright && !bright.has(m.id)) || !store.matchMemberFilter(m);
+      const dim = (bright && !bright.has(m.id)) || !store.matchMemberFilter(m) || !store.matchMemberDomain(m);
       const paint = m.trust === "hold" ? { ink: "destructive" as const, alpha: 1 } : m.trust === "watch" ? { ink: "warn" as const, alpha: 1 } : memberPaint(m, ui.colorBy);
       const ring = busy.has(m.id) && !dim;
       mk.setStyle({
@@ -190,14 +190,14 @@ export class MapView {
       });
       mk.setRadius(3 + Math.min(5, Math.sqrt(m.counters.meetings * 2 + m.counters.accepted)));
     }
-    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${store.selectedCity}|${ui.filters.borough}|${focusKey(f)}|${this.venueInk}`;
+    const edgeKey = `${store.graphTick}|${JSON.stringify(ui.edgeTypes)}|${store.selectedCity}|${ui.filters.borough}|${JSON.stringify(ui.filters.domains)}|${focusKey(f)}|${this.venueInk}`;
     if (pinsMoved || edgeKey !== this.edgeKey) {
       this.edgeKey = edgeKey;
       this.edgeLayer.clearLayers();
       for (const e of store.edges.values()) {
         if (!ui.edgeTypes[e.type]) continue;
         const a = store.members.get(e.from), b = store.members.get(e.to);
-        if (!a || !b || !store.inBorough(a) || !store.inBorough(b)) continue;
+        if (!a || !b || !store.inBorough(a) || !store.inBorough(b) || !store.matchMemberDomain(a) || !store.matchMemberDomain(b)) continue;
         if (sel && e.from !== sel && e.to !== sel) continue;
         if (area && (a.area !== area || b.area !== area)) continue;
         const st = EDGE_STYLE[e.type as keyof typeof EDGE_STYLE];

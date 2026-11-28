@@ -24,7 +24,7 @@ export type HitGroups = "NoHits" | "NamesAndPlaces" | "NamesPlacesAndIds";
 /** Story: Use the stage and the drawer / Each drawer tab shows only where it applies (spec/consoleNavigation.md) */
 export interface TabFacts { simulated: boolean; analystRole: boolean; realOnlyServer: boolean; reviewItems: boolean; requestsKnown: boolean }
 /** Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab (spec/consoleNavigation.md) */
-export type FilterKey = "RangeKey" | "BoroughKey" | "MembersKey" | "OriginKey" | "StateKey";
+export type FilterKey = "RangeKey" | "BoroughKey" | "MembersKey" | "OriginKey" | "StateKey" | "DomainsKey";
 
 /** One variant per transition in the spec. */
 export type Event =
@@ -1131,7 +1131,7 @@ export function sometimesDrawerCollapsed(nav: ConsoleNav): boolean {
 /** Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab (spec/consoleNavigation.md) */
 //@ pure
 export function filterApplies(tab: DrawerTab, filterKey: FilterKey): boolean {
-  return tab === "ReviewTab" ? filterKey === "BoroughKey" || filterKey === "MembersKey" || filterKey === "OriginKey" : (tab === "FeedTab" ? filterKey !== "StateKey" : (tab === "PipelineTab" ? true : (tab === "EngineTab" ? filterKey === "RangeKey" : (tab === "SafetyTab" || tab === "RequestsTab" ? filterKey === "RangeKey" || filterKey === "BoroughKey" || filterKey === "MembersKey" : (tab === "MetricsTab" ? filterKey === "RangeKey" || filterKey === "BoroughKey" || filterKey === "OriginKey" : false)))));
+  return tab === "ReviewTab" ? filterKey === "BoroughKey" || filterKey === "MembersKey" || filterKey === "OriginKey" || filterKey === "DomainsKey" : (tab === "FeedTab" ? filterKey !== "StateKey" : (tab === "PipelineTab" ? true : (tab === "EngineTab" ? filterKey === "RangeKey" || filterKey === "DomainsKey" : (tab === "SafetyTab" || tab === "RequestsTab" ? filterKey === "RangeKey" || filterKey === "BoroughKey" || filterKey === "MembersKey" || filterKey === "DomainsKey" : (tab === "MetricsTab" ? filterKey === "RangeKey" || filterKey === "BoroughKey" || filterKey === "OriginKey" || filterKey === "DomainsKey" : false)))));
 }
 
 /** Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab (spec/consoleNavigation.md) */

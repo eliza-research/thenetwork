@@ -62,3 +62,8 @@ export {
   type ContactExternalProspectInput, type ExternalSourcingTriggerInput, type InviteExternalProspectInput,
   type ProspectRetentionInput, type ReconsiderExternalProspectInput, type RouteMatchmakerPersonaInput,
 } from "./generated/externalMatchmaker.ts";
+export {
+  brandDefaultDomains, canEnableDomain, defaultDomainsForJoin, domainAllowedForAge, domainAllowsPhotos,
+  domainRequiresBusinessFirewall,
+  type Brand as MemberDomainBrand, type Domain as MemberDomain,
+} from "./generated/memberDomains.ts";

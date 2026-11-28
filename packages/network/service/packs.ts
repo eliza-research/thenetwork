@@ -15,24 +15,24 @@
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 import {
-  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity,
-  type City, type CityId, type LaunchCity, type MemberId, type MemberVenuePrefs, type VenuePriceTier, type VenueRecord,
+  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity, toDomainId,
+  type City, type CityId, type DomainId, type LaunchCity, type MemberId, type MemberVenuePrefs, type VenuePriceTier, type VenueRecord,
 } from "@thenetwork/core";
 import {
-  friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
+  businessPack, BUSINESS_ENGINE_CONFIG, businessSeatCapacity, DATING_ENGINE_CONFIG, datingProfiles, friendshipPack, FRIENDSHIP_PLANS, makeDatingPack, planFromInput,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
 } from "@thenetwork/engine";
 import { classifyYesNo } from "@thenetwork/core";
 import {
   ageBand, applyCorrection, distancePhrase, emptyOnboarding, extractSlopProfile, markAsked,
   SLOP_ONBOARD_QUESTIONS, slopBookedText, slopCheckInText, slopOnboardTags, slopProbeText, type OnboardField, type SlopOnboarding,
-} from "@thenetwork/engine/src/packs/slop/index.ts";
-import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
-import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
-import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
-import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
-import { isNonDrinkerProfile } from "@thenetwork/engine/src/packs/slop/score.ts";
-import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
+} from "@thenetwork/engine/src/packs/dating/index.ts";
+import { finalize } from "@thenetwork/engine/src/packs/dating/extract.ts";
+import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/dating/standing.ts";
+import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/dating/onboard.ts";
+import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/dating/rules.ts";
+import { isNonDrinkerProfile } from "@thenetwork/engine/src/packs/dating/score.ts";
+import { ZIPS } from "@thenetwork/engine/src/packs/dating/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
 import { findCityNeighborhood, km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
@@ -59,29 +59,35 @@ export interface AppWiringOptions {
 const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
 const asEngineCity = (city: CityId): City => (isCity(city) ? city : "nyc");
 
-/** The wiring for one app and city. A new instance each time (packs hold no state, but options are per network). */
-export function appWiring(app: AppId, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
+export type DomainWiringTarget = DomainId | "network" | "ntwrk";
+
+/** The canonical wiring for one matching domain and city. A new instance each time (packs hold no state, but options are per network). */
+export function domainWiring(domain: DomainWiringTarget, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
   const market = asEngineCity(city);
-  switch (app) {
-    case "slop": {
-      // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
-      const pack = makeSlopPack({ verification: { required: false } });
+  switch (domain) {
+    case "dating": {
+      const pack = makeDatingPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: [market] }, hooks: slopHooks(pack.options, market, opts?.venues), plans: false,
+        pack, engine: { ...DATING_ENGINE_CONFIG, cities: [market] }, hooks: datingHooks(pack.options, market, opts?.venues), plans: false,
         dateStanding: w => new DateStandings(w, pack.options).validity,
         prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }
-    case "peon":
+    case "business":
       return {
-        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: [market] }, plans: false, hooks: peonHooks(),
+        pack: businessPack, engine: { ...BUSINESS_ENGINE_CONFIG, cities: [market] }, plans: false, hooks: businessHooks(),
         prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }),
       };
-    case "friends":
-      return { pack: friendsPack, engine: { cities: [market] }, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
+    case "friendship":
+      return { pack: friendshipPack, engine: { cities: [market] }, plansConfig: FRIENDSHIP_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
     default:
       return { prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
   }
+}
+
+/** The wiring for one app and city, delegating to the canonical domain wiring. */
+export function appWiring(app: AppId, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
+  return domainWiring(toDomainId(app) ?? "network", city, opts);
 }
 
 // ==================================================================================== slop
@@ -116,8 +122,8 @@ function stateOf(s: unknown, age: number | undefined): SlopOnboarding {
 /** What is stored keeps values and spans, never the member's words. */
 const withoutWords = (p: SlopOnboarding): SlopOnboarding => JSON.parse(JSON.stringify(p), (k, v) => (k === "evidence" && v ? { ...v, text: "" } : v));
 
-/** The slop onboarding loop for one market (AppHooks.onboarding). */
-export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
+/** The dating onboarding loop for one market (AppHooks.onboarding). */
+export function datingOnboardingForCity(city: City = "nyc"): AppOnboarding {
   return {
     read(state, body, reasons, { now, age }) {
       let p = stateOf(state, age);
@@ -139,9 +145,11 @@ export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
     asked: (state, reasons, { age }) => reasons.reduce((p, r) => markAsked(p, r), stateOf(state, age)),
   };
 }
+export const slopOnboardingForCity = datingOnboardingForCity;
 
-/** The slop onboarding loop (AppHooks.onboarding; exported for the sims). */
-export const slopOnboarding: AppOnboarding = slopOnboardingForCity("nyc");
+/** The dating onboarding loop (AppHooks.onboarding; exported for the sims). */
+export const datingOnboarding: AppOnboarding = datingOnboardingForCity("nyc");
+export const slopOnboarding: AppOnboarding = datingOnboarding;
 
 const ACTIVITY_PHRASE: Record<string, string> = {
   coffee: "coffee", drinks: "drinks", walk: "a walk", museum: "a museum visit", dinner: "dinner", live_music: "live music",
@@ -185,23 +193,24 @@ export function slotStart(slot: string, now: number, city: City = "nyc"): number
   return s ? nextAt(now + DAY, s.hour, wd => wd === s.day, tzForCity(city)) : undefined;
 }
 
-export interface SlopVenueOptions {
+export interface DatingVenueOptions {
   excludeIds?: ReadonlySet<string>;
   nonDrinker?: boolean;
   maxBudgetTier?: VenuePriceTier;
   venues?: readonly VenueRecord[];
 }
+export type SlopVenueOptions = DatingVenueOptions;
 
 /** A public place near the midpoint of two members' cells that suits the activity. Never a home. */
-export function slopVenue(
+export function datingVenue(
   cells: { lat: number; lon: number }[],
   activity: string,
   at?: number,
   city: CityId = "nyc",
-  opts?: SlopVenueOptions | readonly VenueRecord[],
+  opts?: DatingVenueOptions | readonly VenueRecord[],
 ): HookVenue | undefined {
   if (!cells.length) return undefined;
-  const o: SlopVenueOptions | undefined = Array.isArray(opts) ? { venues: opts } : (opts as SlopVenueOptions | undefined);
+  const o: DatingVenueOptions | undefined = Array.isArray(opts) ? { venues: opts } : (opts as DatingVenueOptions | undefined);
   const timeZone = cityTimezone(city) ?? CITY_TZ.nyc;
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
   // After dark, a busy, lit public place, never a park or a waterfront.
@@ -247,6 +256,7 @@ export function slopVenue(
   }
   return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng, timeZone };
 }
+export const slopVenue = datingVenue;
 
 function memberVenueRedLines(input: EngineInput, memberId: MemberId): Partial<MemberVenuePrefs> {
   const tags = new Set(
@@ -290,8 +300,8 @@ function hasAnyRedLine(prefs: Partial<MemberVenuePrefs>): boolean {
   );
 }
 
-/** The slop hooks (exported for tests). */
-export function slopHooks(
+/** The dating hooks (exported for tests). */
+export function datingHooks(
   options: Parameters<typeof planFromInput>[4],
   city: CityId = "nyc",
   venuesProvider?: () => readonly VenueRecord[]
@@ -352,7 +362,7 @@ export function slopHooks(
       return { ...input, facets, presence, intents };
     },
     hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, market, options),
-    onboarding: market === "nyc" ? slopOnboarding : slopOnboardingForCity(market),
+    onboarding: market === "nyc" ? datingOnboarding : datingOnboardingForCity(market),
     timeOptions(o, now, input) {
       const p = plan(o, input());
       if (!p) return undefined;
@@ -364,7 +374,7 @@ export function slopHooks(
       const p = plan(o, input);
       const other = o.participants.find(x => x !== id)!;
       const age = input.members.find(m => m.id === other)?.age;
-      const P = slopProfiles(input);
+      const P = datingProfiles(input);
       const fact = P.get(other)?.shareableInterests.find(t => P.get(id)?.interests.includes(t)) ?? P.get(other)?.shareableInterests[0];
       const activity = ACTIVITY_PHRASE[p?.activity ?? "coffee"] ?? "coffee";
       const band = age !== undefined && canBeMatched(age) ? ageBand(age) : undefined;
@@ -388,13 +398,13 @@ export function slopHooks(
       if (o.participants.some(id => hasAnyRedLine(memberVenueRedLines(inp, id)))) {
         return undefined;
       }
-      const P = slopProfiles(inp);
+      const P = datingProfiles(inp);
       const cells = o.participants.map(id => P.get(id)?.cell).filter((c): c is NonNullable<typeof c> => !!c);
       const nonDrinker = o.participants.some(id => {
         const prof = P.get(id);
         return !!prof && isNonDrinkerProfile(prof);
       });
-      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, {
+      return datingVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, {
         ...(nonDrinker ? { nonDrinker: true } : {}),
         venues: venuePool(),
       });
@@ -409,18 +419,16 @@ export function slopHooks(
     },
   };
 }
+export const slopHooks = datingHooks;
 
-// ==================================================================================== peon
+// ==================================================================================== business
 /**
- * peon's hooks (#9): the seat capacity (engine peonSeatCapacity), job posts by text, and the seat
- * copy. Candidate first: the candidate hears the job (title, pay range, place; never the manager's
- * name); after their yes the hiring manager gets a blind summary (must-have checkmarks, start time;
- * never a name, a score or a rank); the intro names each side only after both yeses.
+ * Business domain hooks: seat capacity (businessSeatCapacity), job posts by text, and seat copy.
  */
-export function peonHooks(): AppHooks {
+export function businessHooks(): AppHooks {
   const seatOf = (o: HookOpp) => o.seat;
   return {
-    engineInput: peonSeatCapacity,
+    engineInput: businessSeatCapacity,
     postings: true,
     probe(o, id, ctx) {
       const seat = seatOf(o);
@@ -446,3 +454,4 @@ export function peonHooks(): AppHooks {
     },
   };
 }
+export const peonHooks = businessHooks;

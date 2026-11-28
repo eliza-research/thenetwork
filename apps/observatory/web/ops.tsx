@@ -45,7 +45,7 @@ export function CostPanel() {
   return (
     <div className="flex flex-col gap-3 text-sm">
       <KpiGrid compact>
-        <Kpi label={`today · ${c.app}`} value={usd(c.today.app)} />
+        <Kpi label={`today · ${c.app === "ntwrk" ? "network" : c.app}`} value={usd(c.today.app)} />
         <Kpi label="today · shared line" value={usd(c.today.shared)} />
         {c.budgets.map(b => (
           <Kpi key={b.scope} label={`budget · ${b.scope === "total" ? "every app" : b.scope}`} value={`${pct(b.share)} of ${usd(b.budgetUsd)}`} tone={BUDGET_TONE[budgetMark(Math.floor(b.share * 100))]} title={`${usd(b.usedUsd)} used today (UTC day)`} />
