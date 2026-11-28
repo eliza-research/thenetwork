@@ -354,3 +354,6 @@
 {"text":"Saturday works whenever","answer":"yes","keys":["b"]}
 {"text":"Saturday works when it suits you","answer":"yes","keys":["b"]}
 {"text":"Last time was great, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Yes, Sunday neither works","answer":"yes","keys":["a","b"]}
+{"text":"Yes, Saturday and Sunday neither works","answer":"yes","keys":["a"]}
+{"text":"Sunday neither works","answer":"yes","keys":[]}

@@ -2127,6 +2127,10 @@ export function parseProbeReply(
   const picked = all.filter(isPicked);
   const open = offered.filter(slot => probeExclusionAlternative(requiredPart !== undefined, requiredPart === slot.part,
     neg.has(slot.key) && !isPicked(slot.key), contradictedExclusion)).map(slot => slot.key);
+  // A "neither" bound to named times refuses only those times; a whole-offer rejection
+  // ("none of those work", "not those times") still reads as neither for the whole offer.
+  const wholeTimeRejection = /\b(?:none of (?:those|them|these|the times)|none (?:of those )?work|no(?:ne)? of those (?:times )?work|those (?:times )?(?:don'?t|do not|won'?t) work|can'?t do (?:those|either|any of)|not those times)\b/.test(t);
+  const subsetNeither = rejectedTimes && !wholeTimeRejection && !bareGroupRejection && neg.size > 0 && open.length > 0;
   const unclear = { answer: "unclear" as const, keys: [], why: c.why === "none" && qualifiedTimeRefusals.size ? "slot" as const : c.why };
   const explicitYes = (keys: string[]): ProbeReply => ({ answer: "yes", keys, why: c.why,
     ...(explicitTimesOnly ? { explicitTimeSelection: true as const } : {}) });
@@ -2174,7 +2178,7 @@ export function parseProbeReply(
   const weakNegated = weakCues.some(cue => cue.index! < weakLimit && probeTimeIsRefused(t, cue.index!, cue.index! + cue[0].length));
   if (weakAt && (pos.size || unresolved.length || weakOrdinalMissing || weakRefusal || weakNegated)) {
     if (contradictedExclusion) return { ...unclear, why: "slot" };
-    if (rejectedTimes || !namedExclusion && OTHER_TIMES.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
+    if (rejectedTimes && !subsetNeither || !namedExclusion && OTHER_TIMES.test(t.replace(NO_OTHER_TIMES, ""))) return explicitYes([]);
     if (unresolved.length || weakOrdinalMissing || [...pos].some(key => !all.includes(key))
       || [...pickedClauses].some(clause => refusedClauses.has(clause))
       || weakNegated) return { ...unclear, why: "slot" };
@@ -2204,6 +2208,31 @@ export function parseProbeReply(
   if (unresolvedLists.length) return { ...unclear, why: "slot" };
   if (contradictedExclusion || namedExclusion && (open.length === 0 || [...namedExcluded].some(key => strong.has(key)))) {
     return { ...unclear, why: "slot" };
+  }
+  if (subsetNeither) {
+    // spec/probeReply.md, "A yes that refuses the remainder as well does not book it": a yes
+    // beside a neither refusal of named times still books the times that were not refused.
+    // A refusal-only neither keeps the neither reading; a clarified probe still needs an
+    // explicit time choice.
+    if (explicitTimesOnly) return { ...unclear, why: "slot" };
+    const spans: [number, number][] = [];
+    for (const ordinal of ordinals) if (ordinal.choiceEnd === undefined) {
+      spans.push([ordinal.at, ordinal.end + (REFUSES_OFFERED_TIME.exec(t.slice(ordinal.end))?.[0].length ?? 0)]);
+    }
+    for (const m of mentions) if (matchingOffered(m).some(key => neg.has(key))) {
+      spans.push([m.at, refusedTails.get(m.end)?.[0] ?? m.end]);
+    }
+    let remaining = t;
+    for (const [at, end] of spans.sort((x, y) => y[0] - x[0])) remaining = `${remaining.slice(0, at)} ${remaining.slice(end)}`;
+    // The "works" inside a neither refusal is not a yes: a separate affirmative word must remain.
+    const separateYes = /\b(?:yes|yeah|yep|yup|sure|okay|ok|absolutely|definitely|count me in|sign me up|let'?s|that works|works for me|sounds (?:good|great)|i'?m in|i can|can do|please do|go for it)\b/.test(remaining)
+      && consentScan(remaining).answer === "yes" && authoredYes(remaining)
+      && !mentions.some(m => matchingOffered(m).some(key => neg.has(key)) && inConditionalClause(t, m.at));
+    if (separateYes) {
+      return yesBooksRefusedRemainder(remainderRefused(t), remainderAffirmed(t))
+        ? { answer: "yes", keys: open, why: c.why } : { ...unclear, why: "slot" };
+    }
+    return { answer: "yes", keys: [], why: c.why };
   }
   if (rejectedTimes || bareGroupRejection || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
