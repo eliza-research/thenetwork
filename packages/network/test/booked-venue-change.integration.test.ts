@@ -80,6 +80,24 @@ test("a booked reply with a refusal word but no place request keeps the booking"
   }
 });
 
+test("a keep reply about another person still keeps the booking", async () => {
+  const keeps = [
+    "Yes, see you there. If someone else wants the table we can go to another spot",
+    "Yes! If someone else is sitting there we can switch to another place",
+    "Confirmed. If somebody else has the room, we can go somewhere else",
+    "I'm coming. If it's full because someone else rented it, let's meet somewhere else nearby",
+    "Sounds good. If it's packed we can go somewhere else, just start without me if I'm late",
+    "Confirmed. Go ahead without me for the first drink, I'll be 10 min late to that spot",
+    "See you Saturday. Bring someone else if you like, the venue is big",
+  ];
+  for (const text of keeps) {
+    const { w, booking } = await booked();
+    await w.say("a", text);
+    expect(booking().stage).toBe("scheduled");
+    expect(w.log("booked_cancelled")).toEqual([]);
+  }
+});
+
 test("a refusal that names another place still cancels the booking", async () => {
   const refusals = [
     "No thanks, I'd rather meet someone else somewhere else",
@@ -96,6 +114,10 @@ test("a refusal that names another place still cancels the booking", async () =>
     "No thanks. Meet somewhere else alone.",
     "No. Go somewhere else.",
     "I'm not interested, go find another venue",
+    "Never mind, go to another place without me",
+    "Find someone else, I don't want to go to a different venue",
+    "Find someone else but I don't want to go to a different venue",
+    "Please go somewhere else without me tonight. I don't feel well",
   ];
   for (const text of refusals) {
     const { w, booking } = await booked();

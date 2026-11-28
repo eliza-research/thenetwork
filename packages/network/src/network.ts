@@ -852,12 +852,26 @@ const VENUE_TARGET = /\b(?:somewhere (?:else|closer)|someplace (?:else|closer)|a
 const VENUE_JOINT = /\b(?:can|could|shall|should|will|would) we\b|\blet'?s\b|\bwe (?:could|can|should|might)\b|\bi'?d rather (?:meet|go)\b|\bi (?:want|would like|need) to (?:meet|go|move|switch|change)\b/i;
 const VENUE_REFUSAL = /\b(?:cancel (?:it|this|the meeting|our meeting)|call (?:it|this) off|i'?m out|i am out|count me out|won'?t be there|will not be there|not coming|can'?t (?:make it|come|attend)|cannot (?:make it|come|attend)|rather not meet|don'?t want to meet|do not want to meet)\b/i;
 const VENUE_ATTENDANCE_REFUSAL = /\bnot interested\b(?!\s+in\b)|\bnot happening\b(?!\s+(?:at|in|there)\b)|\bi'?m done\b|\bi am done\b|\bnot meeting\b(?!\s+(?:anyone|anybody|someone|somebody|others|other people)\b)|\bfor yourself\b|\bby yourself\b|\bon your own\b|(?:^|[.!?]\s*)(?:nah|no thanks|no|nope)[.!](?:\s|$)/i;
-const VENUE_EXCLUSION = /\b(?:without me|someone else|somebody else)\b/i;
+const VENUE_EXCLUSION = /\bwithout me\b/i;
+const SOMEONE_ELSE = /\b(?:someone|somebody) else\b/i;
 const CLAUSE_NEGATION = /\b(?:don'?t|do not|never|not)\b/i;
+const CLEAR_YES_OPENER = /^\s*(?:yes|yeah|yep|yup|confirmed|see you\b|i'?m coming\b|i'?ll be there\b|i'?m in\b|sounds good\b)/i;
+
+function givesPlaceToSomeoneElse(clause: string): boolean {
+  if (/\b(?:find|take|meet|choose|pick|invite|ask|get|let)\s+(?:someone|somebody) else\b/i.test(clause)) return true;
+  if (/\bwith (?:someone|somebody) else\b/i.test(clause)
+    && (/\b(?:find|choose|pick|take|meet|go|head)\b/i.test(clause) || VENUE_TARGET.test(clause))) return true;
+  return /\b(?:someone|somebody) else\b[^.!?;]*\b(?:my place|my spot|instead of me)\b/i.test(clause);
+}
 
 function excludesSpeaker(body: string): boolean {
+  const clearYes = CLEAR_YES_OPENER.test(body);
   const clauses = body.split(/[.!;]+|[,—–]|\s+-\s+|\b(?:but|and)\b/i);
-  return clauses.some(clause => VENUE_EXCLUSION.test(clause) && !CLAUSE_NEGATION.test(clause));
+  return clauses.some(clause => {
+    if (CLAUSE_NEGATION.test(clause)) return false;
+    if (VENUE_EXCLUSION.test(clause)) return true;
+    return !clearYes && SOMEONE_ELSE.test(clause) && givesPlaceToSomeoneElse(clause);
+  });
 }
 
 function jointVenueRequest(body: string): boolean {
