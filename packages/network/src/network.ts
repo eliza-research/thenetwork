@@ -63,7 +63,7 @@ import { lateArrivalBookingCurrent, lateArrivalBookingReceiptCurrent, lateArriva
 import { isLateArrivalAdmitted, isLateArrivalPairBooking, isLateArrivalReport, lateArrivalDeliveryId, type LateArrivalDelivery } from "./group-late-arrival.ts";
 import { calendarPreferenceCommand, readCalendarFreeBusy, type CalendarFreeBusyAuthority } from "../../core/src/calendar-free-busy.ts";
 import { calendarPreferenceMayApply, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
-import { bookedCancellationAllowed, bookedCancellationPrefix, peerContactTypes } from "../../core/src/generated/outboundAdmission.ts";
+import { bookedCancellationAllowed, bookedCancellationPrefix, closedOpportunityRowStale, peerContactTypes } from "../../core/src/generated/outboundAdmission.ts";
 import { slopFirstIntroductionAt, slopPairContactAllowed } from "../../core/src/generated/datingRadius.ts";
 import { bookReplacementPlan, canTryGroupReplacement, mayOfferReviewedAlternate, recoveryPlanCanProceed, replacementAnswerAllowed, viableReplacementSlot } from "../../core/src/generated/bookedGroupReplacement.ts";
 import { bookingNoticeRosterCurrent, rescheduleAnswerAfterReceipt, rescheduleBookingSelected, rescheduleDeadline, rescheduleDraftCurrent, rescheduleTimeEligible, rescheduleVote } from "../../core/src/generated/meetingReschedule.ts";
@@ -8425,6 +8425,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!m) continue;
       const valid = this.hookFns(m, d.o.hook).valid;
       if (valid && !valid()) continue;
+      const deferredOpp = d.meta.proposalId ? this.opps.get(d.meta.proposalId) : undefined;
+      if (closedOpportunityRowStale(deferredOpp?.stage === "closed", d.kind === "cancellation" || d.o.hook?.t === "feedback")) continue;
       if (!this.timingOk(m, d.timing ?? "logistics", now)) { this.deferred.push(d); continue; }
       // spec/meetingReschedule.md, "A named booking notice still needs every recorded seat"
       const booking = d.o.hook?.t === "reveal" ? this.opps.get(d.o.hook.oppId) : undefined;
