@@ -72,7 +72,12 @@ test("after a minor signal at night, the adults' cancellation is not about a pla
   await w.say("b", "I'm 16, is that ok?");
   expect(w.log("opportunity_closed").filter(l => l.detail.proposalId === id).map(l => l.detail.reason)).toEqual(["minors policy"]);
   expect(queued()).toEqual([]);
-  await w.run(3 * 24 * 3600_000);
+  const state = w.net.exportState();
+  const meetup = state.meetups!.meetups.find(m => m.meetupId === id)!;
+  expect(meetup.closed).toBe(true);
+  meetup.closed = false;
+  w.net.importState(state);
+  await w.run(state.opps.find(o => o.id === id)!.meetingAt! + 3600_000 - w.clock.now());
   const about = w.sent.slice(from).filter(s => s.meta.proposalId === id);
   expect(about.map(s => s.to).sort()).toEqual(["a", "c"]);
   for (const s of about) {

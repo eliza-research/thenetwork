@@ -859,6 +859,14 @@ export class MeetupCoordinator {
     return summary;
   }
 
+  close(meetupId: string): void {
+    for (const m of this.meetups.values()) {
+      if (m.meetupId !== meetupId && m.oppId !== meetupId) continue;
+      m.closed = true;
+      m.pendingDigest = [];
+    }
+  }
+
   removeMember(memberId: MemberId, meetupId?: string): void {
     for (const m of this.meetups.values()) {
       if (meetupId !== undefined && m.meetupId !== meetupId && m.oppId !== meetupId) continue;

@@ -6156,6 +6156,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.closedFrom = o.stage;
     o.closedReason = reason;
     o.stage = STAGE_BY_PHASE[next.phase];
+    this.meetups.close(o.id);
     // spec/opportunityLifecycle.md, "A closed booking releases its pending replies"
     for (const id of o.participants) {
       const participant = this.members.get(id);
@@ -6196,6 +6197,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const wasProbing = o.stage === "probing" || wasReview;
     if (o.stage === "probing") this.counters.oppsNotAvailable++;
     o.stage = STAGE_BY_PHASE[next.phase];
+    this.meetups.close(o.id);
     const systemProposal = !o.requester && !o.plan && o.origin !== "request" && o.origin !== "plans";
     const minorSend = minorClose ? { minorClose: true as const } : {};
     const told = new Set<MemberId>();
@@ -11294,8 +11296,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       },
       send: (to, body, opts) => {
         const m = this.members.get(to);
-        if (!m) return;
         const opp = this.opps.get(opts.meetupId);
+        if (!m || opp?.stage === "closed") return;
         const about = opp?.participants.filter(p => p !== to) ?? [];
         const sendKind: SendKind = opts.kind === "arrival_relay" ? "relay"
           : opts.kind === "arrival_ack" ? "reply"
