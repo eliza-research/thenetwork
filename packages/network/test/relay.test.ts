@@ -1096,10 +1096,13 @@ test.each([
   { label: "quoted spelled grader", body: 'She said "I\'m a tenth grader".', minor: false },
   { label: "adult elementary teacher", body: "I'm in 5th grade as a teacher.", minor: false },
 ])("signed TURN and relay classify age at their own boundary: $label", async ({ label, body, minor, incomingAge }) => {
+  if (new Date(clock.now()).getUTCHours() < 14) {
+    clock.set(Math.floor(clock.now() / DAY) * DAY + 14 * HOUR);
+  }
   const id = "relay-age-estimate-" + randomUUID();
   const pair = ++ageEstimatePair;
-  const senderPhone = "+12125550" + (100 + 2 * pair);
-  const recipientPhone = "+12125550" + (101 + 2 * pair);
+  const senderPhone = "+1917555" + (2000 + 2 * pair);
+  const recipientPhone = "+1917555" + (2001 + 2 * pair);
   await enrollRelayMember(senderPhone, "Ari, 29", id + "-ari");
   await enrollRelayMember(recipientPhone, "Bo, 29", id + "-bo");
   const sender = await open(senderPhone, id + "-ari-open"), recipient = await open(recipientPhone, id + "-bo-open");
