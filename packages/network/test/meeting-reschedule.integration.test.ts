@@ -9,7 +9,7 @@ import { APPS } from "../../platform/src/apps.ts";
 import { dropDb, migratedDb, pgAvailable } from "../../platform/test/pg.ts";
 import { NetworkService } from "../service/service.ts";
 import { PLAN_VENUES, planVenuesForCity } from "../src/plans.ts";
-import { describeBookingStart, localBookingStart, rescheduleNoticeCurrent, rescheduleOfferKey, rescheduleUpdateKey } from "../src/rescheduling.ts";
+import { describeBookingStart, localBookingStart, parseNaturalReschedule, rescheduleNoticeCurrent, rescheduleOfferKey, rescheduleUpdateKey } from "../src/rescheduling.ts";
 import { Mini, START } from "./mini.ts";
 
 const ids = ["a", "b", "c"];
@@ -62,7 +62,6 @@ test("only each participant's own answer to the exact offer commits a changed ti
   await w.say("a", yes.a!);
   await w.say("b", yes.b!);
   expect(booking()).toMatchObject({ meetingAt: originalAt, reschedule: { accepted: ["a", "b"] } });
-
   w.restart();
   await w.say("c", yes.c!);
   const committed = booking();
@@ -300,3 +299,17 @@ test.skipIf(!pgAvailable)("a service turn in a San Francisco runtime parses resc
     await dropDb(url);
   }
 }, 120_000);
+
+test("a weekday-named reschedule lands on the named day, not one day later", () => {
+  // Monday 2026-10-05 12:00 New York; the booked meeting is Wednesday 2026-10-07 18:00 New York.
+  const nowMs = Date.UTC(2026, 9, 5, 16);
+  const originalAt = Date.UTC(2026, 9, 7, 22);
+  expect(parseNaturalReschedule("move it to Friday", { nowMs, tz: "America/New_York", originalAt }))
+    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 9, 22) }); // Friday 2026-10-09 18:00 New York
+});
+test("naming today's weekday reschedules to next week, not tomorrow", () => {
+  const nowMs = Date.UTC(2026, 9, 5, 16); // Monday 2026-10-05 12:00 New York
+  const originalAt = Date.UTC(2026, 9, 7, 22); // Wednesday 2026-10-07 18:00 New York
+  expect(parseNaturalReschedule("move it to Monday", { nowMs, tz: "America/New_York", originalAt }))
+    .toEqual({ kind: "request", originalAt, proposedAt: Date.UTC(2026, 9, 12, 22) }); // Monday 2026-10-12 18:00 New York
+});
