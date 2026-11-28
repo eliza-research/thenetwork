@@ -7808,7 +7808,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       first === id ? undefined : first && o.planRun.answers[first] === "yes" ? this.pickedPlanWindows(o, first) : [],
       slot => this.friendsPlanSlotCurrent(o.plan!, about, slot, now, o.id)), tz) : undefined;
     // The options path already checked presence and availability for each exact interval.
-    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: !!options || this.inNyc(id, o.plan.window.start, o.plan.window.end) });
+    const inviteDeadline = o.stage === "scheduled" ? o.plan.window.start - this.pcfg.lateJoinHours * HOUR : o.plan.probeDeadline;
+    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: (!!options || this.inNyc(id, o.plan.window.start, o.plan.window.end)) && this.presentBefore(id, now, inviteDeadline) });
     if (presence.phase !== "CheckingAvailability") {
       this.refuse(id, "probe", presence.reason);
       return this.planAnswer(o, id, false, true);
@@ -10740,6 +10741,19 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Is the member in the network's city for all of [from, to]? Announced trips elsewhere say no. */
   inNyc(id: MemberId, from: number, to: number): boolean {
     return this.inCity(id, from, to, this.networkCity());
+  }
+  private presentBefore(id: MemberId, from: number, deadline: number): boolean {
+    if (from >= deadline) return false;
+    const rows = this.snapshotRows();
+    const own = rows.presence.get(id) ?? [];
+    const starts = new Set<number>([from]);
+    for (const p of own) {
+      const trip = temporaryPresenceWindow(p);
+      if (!trip) continue;
+      if (trip.from > from && trip.from < deadline) starts.add(trip.from);
+      if (trip.to > from && trip.to < deadline) starts.add(trip.to);
+    }
+    return [...starts].some(t => presentFor(rows.byId.get(id), own, t, t + 1, this.networkCity()));
   }
   private snapCache?: { at: number; snap: WorldSnapshot };
   /** The public snapshot, rebuilt at most every 20 sim minutes or when something we learned changed. */
