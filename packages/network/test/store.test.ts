@@ -164,6 +164,15 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   w.restart();
   await w.say("requester", "I still need help moving a couch from my apartment.");
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
+  const unlabelled = ["Find someone to babysit my kid on Saturday.", "Find someone to watch my 6 year old on Saturday.",
+    "Find someone to pick my two kids up from school.", "Find a climber to babysit my kid on Saturday.",
+    "Find someone who likes climbing to watch my 6 year old on Saturday.", "Find someone to drive my kids to school."];
+  const declined: string[] = [];
+  for (const request of unlabelled) {
+    await w.say("requester", request);
+    if (w.sent.at(-1)?.body.includes("won't look for it")) declined.push(request);
+  }
+  expect(declined).toEqual(unlabelled);
   for (const task of ["babysit my child", "watch my 6 y.o. Saturday", "pick my two kids up"]) {
     await w.say("requester", "Find someone to help move a couch and " + task + ".");
     expect(w.sent.at(-1)?.body).toContain("won't look for it");
@@ -185,6 +194,20 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   }
   expect(w.net.exportState().requests).toMatchObject([{ category: "help" }]);
   expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
+  await w.say("requester", "Find playdates for my kid near my home.");
+  expect(w.net.exportState().requests).toContainEqual(expect.objectContaining({ category: "social", desireId: "parent_friends" }));
+  const ordinary = ["looking for other parents to chat with at school pickup", "I used to babysit, looking for new friends",
+    "I'm a sitter, looking for new friends", "looking for a coke float buddy",
+    "looking for someone to go with me to volunteer at the hospital", "looking for a rabbit sitter",
+    "looking for someone to watch my son's soccer game with", "I drop off my daughter at school every morning, looking for a running partner after",
+    "I have to pick up my kids at 3, looking for people to grab coffee with before", "looking for someone to drive with me to my daughter's graduation",
+    "Find someone to watch movies with my kids and me.", "I will drive my kids to camp this summer, looking for new friends in August"];
+  const refusedOrdinary: string[] = [];
+  for (const request of ordinary) {
+    await w.say("requester", request);
+    if (w.sent.at(-1)?.body.includes("won't look for it")) refusedOrdinary.push(request);
+  }
+  expect(refusedOrdinary).toEqual([]);
 }, T);
 
 test("bounded help rechecks an older home request when it would retry", async () => {
