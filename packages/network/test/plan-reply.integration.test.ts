@@ -223,6 +223,51 @@ describe("plan probe replies", () => {
     expect(failures).toEqual([]);
   }, 600_000);
 
+  test("a booked plan's late joiner receives the arrival brief and can relay arrival", async () => {
+    // spec/planDecision.md, "Only a pending member can change an open plan"; spec/product/stories.md, "Logistics follow the accepted opportunity and sending rules"
+    const ids = ["a", "b", "c", "d"];
+    const w = new Mini(ids.map(climber), { inlineJudge: holdEveryItem.inline, plans: false, arrivalBriefs: true });
+    await w.onboard(...ids);
+    const now = w.clock.now();
+    const plan: plans.Plan = {
+      id: "plan_late_join_arrival", city: "nyc", activityId: "bouldering", place: { name: "Brooklyn Boulders", area: "Gowanus" },
+      window: { start: now + 6 * DAY, end: now + 6 * DAY + 2 * HOUR }, invited: ids, alternates: [], partner: false,
+      size: { min: 3, target: 4, max: 4 }, quorum: 3, probeDeadline: now + 4 * DAY, score: 0.6, u: {}, familiar: {},
+      createdAt: now, category: "hobby",
+    };
+    const submitted = submit(w, plan, now);
+    await w.net.tick(now);
+    const item = heldItem(w, submitted);
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    expect(await w.runUntil(() => ids.every(id => w.probed(id)), 2 * DAY)).toBe(true);
+    for (const id of ["a", "b", "c"]) await w.say(id, "yes");
+    expect(w.net.exportState().opps.find(o => o.id === item.oppId)?.stage).toBe("scheduled");
+    await w.say("d", "yes");
+    const booked = w.net.exportState().opps.find(o => o.id === item.oppId)!;
+    expect(booked.planRun?.answers.d).toBe("yes");
+    expect(booked.bookedTold).toContain("d");
+
+    const beforeBrief = w.mark();
+    w.clock.set(booked.meetingAt! - 70 * MINUTE);
+    await w.net.tick(w.clock.now());
+    const briefs = w.sent.slice(beforeBrief).filter(s => s.meta.proposalId === item.oppId && /Heads up for/i.test(s.body));
+
+    w.clock.set(booked.meetingAt! - 10 * MINUTE);
+    await w.say("d", "Just got here!");
+    const beforeDigest = w.mark();
+    w.clock.advance(2 * MINUTE);
+    await w.net.tick(w.clock.now());
+    const relays = w.sent.slice(beforeDigest).filter(s => s.meta.proposalId === item.oppId && /just arrived/i.test(s.body));
+
+    expect({
+      briefRecipients: briefs.map(s => s.to).sort(),
+      relayRecipients: relays.map(s => s.to).sort(),
+    }).toEqual({
+      briefRecipients: ids,
+      relayRecipients: ["a", "b", "c"],
+    });
+  });
+
   test("a plan with no pending members falls back whichever reply comes last, and two acceptances are asked again as a pair", async () => {
     // spec/planDecision.md, "An unanswered plan closes when its deadline passes"
     const ids = ["a", "b", "c"];

@@ -8129,6 +8129,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       return;
     }
     o.status.set(id, "yes"); this.plansCounters.planLateJoins++;
+    this.meetups.addMember(o.id, id);
     this.ctx.recordMeeting({ proposalId: o.id, participants: [id], at: plan.window.start, city: isCity(plan.city) ? plan.city : this.networkCity(), kind: "plan" });
     this.planReveal(o, id);
   }

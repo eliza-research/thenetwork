@@ -347,6 +347,14 @@ export class MeetupCoordinator {
     return this.meetups.get(meetupId);
   }
 
+  addMember(meetupId: string, memberId: MemberId): void {
+    const meetup = this.meetups.get(meetupId);
+    if (!meetup || meetup.closed || meetup.met) return;
+    if (!meetup.participants.includes(memberId)) meetup.participants.push(memberId);
+    if (!meetup.confirmed.includes(memberId)) meetup.confirmed.push(memberId);
+    if (meetup.participants.length >= 3) meetup.mode = "group";
+  }
+
   activeMeetupFor(memberId: MemberId, nowMs: number): MeetupCoordRecord | undefined {
     for (const m of this.meetups.values()) {
       if (m.closed || m.met) continue;
