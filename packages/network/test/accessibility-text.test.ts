@@ -63,7 +63,7 @@ describe("accessibility need texted after onboarding", () => {
     const from = w.mark();
     await w.say("a", "I need step-free access for meetups.");
     expect(w.net.memberRedLines("a")).toContain("wheelchair");
-    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved/);
+    expect(w.to("a", from).map(s => s.body).join(" ")).toMatch(/saved to your profile that you need step-free access/);
 
     w.restart();
     expect(w.net.memberRedLines("a")).toContain("wheelchair");
@@ -92,13 +92,45 @@ describe("accessibility need texted after onboarding", () => {
     expect(w.net.memberRedLines("a")).toContain("wheelchair");
     expect(w.net.exportState().members.find(m => m.id === "a")?.stage).toBe("active");
     expect(w.to("a", from)).toHaveLength(1);
-    expect(w.to("a", from)[0]!.body).toMatch(/saved/);
+    expect(w.to("a", from)[0]!.body).toMatch(/saved to your profile that you need step-free access/);
   });
 
   test("an accessibility need stated with a request is stored before the search", async () => {
     const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
     await w.onboard("a", "b");
+    const from = w.mark();
     await w.say("b", "Find me a climbing partner, I need wheelchair access.");
     expect(w.net.memberRedLines("b")).toContain("wheelchair");
+    expect(w.to("b", from).map(s => s.body).join(" ")).toMatch(/saved to your profile that you need step-free access/);
+  });
+
+  test("needs for others, buildings, short-term, past and joking statements save no standing tag", async () => {
+    const w = new Mini([climber("a", "Ana Diaz", "Greenpoint"), climber("b", "Ben Ito", "Astoria")]);
+    await w.onboard("a", "b");
+    for (const text of [
+      "I need wheelchair access for my grandma.",
+      "I need step-free access for my boyfriend.",
+      "I need elevator access for my cousin.",
+      "I need wheelchair access for my guest on Saturday.",
+      "I'm in a wheelchair basketball league as a volunteer coach.",
+      "I'm in a wheelchair-accessible building now.",
+      "I'm in a wheelchair accessible apartment in Inwood.",
+      "I need elevator access for my bike.",
+      "I can't do stairs in heels.",
+      "I can't do stairs before coffee lol",
+      "I can't do stairs this week, sprained my ankle.",
+      "I can't do stairs right now, my knee is healing.",
+      "I'm in a wheelchair for two weeks after surgery.",
+      "I'm in a wheelchair until my cast comes off.",
+      "I sold my wheelchair, I walk fine now.",
+      "My wheelchair days are over.",
+      "Not that I can't do stairs, I just hate them.",
+      "It's not like I can't do stairs.",
+    ]) {
+      await w.say("a", text);
+      expect(w.net.memberRedLines("a"), text).not.toContain("wheelchair");
+    }
+    await w.say("a", "I can't do stairs anymore.");
+    expect(w.net.memberRedLines("a")).toContain("wheelchair");
   });
 });

@@ -857,11 +857,15 @@ export function extractRedLineTags(body: string): string[] {
   return [...tags];
 }
 
-const OWN_ACCESSIBILITY_NEED = /\bi use a wheelchair\b|\bi(?:'m| am) in a wheelchair\b|\bim in a wheelchair\b|\bi am a wheelchair user\b|\bi (?:need|require) (?:wheelchair|step[- ]free|elevator) access\b|\bi (?:can't|cannot|can not) do stairs\b|\bmy wheelchair\b/;
-const ACCESSIBILITY_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|he|she|they|him|her|them|his|hers|their)\b/;
+const OWN_ACCESSIBILITY_NEED = /\bi use a (?:power )?wheelchair(?=\s*(?:[.!?,;:]|$|\b(?:for|until|since|so|and|but|now|today|because|though|anymore|daily|at|in|on|when|with|without)\b))|\bi(?:'m| am) in a wheelchair(?=\s*(?:[.!?,;:]|$|\b(?:for|until|since|so|and|but|now|today|because|though|anymore|daily|at|in|on|when|with|without)\b))|\bim in a wheelchair(?=\s*(?:[.!?,;:]|$|\b(?:for|until|since|so|and|but|now|today|because|though|anymore|daily|at|in|on|when|with|without)\b))|\bi(?:'m| am) a wheelchair user\b|\bi (?:need|require) (?:wheelchair|step[- ]free|elevator) access\b|\bi (?:can't|cannot|can not) do stairs\b|\bmy wheelchair (?:needs|requires)\b/;
+const ACCESSIBILITY_BLOCK = /\b(?:if|unless|would|could|should|maybe|might|wish|whether|suppose|hypothetically|thinking|considering|planning|used to|formerly|friend|friends|sister|brother|mom|dad|mother|father|partner|wife|husband|son|daughter|kid|kids|child|children|roommate|coworker|grandma|grandpa|grandmother|grandfather|boyfriend|girlfriend|cousin|guest|guests|uncle|aunt|nephew|niece|neighbor|neighbors|buddy|fiance|fiancee|he|she|they|him|her|them|his|hers|their)\b/;
 const ACCESSIBILITY_REPORTED = /\b(?:said|says|told|asked|texted|wrote|posted)\b/;
-const ACCESSIBILITY_NEGATED = /\b(?:don't|do not|doesn't|does not|never|not|no longer)\s+(?:really\s+)?(?:need|use|require)\b|\bno need (?:for|to)\b|\bno accessibility (?:needs|requirements)\b|\bnot (?:in|using) a wheelchair\b/;
+const ACCESSIBILITY_NEGATED = /\b(?:don't|do not|doesn't|does not|never|not|no longer)\s+(?:really\s+)?(?:need|use|require)\b|\bno need (?:for|to)\b|\bno accessibility (?:needs|requirements)\b|\bnot (?:in|using) a wheelchair\b|\b(?:not|n't) (?:that|like)\b/;
 const ACCESSIBILITY_STAIRS_OK = /\bcan (?:do|manage|handle) stairs\b|\bstairs (?:are )?fine\b|\bfine with stairs\b/;
+/** A time limit, a passing situation or a past need in the sentence keeps it from saving a standing tag. */
+const ACCESSIBILITY_NOT_STANDING = /\b(?:this week|right now|for now|at the moment|temporarily|temporary|until|for (?:a|an|one|two|three|four|\d+) (?:days?|weeks?|months?)|sprained|healing|cast|sold|days are over|walk(?:ing)? fine|in heels)\b/;
+/** The words right after the need name who or what it is for: "for my grandma", "for my bike" is not the sender's need. */
+const ACCESSIBILITY_FOR_OTHER = /^\s*for\s+(?:my|a|an|the|his|her|their|your)\s+(?!wheelchair\b|mobility\b)/;
 
 /** Accessibility tags the sender states about themselves in a member-initiated text. */
 export function ownAccessibilityTags(body: string): string[] {
@@ -870,10 +874,13 @@ export function ownAccessibilityTags(body: string): string[] {
   const tags = new Set<string>();
   for (const s of sentencesOf(t)) {
     if (/\?\s*$/.test(s.text.trim())) continue;
-    if (ACCESSIBILITY_REPORTED.test(s.text) || ACCESSIBILITY_STAIRS_OK.test(s.text)) continue;
+    if (ACCESSIBILITY_REPORTED.test(s.text) || ACCESSIBILITY_STAIRS_OK.test(s.text) || ACCESSIBILITY_NOT_STANDING.test(s.text)) continue;
     if (/\b(?:joking|kidding)\b/.test(s.text) && !/\bnot (?:joking|kidding)\b/.test(s.text)) continue;
+    if (/\b(?:lol|haha+|jk)\b/.test(s.text)) continue;
     for (const clause of s.text.split(/[,;:]|\b(?:but|though|however)\b/)) {
-      if (!OWN_ACCESSIBILITY_NEED.test(clause) || ACCESSIBILITY_BLOCK.test(clause) || ACCESSIBILITY_NEGATED.test(clause)) continue;
+      const m = OWN_ACCESSIBILITY_NEED.exec(clause);
+      if (!m || ACCESSIBILITY_BLOCK.test(clause) || ACCESSIBILITY_NEGATED.test(clause)) continue;
+      if (ACCESSIBILITY_FOR_OTHER.test(clause.slice(m.index + m[0].length))) continue;
       tags.add("wheelchair");
     }
   }
