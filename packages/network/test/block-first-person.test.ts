@@ -110,6 +110,16 @@ describe("first-person block requests", () => {
     "I want to block Jordan (Sam is fine)",
     "I need to block Jordan and keep Sam",
     "I want to block Jordan—Sam is fine",
+    "I want to block Jordan Sam is fine",
+    "I want to block Jordan Sam is my friend",
+    "I want to block Jordan Sam seems fine",
+    "I want to block Jordan Sam can stay",
+    "I want to block Jordan Sam has been great",
+    "I want to block Jordan Sam stays",
+    "I want to block Jordan Sam will stay",
+    "I need to block Jordan Sam isn't the problem",
+    "I want to block Jordan Sam and Ana are fine",
+    "I want to block Jordan Sam I like",
   ])("a name in a later clause is not the target: %s", async text => {
     const { w, opp } = await bookedGroup();
     const from = w.mark();
@@ -120,18 +130,52 @@ describe("first-person block requests", () => {
     expect(w.to("m", from).map(s => s.body)).toEqual([copy.blockUnmatched]);
   });
 
+  test("a possessive after a second name blocks nobody", async () => {
+    const { w, opp } = await bookedGroup();
+    const from = w.mark();
+    await w.say("m", "I want to block Jordan Sam's fine");
+    expect(w.net.exportState().blocks).toEqual([]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("scheduled");
+    const replies = w.to("m", from).map(s => s.body);
+    expect(replies).not.toContain(copy.blocked);
+    expect(replies).not.toContain(copy.blockUnmatched);
+    expect(replies).not.toContain(copy.reportUnmatched());
+  });
+
+  test("a quoted name blocks that counterpart", async () => {
+    const { w, opp } = await bookedGroup();
+    await w.say("m", "I need to block \"Sam\"");
+    expect(w.net.exportState().blocks).toEqual(["m|s"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("closed");
+  });
+
   test.each([
     "I want to block Sam for being rude",
     "I'd like to block Sam Lee",
     "i want to block sam",
     "i need to block sam ortiz",
     "i want to block sam for being rude",
+    "I want to block Sam Lee is rude",
+    "I want to block Sam is that possible",
   ])("a named counterpart with a reason or a full name blocks: %s", async text => {
     const { w, opp } = await bookedGroup();
     await w.say("m", text);
     expect(w.net.exportState().blocks).toEqual(["m|s"]);
     expect(w.net.safetyReports()).toEqual([]);
     expect(opp()?.stage).toBe("closed");
+  });
+
+  test("a full name followed by a reason keeps the surname when two counterparts share a first name", async () => {
+    const w = new Mini([climber("m", "Max Reed"), climber("s1", "Sam Lee"), climber("s2", "Sam Park")]);
+    await w.onboard("m", "s1", "s2");
+    const id = w.propose(["m", "s1", "s2"]);
+    await w.answerProbes(["m", "s1", "s2"]);
+    await w.say("m", "I want to block Sam Lee for being rude");
+    expect(w.net.exportState().blocks).toEqual(["m|s1"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(w.net.exportState().opps.find(o => o.id === id)?.stage).toBe("closed");
   });
 
   test("lowercase later-clause phrasing keeps only the first named target", async () => {

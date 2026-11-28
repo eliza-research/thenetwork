@@ -182,7 +182,9 @@ function firstPersonTarget(raw: string): string | undefined {
     name.push(token);
   }
   const next = tokens[name.length];
-  if (next && FIRST_PERSON_NON_PERSON_HEAD.test(next.toLowerCase().replace(/[^a-z0-9'-]/g, ""))) return undefined;
+  const nextNorm = next?.toLowerCase().replace(/[^a-z0-9'-]/g, "");
+  if (nextNorm && FIRST_PERSON_NON_PERSON_HEAD.test(nextNorm)) return undefined;
+  if (name.length > 1 && next && !/^(?:for|because|since|who|whose|whom)$/i.test(nextNorm!)) name.length = 1;
   return name.join(" ");
 }
 const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
@@ -1867,7 +1869,7 @@ function removeBoundOfferDates(text: string, options: readonly TimeOption[]): st
   });
   if (!slots.length) return text;
   const mentions = timeMentions(text).filter(mention => mention.day || mention.minute !== undefined);
-  const dates: { at: number; end: number; slot?: (typeof slots)[number] }[] = [];
+  const dates: { at: number; end: number; candidates: (typeof slots)[number][] }[] = [];
   for (const match of text.matchAll(BOUNDABLE_OFFER_DATE)) {
     let month: number | undefined, dayOfMonth: number | undefined;
     if (match[1]) { month = OFFER_MONTH_NUMBER.get(match[1]); dayOfMonth = Number(match[2]); }
@@ -1878,17 +1880,16 @@ function removeBoundOfferDates(text: string, options: readonly TimeOption[]): st
     } else dayOfMonth = match[6] ? Number(match[6]) : OFFER_DAY_NUMBER.get(match[7]!);
     if (dayOfMonth === undefined || dayOfMonth < 1 || dayOfMonth > 31) continue;
     const candidates = slots.filter(slot => slot.dayOfMonth === dayOfMonth && (month === undefined || slot.month === month));
-    dates.push({ at: match.index!, end: match.index! + match[0].length, slot: candidates.length === 1 ? candidates[0] : undefined });
+    dates.push({ at: match.index!, end: match.index! + match[0].length, candidates });
   }
   const spans: [number, number][] = [];
   for (const [index, date] of dates.entries()) {
-    const slot = date.slot;
-    if (slot === undefined) continue;
+    if (!date.candidates.length) continue;
     const assigned = mentions.filter(mention => {
       const distance = (span: { at: number; end: number }) => mention.end <= span.at ? span.at - mention.end : mention.at >= span.end ? mention.at - span.end : 0;
       return dates.every((other, otherIndex) => otherIndex < index ? distance(date) < distance(other) : distance(date) <= distance(other));
     });
-    const bound = options.length === 1 || (assigned.length > 0
+    const bound = (options.length === 1 && date.candidates.length === 1) || date.candidates.some(slot => assigned.length > 0
       && assigned.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute)));
     if (bound) spans.push([date.at, date.end]);
   }

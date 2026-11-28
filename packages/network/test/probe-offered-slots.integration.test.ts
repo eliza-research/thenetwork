@@ -185,6 +185,8 @@ const scenarios: Scenario[] = [
     followUp: { text: "Saturday the 17th or Sunday the 18th works.", picked: [saturday.start, sunday.start] } },
   { scene: "two dates with their matching clocks book both times",
     slots: three, text: "the 17th at 11am or the 18th at 2pm works", picked: [saturday.start, sunday.start] },
+  { scene: "a same-day multi-slot offer with matching date and clock books that time",
+    slots: [earlierSaturday, saturday, sunday], text: "Saturday the 17th at 11am works.", picked: [saturday.start] },
   { scene: "a weekday with another offered date asks again",
     slots: three, text: "Saturday the 18th works.", picked: [] },
   { scene: "a date with another offered clock asks again",
