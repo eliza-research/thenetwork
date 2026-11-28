@@ -33,17 +33,16 @@ export { isProxyHeader };
 /** The IP the router signs when Cloudflare names none (never in production; wrangler dev may omit it). */
 export const UNKNOWN_IP = "unknown";
 
-/** The largest body the router forwards (the backend's MAX_PUBLIC_BODY_BYTES). */
 export const MAX_BODY_BYTES = 9 * 1024 * 1024;
+export const MAX_TELEMETRY_BODY_BYTES = 2048;
 
-/** The retired settings paths (spec/sitePages.md). */
 export const RETIRED_SITE_PATHS: readonly string[] = retiredSettingsPaths;
-/** The retired join paths; only a site that keeps the browser join serves them (spec/sitePages.md). */
 export const RETIRED_SIGNUP_PATHS: readonly string[] = retiredJoinPaths;
 const updateHandoffRoot = updateHandoffPrefix.slice(0, -1);
 export const UPDATE_HANDOFF_PATHS = [updateHandoffRoot, `${updateHandoffPrefix}*`, `${updateHandoffAssetPath}*`];
-/** Cloudflare Pages _routes.json includes the handoff, retired paths and backend paths. */
-export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, "/api", "/api/*", "/cal/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
+/** Cloudflare Pages _routes.json includes the handoff, retired paths, telemetry paths and backend paths. */
+export const TELEMETRY_PATHS = ["/_t", "/r/*"] as const;
+export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, ...TELEMETRY_PATHS, "/api", "/api/*", "/cal/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
 
 const appKeys: Readonly<Record<AppId, AppKey>> = { ntwrk: "Ntwrk", slop: "Slop", peon: "Peon", friends: "Friends" };
 
@@ -148,16 +147,270 @@ export function isBackendPath(pathname: string): boolean {
   );
 }
 
+export interface ExecutionContextLike {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+export interface AnalyticsEngineLike {
+  writeDataPoint(point: { blobs?: string[]; doubles?: number[]; indexes?: string[] }): void;
+}
+
+export interface TelemetryPipelineLike {
+  send(events: readonly Record<string, unknown>[]): Promise<void> | void;
+}
+
 export interface Env {
   ASSETS: { fetch(req: Request): Promise<Response> };
-  /** The shared backend, for example https://api.ntwrk.party (no trailing slash needed). */
   BACKEND_ORIGIN: string;
-  /** This site's app id: ntwrk | slop | peon | friends. */
   APP_ID: string;
-  /** This site's canonical domain, for example slop.date. */
   SITE_HOST: string;
-  /** Shared with the backend. A Worker secret: never in wrangler.toml. */
   PLATFORM_PROXY_SECRET?: string;
+  ANALYTICS_ENGINE?: AnalyticsEngineLike;
+  TELEMETRY_PIPELINE?: TelemetryPipelineLike;
+  TELEMETRY_SINK_URL?: string;
+  TELEMETRY_SALT?: string;
+  SHORTLINK_TARGETS?: Readonly<Record<string, string>>;
+}
+
+const ALLOWED_TELEMETRY_EVENTS = new Set([
+  "page_view",
+  "cta_click",
+  "join_started",
+  "join_completed",
+  "qr_scan",
+  "link_click",
+  "agent_handoff",
+]);
+
+const ALLOWED_TELEMETRY_KEYS = new Set([
+  "event",
+  "path",
+  "referrerHost",
+  "utmSource",
+  "utmMedium",
+  "utmCampaign",
+  "utmContent",
+  "utmTerm",
+  "qrBatch",
+  "ref",
+  "cta",
+  "app",
+]);
+
+const SHORTLINK_SLUG_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SAFE_RELATIVE_PATH_RE = /^\/[A-Za-z0-9._~/-]{0,200}$/;
+const PII_LIKE_RE = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}|\+?\d[\d\s().-]{7,}\d/i;
+
+function strictNoStoreHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    "cache-control": "no-store",
+    "content-security-policy": "default-src 'none'; frame-ancestors 'none'",
+    "strict-transport-security": HSTS,
+    "x-frame-options": "DENY",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    ...extra,
+  };
+}
+
+function isSameOriginTelemetry(req: Request, url: URL, siteHost: string): boolean {
+  if (req.headers.get("sec-fetch-site") === "cross-site") return false;
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  const loopback = parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1";
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) return false;
+  return parsed.host === url.host || parsed.hostname === siteHost;
+}
+
+async function rotatingVisitHash(
+  siteHost: string,
+  salt: string,
+  ip: string,
+  userAgent: string,
+  nowMs: number,
+): Promise<string> {
+  const dayBucket = Math.floor(nowMs / 86_400_000);
+  const uaCoarse = userAgent.slice(0, 64);
+  const payload = `v1|${siteHost}|${dayBucket}|${salt}|${ip}|${uaCoarse}`;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(payload));
+  return Array.from(new Uint8Array(digest).slice(0, 16), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function parseTelemetryPayload(raw: string): Record<string, string> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const input = parsed as Record<string, unknown>;
+  const clean: Record<string, string> = {};
+  for (const [key, value] of Object.entries(input)) {
+    if (!ALLOWED_TELEMETRY_KEYS.has(key)) return null;
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "string") return null;
+    const trimmed = value.trim();
+    if (!trimmed) continue;
+    if (trimmed.length > 128 || /[\r\n\0]/.test(trimmed) || PII_LIKE_RE.test(trimmed)) return null;
+    if (key === "path" && (!SAFE_RELATIVE_PATH_RE.test(trimmed) || trimmed.includes(".."))) return null;
+    clean[key] = trimmed;
+  }
+  if (!clean.event || !ALLOWED_TELEMETRY_EVENTS.has(clean.event)) return null;
+  return clean;
+}
+
+async function dispatchTelemetry(
+  env: Env,
+  record: Record<string, unknown>,
+  fetchFn: typeof fetch,
+): Promise<void> {
+  if (env.ANALYTICS_ENGINE) {
+    env.ANALYTICS_ENGINE.writeDataPoint({
+      blobs: [
+        String(record.app ?? ""),
+        String(record.event ?? ""),
+        String(record.path ?? ""),
+        String(record.utmSource ?? ""),
+        String(record.utmCampaign ?? ""),
+        String(record.qrBatch ?? ""),
+        String(record.visitHash ?? ""),
+      ],
+      doubles: [Number(record.ts ?? 0)],
+      indexes: [String(record.siteHost ?? "")],
+    });
+  }
+  if (env.TELEMETRY_PIPELINE) {
+    await env.TELEMETRY_PIPELINE.send([record]);
+  }
+  if (env.TELEMETRY_SINK_URL) {
+    await fetchFn(env.TELEMETRY_SINK_URL, {
+      method: "POST",
+      headers: { "content-type": "application/json; charset=utf-8" },
+      body: JSON.stringify(record),
+      redirect: "error",
+    }).catch(() => {});
+  }
+}
+
+function resolveSafeRedirectTarget(slug: string, url: URL, env: Env): string | null {
+  const mapped = env.SHORTLINK_TARGETS?.[slug];
+  if (mapped !== undefined) {
+    if (SAFE_RELATIVE_PATH_RE.test(mapped) && !mapped.startsWith("//") && !mapped.includes("..")) {
+      return mapped;
+    }
+    try {
+      const targetUrl = new URL(mapped);
+      if (targetUrl.protocol === "https:" && targetUrl.hostname === env.SITE_HOST) {
+        return targetUrl.toString();
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  const requestedTo = url.searchParams.get("to");
+  if (requestedTo !== null) {
+    if (!SAFE_RELATIVE_PATH_RE.test(requestedTo) || requestedTo.startsWith("//") || requestedTo.includes("..")) {
+      return null;
+    }
+    const sep = requestedTo.includes("?") ? "&" : "?";
+    return `${requestedTo}${sep}qr=${encodeURIComponent(slug)}`;
+  }
+  const isQr = /^(?:qr_|COAST-|EVT-|FLIER-|SLEEVE-)/i.test(slug) || url.searchParams.get("src") === "qr";
+  return isQr ? `/?qr=${encodeURIComponent(slug)}` : `/?ref=${encodeURIComponent(slug)}`;
+}
+
+async function handleTelemetryEndpoint(
+  req: Request,
+  url: URL,
+  env: Env,
+  fetchFn: typeof fetch,
+  now: () => number,
+  ctx?: ExecutionContextLike,
+): Promise<Response | null> {
+  if (url.pathname === "/_t") {
+    if (!isAppId(env.APP_ID) || !env.SITE_HOST) return jsonError(503, "proxy_not_configured");
+    if (req.method !== "POST") {
+      return new Response(null, { status: 405, headers: strictNoStoreHeaders({ allow: "POST" }) });
+    }
+    if (!isSameOriginTelemetry(req, url, env.SITE_HOST)) {
+      return jsonError(403, "origin");
+    }
+    const rawBody = await readCapped(req, MAX_TELEMETRY_BODY_BYTES);
+    if (rawBody === "too_large") return jsonError(413, "too_large");
+    const parsed = parseTelemetryPayload(new TextDecoder().decode(rawBody));
+    if (!parsed) return jsonError(400, "invalid_telemetry");
+    const nowMs = now();
+    const ip = req.headers.get("cf-connecting-ip") || UNKNOWN_IP;
+    const visitHash = await rotatingVisitHash(
+      env.SITE_HOST,
+      env.TELEMETRY_SALT ?? env.PLATFORM_PROXY_SECRET ?? "anon",
+      ip,
+      req.headers.get("user-agent") ?? "",
+      nowMs,
+    );
+    const record: Record<string, unknown> = {
+      ...parsed,
+      app: env.APP_ID,
+      siteHost: env.SITE_HOST,
+      visitHash,
+      ts: nowMs,
+    };
+    const task = dispatchTelemetry(env, record, fetchFn).catch(() => {});
+    if (ctx) ctx.waitUntil(task);
+    else void task;
+    return new Response(null, { status: 204, headers: strictNoStoreHeaders() });
+  }
+
+  if (url.pathname.startsWith("/r/")) {
+    if (!isAppId(env.APP_ID) || !env.SITE_HOST) return jsonError(503, "proxy_not_configured");
+    if (req.method !== "GET" && req.method !== "HEAD") {
+      return new Response(null, { status: 405, headers: strictNoStoreHeaders({ allow: "GET, HEAD" }) });
+    }
+    const slug = url.pathname.slice(3);
+    if (!SHORTLINK_SLUG_RE.test(slug)) {
+      return new Response(req.method === "HEAD" ? null : "Not found", {
+        status: 404,
+        headers: strictNoStoreHeaders({ "content-type": "text/plain; charset=utf-8" }),
+      });
+    }
+    const location = resolveSafeRedirectTarget(slug, url, env);
+    if (!location) {
+      return jsonError(400, "invalid_redirect");
+    }
+    const nowMs = now();
+    const ip = req.headers.get("cf-connecting-ip") || UNKNOWN_IP;
+    const visitHash = await rotatingVisitHash(
+      env.SITE_HOST,
+      env.TELEMETRY_SALT ?? env.PLATFORM_PROXY_SECRET ?? "anon",
+      ip,
+      req.headers.get("user-agent") ?? "",
+      nowMs,
+    );
+    const isQr = /^(?:qr_|COAST-|EVT-|FLIER-|SLEEVE-)/i.test(slug) || url.searchParams.get("src") === "qr";
+    const record: Record<string, unknown> = {
+      event: isQr ? "qr_scan" : "link_click",
+      path: url.pathname,
+      qrBatch: slug,
+      app: env.APP_ID,
+      siteHost: env.SITE_HOST,
+      visitHash,
+      ts: nowMs,
+    };
+    const task = dispatchTelemetry(env, record, fetchFn).catch(() => {});
+    if (ctx) ctx.waitUntil(task);
+    else void task;
+    return new Response(null, { status: 302, headers: strictNoStoreHeaders({ location }) });
+  }
+
+  return null;
 }
 
 /** Headers that belong to one hop, or that only Cloudflare or this Worker may set (plus every cf-* header). */
@@ -169,13 +422,20 @@ export function proxyHeaders(o: { secret: string; method: string; url: URL; host
   return signProxyHeaders(o.secret, { method: o.method, path: signedPath(o.url), host: o.host, ip: o.ip || UNKNOWN_IP, ts: Math.floor(o.now / 1000) });
 }
 
-/** Answers one request: a handoff, a retired path, a forwarded backend path, or a static file. */
-export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fetch, now: () => number = Date.now): Promise<Response> {
+export async function handle(
+  req: Request,
+  env: Env,
+  fetchFn: typeof fetch = fetch,
+  now: () => number = Date.now,
+  ctx?: ExecutionContextLike,
+): Promise<Response> {
+  const url = new URL(req.url);
+  const telemetry = await handleTelemetryEndpoint(req, url, env, fetchFn, now, ctx);
+  if (telemetry) return telemetry;
   const handoff = await updateHandoffPage(req, env.APP_ID, (asset) => env.ASSETS.fetch(asset));
   if (handoff) return handoff;
   const retired = retiredSitePage(req, env.APP_ID);
   if (retired) return retired;
-  const url = new URL(req.url);
   if (workerRoute(req, env.APP_ID) !== "ForwardToBackend") return env.ASSETS.fetch(req);
   const secret = env.PLATFORM_PROXY_SECRET;
   if (!secret || !env.BACKEND_ORIGIN || !env.APP_ID || !env.SITE_HOST) return jsonError(503, "proxy_not_configured");
@@ -215,7 +475,7 @@ export async function handle(req: Request, env: Env, fetchFn: typeof fetch = fet
 }
 
 export default {
-  fetch(req: Request, env: Env): Promise<Response> {
-    return handle(req, env);
+  fetch(req: Request, env: Env, ctx?: ExecutionContextLike): Promise<Response> {
+    return handle(req, env, fetch, Date.now, ctx);
   },
 };

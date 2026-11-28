@@ -14,6 +14,7 @@ import {
   type HumanRole,
   type ImplementationTier,
   type OutreachChannel,
+  type OutreachDirection,
   type PayoutRail,
   type PersonaId,
   type ProofKind,
@@ -86,6 +87,7 @@ const OUTREACH_CHANNELS = new Set<OutreachChannel>([
   "x",
   "reddit",
   "linkedin",
+  "discord",
   "tinder",
   "bumble",
   "hinge",
@@ -96,6 +98,7 @@ const OUTREACH_CHANNELS = new Set<OutreachChannel>([
   "venue",
   "sms_opted_in",
 ]);
+const OUTREACH_DIRECTIONS = new Set<OutreachDirection>(["outbound", "inbound"]);
 const CANONICAL_PLATFORM_SET = new Set<CanonicalOutreachPlatform>(CANONICAL_OUTREACH_PLATFORMS);
 const TASK_KINDS = new Set<TaskKind>([
   "street_fliering",
@@ -147,6 +150,7 @@ const PROOF_VERDICTS = new Set<ProofVerdict>(["pending", "verified", "rejected"]
 const ATTRIBUTION_KINDS = new Set<AttributionEventKind>([
   "qr_scan",
   "site_visit",
+  "link_click",
   "signup_started",
   "signup_verified_adult",
   "video_view",
@@ -155,6 +159,11 @@ const ATTRIBUTION_KINDS = new Set<AttributionEventKind>([
   "second_meetup_retained",
   "intro_or_hire_unlocked",
   "t3_match_verified",
+  "outreach_sent",
+  "outreach_replied",
+  "cta_triggered",
+  "onboarding_completed",
+  "first_proposal_received",
 ]);
 const BD_DEAL_STAGES = new Set<BdDealStage>([
   "prospect",
@@ -934,6 +943,7 @@ export interface ParsedCreateOutreach {
   agentId: string;
   humanId: string;
   channel: OutreachChannel;
+  direction?: OutreachDirection;
   tier?: ImplementationTier;
   subject?: string | null;
   bodyText: string;
@@ -947,6 +957,7 @@ export function parseCreateOutreach(raw: unknown): ParsedCreateOutreach {
     agentId: reqString(b.agentId, "agentId", 128),
     humanId: reqString(b.humanId, "humanId", 128),
     channel: reqEnum(b.channel, "channel", OUTREACH_CHANNELS),
+    direction: optEnum(b.direction, "direction", OUTREACH_DIRECTIONS),
     tier: optTier(b.tier, "tier"),
     subject: optNullableString(b.subject, "subject", 240),
     bodyText: reqString(b.bodyText, "bodyText", 12_000),

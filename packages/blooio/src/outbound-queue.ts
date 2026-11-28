@@ -46,6 +46,7 @@ import { settleClaimedSend, type SendDisposition } from "../../core/src/vibe/out
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { DAY, HOUR, MINUTE } from "../../core/src/clock.ts";
 import { LeakGuard } from "../../core/src/guard.ts";
+import { fullJitterDelayMs } from "../../core/src/pacing/jitter.ts";
 import { normalizeAddress } from "./phone.ts";
 import { DEFAULT_QUIET, isQuietAt, isValidTimeZone, nextAllowedAt, resolveTimeZone, type QuietWindow } from "./quiet-hours.ts";
 import { ChannelSendError, type ChannelAdapter, type Clock, type FailureClass, type StatusUpdate, type SendRequest, type SendReceipt } from "./types.ts";
@@ -207,6 +208,9 @@ export interface QueueOptions {
   replyWindowMs?: number;
   maxAttempts?: number;
   baseBackoffMs?: number;
+  retryJitter?: boolean;
+  quietSpreadWindowMs?: number;
+  drainBatchLimit?: number;
   /** How long a provider call may hold a row before recover() takes it back. Default 5 minutes. */
   leaseMs?: number;
   /**
@@ -363,11 +367,12 @@ export class OutboundQueue {
       const changes: StatusChange[] = [...receipts, ...await this.expireHeld()];
       if (this.o.network) await this.sql`update platform.outbound set network_id = app_id || ':nyc'
         where app_id = ${this.app} and line = ${this.line} and network_id is null`;
+      const batchLimit = Math.max(1, Math.floor(this.opt("drainBatchLimit", 200)));
       const rows = this.o.network
         ? await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
-            and network_id = ${this.o.network} and status = any(${this.sql.array([...DUE], "TEXT")}) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`
+            and network_id = ${this.o.network} and status = any(${this.sql.array([...DUE], "TEXT")}) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id limit ${batchLimit}`
         : await this.sql`select * from platform.outbound where app_id = ${this.app} and line = ${this.line}
-            and status = any(${this.sql.array([...DUE], "TEXT")}) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id`;
+            and status = any(${this.sql.array([...DUE], "TEXT")}) and next_attempt_at <= ${new Date(this.now)} order by next_attempt_at, created_at, id limit ${batchLimit}`;
       for (const r of rows as any[]) {
         const row = this.rowOf(r);
         let c: StatusChange | undefined;
@@ -391,7 +396,7 @@ export class OutboundQueue {
             const tries = Number(cur.attempts);
             c = dispatchFailurePolicy(tries < this.opt("maxAttempts", 6)) === "ParkDispatch"
               ? await this.end(row, "parked_error", error, undefined, from)
-              : await this.wait(row, "retry_scheduled", this.now + this.backoff(tries), "dispatch error", from);
+              : await this.wait(row, "retry_scheduled", this.now + this.backoff(tries, row.id), "dispatch error", from);
           }
           this.o.onAlert?.(row.id, "dispatch_error");
         }
@@ -457,8 +462,12 @@ export class OutboundQueue {
     return { id: row.id, app: row.app, memberId: row.memberId, status };
   }
 
-  private backoff(tries: number): number {
-    return Math.min(this.opt("baseBackoffMs", 30_000) * 2 ** (tries - 1), 30 * MINUTE);
+  private backoff(tries: number, seed?: string): number {
+    const base = this.opt("baseBackoffMs", 30_000);
+    if (this.o.retryJitter && seed) {
+      return fullJitterDelayMs(seed, tries, base, 30 * MINUTE);
+    }
+    return Math.min(base * 2 ** (tries - 1), 30 * MINUTE);
   }
 
   /**
@@ -507,7 +516,11 @@ export class OutboundQueue {
       ? { startHour: saved[0], endHour: saved[1] } : this.o.quiet ?? DEFAULT_QUIET;
     const decision = quietPolicy(true, validZone, validZone && isQuietAt(now, zone, quiet));
     if (decision === "InvalidZone") return { kind: "invalid_zone" } as const;
-    if (decision === "QuietHours") return { kind: "quiet", until: nextAllowedAt(now, zone, quiet) } as const;
+    if (decision === "QuietHours") {
+      const spreadWindowMs = this.o.quietSpreadWindowMs ?? 0;
+      const spread = spreadWindowMs > 0 ? { key: row.id, windowMs: spreadWindowMs } : undefined;
+      return { kind: "quiet", until: nextAllowedAt(now, zone, quiet, spread) } as const;
+    }
     return { kind: "open" } as const;
   }
 
@@ -753,7 +766,7 @@ export class OutboundQueue {
         break;
       case "RetryScheduled":
         status = "retry_scheduled";
-        nextAttemptAt += e.retryAfterMs ?? this.backoff(attempts);
+        nextAttemptAt += e.retryAfterMs ?? this.backoff(attempts, row.id);
         note = e.code ?? "retry";
         break;
       case "WaitingForReply":

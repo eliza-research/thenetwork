@@ -5,12 +5,13 @@ import type { City, ScoreComponents } from "@thenetwork/core";
 import { getCity } from "../../../packages/core/src/cities.ts";
 import { CITY_TZ } from "../../../packages/core/src/time.ts";
 import {
-  AreaLink as AreaSubjectLink, Countdown as ClockCountdown, formatDuration, MemberLink as MemberSubjectLink, OpportunityLink, type MeterRow,
+  AreaLink as AreaSubjectLink, Countdown as ClockCountdown, formatDuration, MemberLink as MemberSubjectLink, MeterBars, OpportunityLink, StatusMark,
+  type MeterRow, type StatusTone,
 } from "@thenetwork/ui";
 import { canJumpToTab, type ConsoleNav, type FilterKey as NavFilterKey, jumpToTab } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { initial as initialWorkspace, receiveViewer as receiveWorkViewer, type StaffView, type WorkMode } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { type IdentityAnswer, methodForAnswer, phaseForAnswer, type StaffSignIn } from "../../../packages/core/src/generated/staffSignIn.ts";
-import type { ObsOpportunity } from "../src/types.ts";
+import type { ObsOpportunity, SystemEvent } from "../src/types.ts";
 import { navTab, store, STORE_TAB, type DrawerTab, type FilterKey } from "./store.ts";
 
 export { navTab, STORE_TAB, subjectOf } from "./store.ts";
@@ -72,11 +73,55 @@ export const COMPONENT_SIGN: Record<keyof ScoreComponents, 1 | -1> = {
 export function hasScoreParts(c: ScoreComponents): boolean {
   return Object.values(c).some(v => v !== 0);
 }
-/** The score parts as `MeterBars` rows (show them with `ranked={false} max={1}`): a cost part is amber. */
-export function componentRows(c: ScoreComponents): MeterRow[] {
+export function componentRows(c: ScoreComponents, gainTone: "primary" | "ok" = "primary", costTone: "warn" | "destructive" = "warn"): MeterRow[] {
   return (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
-    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? "warn" : "primary", title: `${k}: ${c[k]}`,
+    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? costTone : gainTone, title: `${k}: ${c[k]}`,
   }));
+}
+
+export function ScoreParts({ c, emptyNote = false, gainTone = "primary" }: { c?: ScoreComponents; emptyNote?: boolean; gainTone?: "primary" | "ok" }) {
+  if (!c) return null;
+  if (!hasScoreParts(c)) return emptyNote ? <p className="text-sm text-muted-foreground">no component breakdown for this source</p> : null;
+  return <MeterBars aria-label="Score parts" rows={componentRows(c, gainTone, "destructive")} ranked={false} max={1} format={v => v.toFixed(2)} />;
+}
+
+export function eventBadge(e: SystemEvent): { tone: StatusTone; label: string } {
+  const t = e.type, d = e.detail ?? {};
+  if (t === "review_decision") {
+    if (d.decision === "reject") return { tone: "destructive", label: "rejected" };
+    if (d.decision === "reroll") return { tone: "warn", label: "re-rolled" };
+    return { tone: "ok", label: "approved" };
+  }
+  if (t === "review_expired") return { tone: "destructive", label: "expired" };
+  if (t === "review_invalidated" || t === "review_refused" || t === "send_refused" || t === "send_skipped" || t === "proposal_skipped" || t === "gate_reason") {
+    return { tone: "warn", label: humanize(t) };
+  }
+  if (t.startsWith("review")) return { tone: "primary", label: humanize(t) };
+  if (t.startsWith("probe") || t === "time_answer") return { tone: "primary", label: humanize(t) };
+  if (t === "send_deferred") return { tone: "warn", label: "deferred" };
+  if (t === "booked_cancelled") return { tone: "destructive", label: "cancelled" };
+  if (t === "guard_blocked") return { tone: "destructive", label: "leak blocked" };
+  if (t === "trust" || t === "abuse" || t === "safety_flag" || t === "safety_action" || t === "member_blocked") return { tone: "destructive", label: humanize(t) };
+  if (t.startsWith("age") || t === "minor_signal" || t === "join_declined") return { tone: "warn", label: humanize(t) };
+  if (t === "meeting_scheduled" || t === "interaction_occurred" || t === "member_accepted") return { tone: "ok", label: humanize(t) };
+  return { tone: e.severity === "bad" ? "destructive" : e.severity === "warn" ? "warn" : e.severity === "good" ? "ok" : "neutral", label: humanize(t) };
+}
+
+export function EventBadge({ e }: { e: SystemEvent }) {
+  const badge = eventBadge(e);
+  return <StatusMark tone={badge.tone} label={badge.label} showLabel />;
+}
+
+export function downloadTextFile(filename: string, content: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 /** The generated filter key of each store filter. */

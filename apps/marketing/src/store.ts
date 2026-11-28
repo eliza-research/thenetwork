@@ -32,76 +32,79 @@ import {
   isDeviceLeaseHeldByOther,
   minAgeReading,
 } from "./policy.ts";
-import type {
-  AgentAuthMode,
-  AgentStatus,
-  AntiFraudClaim,
-  AntiFraudClaimStatus,
-  ApolloCreditLedgerEntry,
-  ApolloCreditUsageSummary,
-  ApolloOperationKind,
-  AppId,
-  AttributionEvent,
-  BanditArm,
-  BanditArmStatus,
-  BdDeal,
-  BdDealStage,
-  BrandAppId,
-  BudgetEntry,
-  BudgetEntryType,
-  Campaign,
-  CanonicalOutreachPlatform,
-  ChannelAccount,
-  CityLaunchStage,
-  CityPackOverride,
-  Clock,
-  ContactSuppressionRecord,
-  ContactTouchpoint,
-  ContactTouchpointStats,
-  ContactTouchSurface,
-  DailyLlmUsage,
-  DesireLaneId,
-  DeviceNode,
-  DevicePlatform,
-  DeviceStatus,
-  DeviceWarmupStage,
-  EnrichmentCacheEntry,
-  HumanPartner,
-  HumanRole,
-  ImplementationTier,
-  IntakeCandidateRecord,
-  IntakeCandidateStatus,
-  IntakeScoreBreakdown,
-  LlmTrajectoryRecord,
-  LlmTrajectoryStatus,
-  MarketingAgent,
-  MarketingTask,
-  OutreachChannel,
-  OutreachMessage,
-  OutreachStatus,
-  PayoutRail,
-  PersonaId,
-  PhoneLineType,
-  PlatformInteractionOutcome,
-  PlatformInteractionRecord,
-  ProofKind,
-  ProofSubmission,
-  ProofVerdict,
-  QrBatch,
-  QrBatchAssigneeType,
-  RiskDial,
-  RiskZone,
-  SlopCashHook,
-  SlopCashHookState,
-  SlopCashVaultChain,
-  SubscriptionProvider,
-  TaskKind,
-  TaskStatus,
-  VendorChannel,
-  VideoAsset,
-  VideoAssetStage,
-  VipProspect,
-  VipProspectStatus,
+import {
+  normalizeCityLaunchStage,
+  type AgentAuthMode,
+  type AgentStatus,
+  type AntiFraudClaim,
+  type AntiFraudClaimStatus,
+  type ApolloCreditLedgerEntry,
+  type ApolloCreditUsageSummary,
+  type ApolloOperationKind,
+  type AppId,
+  type AttributionEvent,
+  type BanditArm,
+  type BanditArmStatus,
+  type BdDeal,
+  type BdDealStage,
+  type BrandAppId,
+  type BudgetEntry,
+  type BudgetEntryType,
+  type Campaign,
+  type CanonicalOutreachPlatform,
+  type ChannelAccount,
+  type CityLaunchStage,
+  type CityPackOverride,
+  type Clock,
+  type ContactSuppressionRecord,
+  type ContactTouchpoint,
+  type ContactTouchpointStats,
+  type ContactTouchSurface,
+  type DailyLlmUsage,
+  type DesireLaneId,
+  type DeviceNode,
+  type DevicePlatform,
+  type DeviceStatus,
+  type DeviceWarmupStage,
+  type EnrichmentCacheEntry,
+  type HumanPartner,
+  type HumanRole,
+  type ImplementationTier,
+  type IntakeCandidateRecord,
+  type IntakeCandidateStatus,
+  type IntakeScoreBreakdown,
+  type LlmTrajectoryRecord,
+  type LlmTrajectoryStatus,
+  type MarketingAgent,
+  type MarketingTask,
+  type OperatorAuditEntry,
+  type OutreachChannel,
+  type OutreachDirection,
+  type OutreachMessage,
+  type OutreachStatus,
+  type PayoutRail,
+  type PersonaId,
+  type PhoneLineType,
+  type PlatformInteractionOutcome,
+  type PlatformInteractionRecord,
+  type ProofKind,
+  type ProofSubmission,
+  type ProofVerdict,
+  type QrBatch,
+  type QrBatchAssigneeType,
+  type RiskDial,
+  type RiskZone,
+  type SlopCashHook,
+  type SlopCashHookState,
+  type SlopCashVaultChain,
+  type SubscriptionProvider,
+  type TaskKind,
+  type TaskStatus,
+  type VendorChannel,
+  type VideoAsset,
+  type VideoAssetStage,
+  type VipProspect,
+  type VipProspectStatus,
 } from "./types.ts";
 
 export { PolicyViolationError };
@@ -342,6 +345,7 @@ export interface CreateOutreachInput {
   phoneHash?: string | null;
   channelAccountId?: string | null;
   channel: OutreachChannel;
+  direction?: OutreachDirection;
   tier: ImplementationTier;
   subject?: string | null;
   bodySummary: string;
@@ -684,12 +688,49 @@ export interface MarketingOverview {
     verifiedAdultSignups: number;
     videoViews: number;
     blendedCpaCents: number | null;
+    cpaHistoryCents: number[];
   };
   slopCashHooks: {
     total: number;
     disabledStubCount: number;
     settledCount: number;
   };
+}
+
+export interface DesireLaneAggregate {
+  lane: string;
+  campaigns: number;
+  tasks: number;
+  arms: number;
+  deals: number;
+  vips: number;
+  videos: number;
+  spendCents: number;
+  signups: number;
+  verifiedOutcomes: number;
+}
+
+export interface CityReadinessAggregate {
+  city: string;
+  campaigns: number;
+  activeCampaigns: number;
+  tasks: number;
+  dealsLive: number;
+  dealsTotal: number;
+  vips: number;
+  qrBatches: number;
+  verifiedSignups: number;
+  spentCents: number;
+  monthlyBudgetCents: number;
+}
+
+export interface RecordOperatorAuditInput {
+  id?: string;
+  actor: string;
+  action: string;
+  targetType?: string | null;
+  targetId?: string | null;
+  detail?: Record<string, unknown>;
 }
 
 export interface MarketingStore {
@@ -915,6 +956,22 @@ export interface MarketingStore {
   ): Promise<CityPackOverride>;
   listCityPacksOverrides(): Promise<CityPackOverride[]>;
 
+  cancelPendingOutreachForContact(opts: {
+    humanIds?: readonly string[];
+    contactHash?: string | null;
+    contactHashes?: readonly string[];
+    contactEmail?: string | null;
+    reason?: string;
+  }): Promise<number>;
+  incrementQrBatchStats(
+    batchCode: string,
+    delta: { scans?: number; verifiedSignups?: number },
+  ): Promise<QrBatch | null>;
+  recordOperatorAudit(input: RecordOperatorAuditInput): Promise<OperatorAuditEntry>;
+  listOperatorAudit(limit?: number): Promise<OperatorAuditEntry[]>;
+  getDesireLaneAggregates(campaignId?: string): Promise<DesireLaneAggregate[]>;
+  getCityReadinessAggregates(): Promise<CityReadinessAggregate[]>;
+
   // Pass-4 Apollo enrichment cache, credit ledger, 10-platform interactions, and quality intake
   getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null>;
   upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry>;
@@ -1032,6 +1089,47 @@ function sortProofsVerifiedFirst(a: ProofSubmission, b: ProofSubmission): number
   return b.id.localeCompare(a.id);
 }
 
+function computeCpaHistoryCents(
+  nowIso: string,
+  budgetEntries: readonly BudgetEntry[],
+  attribution: readonly AttributionEvent[],
+  fallbackBlended: number | null,
+  days = 14,
+): number[] {
+  const nowDayMs = Date.parse(`${nowIso.slice(0, 10)}T00:00:00.000Z`);
+  if (!Number.isFinite(nowDayMs)) return fallbackBlended !== null ? [fallbackBlended] : [];
+  const spendByDay = new Map<string, number>();
+  for (const entry of budgetEntries) {
+    if (entry.entryType !== "commit" && entry.entryType !== "refund") continue;
+    const day = entry.createdAt.slice(0, 10);
+    const delta = entry.entryType === "refund" ? -entry.amountCents : entry.amountCents;
+    spendByDay.set(day, (spendByDay.get(day) ?? 0) + delta);
+  }
+  const signupsByDay = new Map<string, number>();
+  for (const ev of attribution) {
+    if (ev.eventKind !== "signup_verified_adult") continue;
+    const day = ev.createdAt.slice(0, 10);
+    signupsByDay.set(day, (signupsByDay.get(day) ?? 0) + ev.count);
+  }
+  const history: number[] = [];
+  let cumSpend = 0;
+  let cumSignups = 0;
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const day = new Date(nowDayMs - i * 86_400_000).toISOString().slice(0, 10);
+    cumSpend = Math.max(0, cumSpend + (spendByDay.get(day) ?? 0));
+    cumSignups += signupsByDay.get(day) ?? 0;
+    if (cumSignups > 0) {
+      history.push(Math.round(cumSpend / cumSignups));
+    } else if (history.length > 0) {
+      history.push(history[history.length - 1] ?? 0);
+    }
+  }
+  if (history.length === 0 && fallbackBlended !== null) {
+    return [fallbackBlended];
+  }
+  return history;
+}
+
 function buildOverview(
   nowIso: string,
   campaigns: Campaign[],
@@ -1043,6 +1141,7 @@ function buildOverview(
   outreach: OutreachMessage[],
   attribution: AttributionEvent[],
   hooks: SlopCashHook[],
+  budgetEntries: readonly BudgetEntry[] = [],
 ): MarketingOverview {
   const monthlyBudgetCents = campaigns.reduce((s, c) => s + c.monthlyBudgetCents, 0);
   const dailyCapCents = campaigns.reduce((s, c) => s + c.dailyCapCents, 0);
@@ -1065,11 +1164,20 @@ function buildOverview(
   let videoViews = 0;
   for (const e of attribution) {
     if (e.eventKind === "qr_scan") qrScans += e.count;
-    else if (e.eventKind === "site_visit") siteVisits += e.count;
+    else if (e.eventKind === "site_visit" || e.eventKind === "link_click") siteVisits += e.count;
     else if (e.eventKind === "signup_started") signupsStarted += e.count;
     else if (e.eventKind === "signup_verified_adult") verifiedAdultSignups += e.count;
     else if (e.eventKind === "video_view") videoViews += e.count;
   }
+
+  const blendedCpaCents =
+    verifiedAdultSignups > 0 ? Math.round(spentCents / verifiedAdultSignups) : null;
+  const cpaHistoryCents = computeCpaHistoryCents(
+    nowIso,
+    budgetEntries,
+    attribution,
+    blendedCpaCents,
+  );
 
   return {
     generatedAt: nowIso,
@@ -1138,7 +1246,8 @@ function buildOverview(
       signupsStarted,
       verifiedAdultSignups,
       videoViews,
-      blendedCpaCents: verifiedAdultSignups > 0 ? Math.round(spentCents / verifiedAdultSignups) : null,
+      blendedCpaCents,
+      cpaHistoryCents,
     },
     slopCashHooks: {
       total: hooks.length,
@@ -1271,6 +1380,7 @@ export class MemoryMarketingStore implements MarketingStore {
   private readonly contactSuppressions = new Map<string, ContactSuppressionRecord>();
   private readonly contactTouchpoints: ContactTouchpoint[] = [];
   private readonly cityPackOverrides = new Map<string, CityPackOverride>();
+  private readonly operatorAudit: OperatorAuditEntry[] = [];
   private readonly enrichmentCache = new Map<string, EnrichmentCacheEntry>();
   private readonly apolloCreditLedger: ApolloCreditLedgerEntry[] = [];
   private readonly apolloCreditByKey = new Map<string, ApolloCreditLedgerEntry>();
@@ -2286,6 +2396,7 @@ export class MemoryMarketingStore implements MarketingStore {
       agentId: input.agentId,
       humanId: input.humanId,
       channel: input.channel,
+      direction: input.direction ?? "outbound",
       tier: input.tier,
       subject: input.subject ?? null,
       bodySummary: input.bodySummary,
@@ -3085,6 +3196,9 @@ export class MemoryMarketingStore implements MarketingStore {
     const hooks = campaignId
       ? [...this.slopCashHooks.values()].filter((h) => taskIds.has(h.taskId))
       : [...this.slopCashHooks.values()];
+    const budgetEntries = campaignId
+      ? [...this.budgetEntries.values()].filter((b) => campaignIds.has(b.campaignId))
+      : [...this.budgetEntries.values()];
 
     return Promise.resolve(
       buildOverview(
@@ -3098,6 +3212,7 @@ export class MemoryMarketingStore implements MarketingStore {
         outreach,
         attribution,
         hooks,
+        budgetEntries,
       ),
     );
   }
@@ -3395,7 +3510,7 @@ export class MemoryMarketingStore implements MarketingStore {
     const normalized = code.trim().toLowerCase();
     const record: CityPackOverride = {
       code: normalized,
-      stage,
+      stage: normalizeCityLaunchStage(stage),
       config: { ...config },
       updatedAt: isoNow(this.clock),
     };
@@ -3409,6 +3524,202 @@ export class MemoryMarketingStore implements MarketingStore {
         .sort((a, b) => a.code.localeCompare(b.code))
         .map((c) => ({ ...c, config: { ...c.config } })),
     );
+  }
+
+  cancelPendingOutreachForContact(opts: {
+    humanIds?: readonly string[];
+    contactHash?: string | null;
+    contactHashes?: readonly string[];
+    contactEmail?: string | null;
+    reason?: string;
+  }): Promise<number> {
+    const targetIds = new Set<string>(opts.humanIds ?? []);
+    const hashes = new Set<string>();
+    if (opts.contactHash) hashes.add(opts.contactHash);
+    for (const h of opts.contactHashes ?? []) {
+      if (h) hashes.add(h);
+    }
+    const normEmail = opts.contactEmail?.trim().toLowerCase() ?? null;
+    if (hashes.size > 0 || normEmail) {
+      for (const h of this.humans.values()) {
+        const phoneHash = this.humanPhoneHashes.get(h.id);
+        if (
+          hashes.has(h.handleOrEmailHmac) ||
+          (phoneHash && hashes.has(phoneHash)) ||
+          (normEmail && h.contactEmail?.trim().toLowerCase() === normEmail)
+        ) {
+          targetIds.add(h.id);
+        }
+      }
+    }
+    if (targetIds.size === 0) return Promise.resolve(0);
+    let cancelled = 0;
+    for (const [id, msg] of this.outreach.entries()) {
+      if (msg.status === "queued" && targetIds.has(msg.humanId)) {
+        this.outreach.set(id, { ...msg, status: "blocked_stop" });
+        cancelled += 1;
+      }
+    }
+    return Promise.resolve(cancelled);
+  }
+
+  incrementQrBatchStats(
+    batchCode: string,
+    delta: { scans?: number; verifiedSignups?: number },
+  ): Promise<QrBatch | null> {
+    const normalized = batchCode.trim();
+    for (const [id, batch] of this.qrBatches.entries()) {
+      if (batch.batchCode === normalized) {
+        const next: QrBatch = {
+          ...batch,
+          scans: Math.max(0, batch.scans + (delta.scans ?? 0)),
+          verifiedSignups: Math.max(0, batch.verifiedSignups + (delta.verifiedSignups ?? 0)),
+        };
+        this.qrBatches.set(id, next);
+        return Promise.resolve({ ...next });
+      }
+    }
+    return Promise.resolve(null);
+  }
+
+  recordOperatorAudit(input: RecordOperatorAuditInput): Promise<OperatorAuditEntry> {
+    const entry: OperatorAuditEntry = {
+      id: input.id ?? this.idGen(),
+      actor: input.actor.trim() || "operator",
+      action: input.action.trim(),
+      targetType: input.targetType ?? null,
+      targetId: input.targetId ?? null,
+      detail: { ...(input.detail ?? {}) },
+      createdAt: isoNow(this.clock),
+    };
+    this.operatorAudit.push(entry);
+    if (this.operatorAudit.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.operatorAudit.splice(0, this.operatorAudit.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve({ ...entry, detail: { ...entry.detail } });
+  }
+
+  listOperatorAudit(limit = 50): Promise<OperatorAuditEntry[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(limit)));
+    return Promise.resolve(
+      this.operatorAudit
+        .slice(-safeLimit)
+        .reverse()
+        .map((e) => ({ ...e, detail: { ...e.detail } })),
+    );
+  }
+
+  getDesireLaneAggregates(campaignId?: string): Promise<DesireLaneAggregate[]> {
+    const map = new Map<string, DesireLaneAggregate>();
+    const ensure = (lane: string): DesireLaneAggregate => {
+      let row = map.get(lane);
+      if (!row) {
+        row = {
+          lane,
+          campaigns: 0,
+          tasks: 0,
+          arms: 0,
+          deals: 0,
+          vips: 0,
+          videos: 0,
+          spendCents: 0,
+          signups: 0,
+          verifiedOutcomes: 0,
+        };
+        map.set(lane, row);
+      }
+      return row;
+    };
+    for (const c of this.campaigns.values()) {
+      if (campaignId && c.id !== campaignId) continue;
+      if (c.desireLane) {
+        const row = ensure(c.desireLane);
+        row.campaigns += 1;
+        row.spendCents += c.spentCents;
+      }
+    }
+    for (const t of this.tasks.values()) {
+      if (campaignId && t.campaignId !== campaignId) continue;
+      if (t.desireLane) ensure(t.desireLane).tasks += 1;
+    }
+    for (const a of this.banditArms.values()) {
+      if (campaignId && a.campaignId !== campaignId) continue;
+      if (a.desireLane) {
+        const row = ensure(a.desireLane);
+        row.arms += 1;
+        row.signups += a.signups;
+        row.verifiedOutcomes += a.verifiedOutcomes ?? 0;
+      }
+    }
+    for (const d of this.bdDeals.values()) {
+      if (campaignId && d.campaignId !== campaignId) continue;
+      if (d.desireLane) ensure(d.desireLane).deals += 1;
+    }
+    for (const v of this.vipProspects.values()) {
+      if (campaignId && v.campaignId !== campaignId) continue;
+      if (v.desireLane) ensure(v.desireLane).vips += 1;
+    }
+    for (const vid of this.videoAssets.values()) {
+      if (campaignId && vid.campaignId !== campaignId) continue;
+      if (vid.desireLane) ensure(vid.desireLane).videos += 1;
+    }
+    for (const ev of this.attribution.values()) {
+      if (campaignId && ev.campaignId !== campaignId) continue;
+      if (ev.desireLane && VERIFIED_OUTCOME_EVENT_KINDS.has(ev.eventKind)) {
+        const row = ensure(ev.desireLane);
+        if (ev.eventKind === "signup_verified_adult") row.signups += ev.count;
+        row.verifiedOutcomes += ev.count;
+      }
+    }
+    return Promise.resolve([...map.values()].sort((a, b) => a.lane.localeCompare(b.lane)));
+  }
+
+  getCityReadinessAggregates(): Promise<CityReadinessAggregate[]> {
+    const map = new Map<string, CityReadinessAggregate>();
+    const ensure = (city: string): CityReadinessAggregate => {
+      const code = city.trim().toLowerCase() || "nyc";
+      let row = map.get(code);
+      if (!row) {
+        row = {
+          city: code,
+          campaigns: 0,
+          activeCampaigns: 0,
+          tasks: 0,
+          dealsLive: 0,
+          dealsTotal: 0,
+          vips: 0,
+          qrBatches: 0,
+          verifiedSignups: 0,
+          spentCents: 0,
+          monthlyBudgetCents: 0,
+        };
+        map.set(code, row);
+      }
+      return row;
+    };
+    for (const c of this.campaigns.values()) {
+      const row = ensure(c.city);
+      row.campaigns += 1;
+      if (c.status === "active") row.activeCampaigns += 1;
+      row.spentCents += c.spentCents;
+      row.monthlyBudgetCents += c.monthlyBudgetCents;
+    }
+    for (const t of this.tasks.values()) ensure(t.city).tasks += 1;
+    for (const d of this.bdDeals.values()) {
+      const row = ensure(d.city);
+      row.dealsTotal += 1;
+      if (d.stage === "live" || d.stage === "audited" || d.stage === "kit_shipped") {
+        row.dealsLive += 1;
+      }
+    }
+    for (const v of this.vipProspects.values()) ensure(v.city).vips += 1;
+    for (const q of this.qrBatches.values()) ensure(q.city).qrBatches += 1;
+    for (const ev of this.attribution.values()) {
+      if (ev.eventKind === "signup_verified_adult") {
+        ensure(ev.city).verifiedSignups += ev.count;
+      }
+    }
+    return Promise.resolve([...map.values()].sort((a, b) => a.city.localeCompare(b.city)));
   }
 
   getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
@@ -3760,13 +4071,20 @@ function payoutRailFromDb(rail: string, meta: Record<string, unknown>): PayoutRa
 }
 
 function attributionKindFromDb(dbType: string): AttributionEvent["eventKind"] {
-  if (dbType === "link_click" || dbType === "site_visit") return "site_visit";
   if (dbType === "signup_verified_18plus" || dbType === "signup_verified_adult") {
     return "signup_verified_adult";
   }
   if (dbType === "video_view_snapshot" || dbType === "video_view") return "video_view";
-  if (dbType === "signup_started") return "signup_started";
   if (
+    dbType === "qr_scan" ||
+    dbType === "link_click" ||
+    dbType === "site_visit" ||
+    dbType === "outreach_sent" ||
+    dbType === "outreach_replied" ||
+    dbType === "cta_triggered" ||
+    dbType === "signup_started" ||
+    dbType === "onboarding_completed" ||
+    dbType === "first_proposal_received" ||
     dbType === "first_match_accepted" ||
     dbType === "irl_meeting_confirmed" ||
     dbType === "second_meetup_retained" ||
@@ -4020,16 +4338,17 @@ export class PgMarketingStore implements MarketingStore {
     const status = (
       rawStatus === "drafted" || rawStatus === "dry_run"
         ? "queued"
-        : rawStatus === "bounced"
-          ? "failed"
-          : rawStatus
+        : rawStatus
     ) as OutreachStatus;
+    const rawDirection = asStr(r.direction, "outbound");
+    const direction: OutreachDirection = rawDirection === "inbound" ? "inbound" : "outbound";
     return {
       id: asStr(r.id),
       campaignId: asStr(r.campaign_id),
       agentId: asStr(r.agent_id),
       humanId: asStr(r.human_id),
       channel: outreachDbToChannel(asStr(r.channel, "email"), asOptStr(r.template_id)),
+      direction,
       tier: asNum(r.tier, 1) as ImplementationTier,
       subject: asOptStr(r.subject),
       bodySummary: asStr(r.body_text),
@@ -4251,9 +4570,21 @@ export class PgMarketingStore implements MarketingStore {
   private mapCityPackOverride(r: Row): CityPackOverride {
     return {
       code: asStr(r.code),
-      stage: asStr(r.stage, "scout") as CityLaunchStage,
+      stage: normalizeCityLaunchStage(asStr(r.stage, "researching")),
       config: toJsonObj(r.config),
       updatedAt: toIso(r.updated_at),
+    };
+  }
+
+  private mapOperatorAudit(r: Row): OperatorAuditEntry {
+    return {
+      id: asStr(r.id),
+      actor: asStr(r.actor, "operator"),
+      action: asStr(r.action),
+      targetType: asOptStr(r.target_type),
+      targetId: asOptStr(r.target_id),
+      detail: toJsonObj(r.detail),
+      createdAt: toIso(r.created_at),
     };
   }
 
@@ -5552,6 +5883,7 @@ export class PgMarketingStore implements MarketingStore {
       const id = input.id ?? this.idGen();
       const now = new Date(this.clock.now());
       const bodyText = input.bodySummary.trim().length > 0 ? input.bodySummary : "(empty)";
+      const direction: OutreachDirection = input.direction ?? "outbound";
       const r = firstRow(await tx`
         insert into marketing.outreach_messages (
           id, campaign_id, agent_id, human_id, channel, tier, direction,
@@ -5559,7 +5891,7 @@ export class PgMarketingStore implements MarketingStore {
           status, sent_at, created_at
         ) values (
           ${id}, ${input.campaignId}, ${input.agentId}, ${input.humanId},
-          ${input.channel}, ${input.tier}, 'outbound',
+          ${input.channel}, ${input.tier}, ${direction},
           ${`ch:${input.channel}`}, ${input.subject ?? null}, ${bodyText},
           ${input.leakCheckPass}, ${input.externalRef ?? null},
           ${status}, ${status === "sent" || status === "delivered" ? now : null}, ${now}
@@ -6485,9 +6817,62 @@ export class PgMarketingStore implements MarketingStore {
     const reservedCents = asNum(r.b_reserved);
     const spentCents = asNum(r.b_spent);
     const verifiedAdultSignups = asNum(r.verified_adult_signups);
+    const blendedCpaCents =
+      verifiedAdultSignups > 0 ? Math.round(spentCents / verifiedAdultSignups) : null;
+    const since14d = new Date(this.clock.now() - 14 * 86_400_000);
+    const [dailySpendRows, dailySignupRows] = await Promise.all([
+      this.sql`
+        select
+          to_char(created_at at time zone 'UTC', 'YYYY-MM-DD') as day,
+          coalesce(sum(case when entry_type = 'refund' then -amount_cents else amount_cents end), 0)::bigint as net_cents
+        from marketing.budget_ledger
+        where entry_type in ('commit', 'refund')
+          and created_at >= ${since14d}
+          and (${cid}::text is null or campaign_id = ${cid})
+        group by 1
+        order by 1 asc
+      `,
+      this.sql`
+        select
+          to_char(created_at at time zone 'UTC', 'YYYY-MM-DD') as day,
+          coalesce(sum(count), 0)::int as signups
+        from marketing.attribution_events
+        where event_type in ('signup_verified_adult', 'signup_verified_18plus')
+          and created_at >= ${since14d}
+          and (${cid}::text is null or campaign_id = ${cid})
+        group by 1
+        order by 1 asc
+      `,
+    ]);
+    const spendByDay = new Map<string, number>();
+    for (const sr of allRows(dailySpendRows)) {
+      spendByDay.set(asStr(sr.day), asNum(sr.net_cents));
+    }
+    const signupsByDay = new Map<string, number>();
+    for (const ur of allRows(dailySignupRows)) {
+      signupsByDay.set(asStr(ur.day), asNum(ur.signups));
+    }
+    const nowIsoStr = isoNow(this.clock);
+    const nowDayMs = Date.parse(`${nowIsoStr.slice(0, 10)}T00:00:00.000Z`);
+    const cpaHistoryCents: number[] = [];
+    let cumSpend = 0;
+    let cumSignups = 0;
+    for (let i = 13; i >= 0; i -= 1) {
+      const day = new Date(nowDayMs - i * 86_400_000).toISOString().slice(0, 10);
+      cumSpend = Math.max(0, cumSpend + (spendByDay.get(day) ?? 0));
+      cumSignups += signupsByDay.get(day) ?? 0;
+      if (cumSignups > 0) {
+        cpaHistoryCents.push(Math.round(cumSpend / cumSignups));
+      } else if (cpaHistoryCents.length > 0) {
+        cpaHistoryCents.push(cpaHistoryCents[cpaHistoryCents.length - 1] ?? 0);
+      }
+    }
+    if (cpaHistoryCents.length === 0 && blendedCpaCents !== null) {
+      cpaHistoryCents.push(blendedCpaCents);
+    }
 
     return {
-      generatedAt: isoNow(this.clock),
+      generatedAt: nowIsoStr,
       campaigns: {
         total: asNum(r.c_total),
         active: asNum(r.c_active),
@@ -6556,8 +6941,8 @@ export class PgMarketingStore implements MarketingStore {
         signupsStarted: asNum(r.signups_started),
         verifiedAdultSignups,
         videoViews: asNum(r.video_views),
-        blendedCpaCents:
-          verifiedAdultSignups > 0 ? Math.round(spentCents / verifiedAdultSignups) : null,
+        blendedCpaCents,
+        cpaHistoryCents,
       },
       slopCashHooks: {
         total: asNum(r.sk_total),
@@ -6901,11 +7286,12 @@ export class PgMarketingStore implements MarketingStore {
     config: Record<string, unknown>,
   ): Promise<CityPackOverride> {
     const normalized = code.trim().toLowerCase();
+    const canonicalStage = normalizeCityLaunchStage(stage);
     const now = new Date(this.clock.now());
     const payload = JSON.stringify(config);
     const rows = await this.sql`
       insert into marketing.city_packs (code, stage, config, updated_at)
-      values (${normalized}, ${stage}, ${payload}::text::jsonb, ${now})
+      values (${normalized}, ${canonicalStage}, ${payload}::text::jsonb, ${now})
       on conflict (code) do update set
         stage = excluded.stage,
         config = excluded.config,
@@ -6921,6 +7307,43 @@ export class PgMarketingStore implements MarketingStore {
       order by code asc
     `;
     return allRows(rows).map((r) => this.mapCityPackOverride(r));
+  }
+
+  async cancelPendingOutreachForContact(opts: {
+    humanIds?: readonly string[];
+    contactHash?: string | null;
+    contactHashes?: readonly string[];
+    contactEmail?: string | null;
+    reason?: string;
+  }): Promise<number> {
+    const ids = new Set<string>(opts.humanIds ?? []);
+    const hashes = new Set<string>();
+    if (opts.contactHash) hashes.add(opts.contactHash);
+    for (const h of opts.contactHashes ?? []) {
+      if (h) hashes.add(h);
+    }
+    const normEmail = opts.contactEmail?.trim().toLowerCase() ?? null;
+    if (hashes.size > 0 || normEmail) {
+      const hashList = [...hashes];
+      const hr = await this.sql`
+        select id from marketing.humans
+        where (cardinality(${hashList}::text[]) > 0 and (contact_key = any(${hashList}) or phone_hash = any(${hashList})))
+           or (${normEmail}::text is not null and lower(contact_email) = ${normEmail})
+      `;
+      for (const row of allRows(hr)) {
+        const id = asStr(row.id);
+        if (id) ids.add(id);
+      }
+    }
+    if (ids.size === 0) return 0;
+    const rows = await this.sql`
+      update marketing.outreach_messages
+      set status = 'blocked_stop'
+      where status in ('queued', 'drafted', 'dry_run')
+        and human_id = any(${[...ids]})
+      returning id
+    `;
+    return allRows(rows).length;
   }
 
   private parseJsonRecord(v: unknown): Record<string, unknown> {
@@ -7058,6 +7481,140 @@ export class PgMarketingStore implements MarketingStore {
       returning cache_key
     `;
     return allRows(rows).length;
+  }
+
+  async incrementQrBatchStats(
+    batchCode: string,
+    delta: { scans?: number; verifiedSignups?: number },
+  ): Promise<QrBatch | null> {
+    const rows = await this.sql`
+      update marketing.qr_batches set
+        scans = greatest(0, scans + ${delta.scans ?? 0}),
+        verified_signups = greatest(0, verified_signups + ${delta.verifiedSignups ?? 0})
+      where batch_code = ${batchCode.trim()}
+      returning *
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapQrBatch(r) : null;
+  }
+
+  async recordOperatorAudit(input: RecordOperatorAuditInput): Promise<OperatorAuditEntry> {
+    const id = input.id ?? this.idGen();
+    const now = new Date(this.clock.now());
+    const detailJson = JSON.stringify(input.detail ?? {});
+    const rows = await this.sql`
+      insert into marketing.operator_audit (
+        id, actor, action, target_type, target_id, detail, created_at
+      ) values (
+        ${id}, ${input.actor.trim() || "operator"}, ${input.action.trim()},
+        ${input.targetType ?? null}, ${input.targetId ?? null},
+        ${detailJson}::text::jsonb, ${now}
+      ) returning *
+    `;
+    return this.mapOperatorAudit(firstRow(rows)!);
+  }
+
+  async listOperatorAudit(limit = 50): Promise<OperatorAuditEntry[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(limit)));
+    const rows = await this.sql`
+      select * from marketing.operator_audit
+      order by created_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapOperatorAudit(r));
+  }
+
+  async getDesireLaneAggregates(campaignId?: string): Promise<DesireLaneAggregate[]> {
+    const cid = campaignId ?? null;
+    const rows = await this.sql`
+      with lanes as (
+        select desire_lane as lane from marketing.campaigns where desire_lane is not null and (${cid}::text is null or id = ${cid})
+        union
+        select desire_lane as lane from marketing.tasks where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+        union
+        select desire_lane as lane from marketing.bandit_arms where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+        union
+        select desire_lane as lane from marketing.bd_deals where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+        union
+        select desire_lane as lane from marketing.vip_prospects where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+        union
+        select desire_lane as lane from marketing.video_assets where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+        union
+        select desire_lane as lane from marketing.attribution_events where desire_lane is not null and (${cid}::text is null or campaign_id = ${cid})
+      )
+      select
+        l.lane,
+        (select count(*)::int from marketing.campaigns c where c.desire_lane = l.lane and (${cid}::text is null or c.id = ${cid})) as campaigns,
+        (select coalesce(sum(c.spent_cents), 0)::bigint from marketing.campaigns c where c.desire_lane = l.lane and (${cid}::text is null or c.id = ${cid})) as spend_cents,
+        (select count(*)::int from marketing.tasks t where t.desire_lane = l.lane and (${cid}::text is null or t.campaign_id = ${cid})) as tasks,
+        (select count(*)::int from marketing.bandit_arms a where a.desire_lane = l.lane and (${cid}::text is null or a.campaign_id = ${cid})) as arms,
+        (select coalesce(sum(a.signups), 0)::int from marketing.bandit_arms a where a.desire_lane = l.lane and (${cid}::text is null or a.campaign_id = ${cid})) as arm_signups,
+        (select coalesce(sum(a.verified_outcomes), 0)::int from marketing.bandit_arms a where a.desire_lane = l.lane and (${cid}::text is null or a.campaign_id = ${cid})) as arm_outcomes,
+        (select count(*)::int from marketing.bd_deals d where d.desire_lane = l.lane and (${cid}::text is null or d.campaign_id = ${cid})) as deals,
+        (select count(*)::int from marketing.vip_prospects v where v.desire_lane = l.lane and (${cid}::text is null or v.campaign_id = ${cid})) as vips,
+        (select count(*)::int from marketing.video_assets va where va.desire_lane = l.lane and (${cid}::text is null or va.campaign_id = ${cid})) as videos,
+        (select coalesce(sum(case when ev.event_type in ('signup_verified_adult', 'signup_verified_18plus') then ev.count else 0 end), 0)::int from marketing.attribution_events ev where ev.desire_lane = l.lane and (${cid}::text is null or ev.campaign_id = ${cid})) as attr_signups,
+        (select coalesce(sum(case when ev.is_adult_verified then ev.count else 0 end), 0)::int from marketing.attribution_events ev where ev.desire_lane = l.lane and (${cid}::text is null or ev.campaign_id = ${cid})) as attr_outcomes
+      from lanes l
+      order by l.lane asc
+    `;
+    return allRows(rows).map((r) => ({
+      lane: asStr(r.lane),
+      campaigns: asNum(r.campaigns),
+      tasks: asNum(r.tasks),
+      arms: asNum(r.arms),
+      deals: asNum(r.deals),
+      vips: asNum(r.vips),
+      videos: asNum(r.videos),
+      spendCents: asNum(r.spend_cents),
+      signups: asNum(r.arm_signups) + asNum(r.attr_signups),
+      verifiedOutcomes: asNum(r.arm_outcomes) + asNum(r.attr_outcomes),
+    }));
+  }
+
+  async getCityReadinessAggregates(): Promise<CityReadinessAggregate[]> {
+    const rows = await this.sql`
+      with cities as (
+        select lower(city) as city from marketing.campaigns
+        union
+        select lower(city) as city from marketing.tasks
+        union
+        select lower(city) as city from marketing.bd_deals
+        union
+        select lower(city) as city from marketing.vip_prospects
+        union
+        select lower(city) as city from marketing.qr_batches
+        union
+        select lower(city) as city from marketing.attribution_events
+      )
+      select
+        c.city,
+        (select count(*)::int from marketing.campaigns x where lower(x.city) = c.city) as campaigns,
+        (select count(*)::int from marketing.campaigns x where lower(x.city) = c.city and x.status = 'active') as active_campaigns,
+        (select coalesce(sum(x.spent_cents), 0)::bigint from marketing.campaigns x where lower(x.city) = c.city) as spent_cents,
+        (select coalesce(sum(x.monthly_budget_cents), 0)::bigint from marketing.campaigns x where lower(x.city) = c.city) as monthly_budget_cents,
+        (select count(*)::int from marketing.tasks x where lower(x.city) = c.city) as tasks,
+        (select count(*)::int from marketing.bd_deals x where lower(x.city) = c.city) as deals_total,
+        (select count(*)::int from marketing.bd_deals x where lower(x.city) = c.city and x.stage in ('live', 'audited', 'kit_shipped')) as deals_live,
+        (select count(*)::int from marketing.vip_prospects x where lower(x.city) = c.city) as vips,
+        (select count(*)::int from marketing.qr_batches x where lower(x.city) = c.city) as qr_batches,
+        (select coalesce(sum(x.count), 0)::int from marketing.attribution_events x where lower(x.city) = c.city and x.event_type in ('signup_verified_adult', 'signup_verified_18plus')) as verified_signups
+      from cities c
+      order by c.city asc
+    `;
+    return allRows(rows).map((r) => ({
+      city: asStr(r.city),
+      campaigns: asNum(r.campaigns),
+      activeCampaigns: asNum(r.active_campaigns),
+      tasks: asNum(r.tasks),
+      dealsLive: asNum(r.deals_live),
+      dealsTotal: asNum(r.deals_total),
+      vips: asNum(r.vips),
+      qrBatches: asNum(r.qr_batches),
+      verifiedSignups: asNum(r.verified_signups),
+      spentCents: asNum(r.spent_cents),
+      monthlyBudgetCents: asNum(r.monthly_budget_cents),
+    }));
   }
 
   async recordApolloCredit(

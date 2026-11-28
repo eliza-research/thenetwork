@@ -16,7 +16,10 @@ export type MarketingEventType =
   | "vip_prospect"
   | "video_asset"
   | "antifraud"
-  | "daemon";
+  | "daemon"
+  | "sim"
+  | "analytics"
+  | "compliance";
 
 export interface MarketingEventEnvelope {
   seq: number;

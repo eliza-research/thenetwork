@@ -8,6 +8,9 @@ import type {
 import type { OracleSummary } from "@thenetwork/core";
 import type { SearchOutcome, SearchTally } from "@thenetwork/engine";
 import type { JudgeVerdictName } from "@thenetwork/engine/src/reviewJudge.ts";
+import type {
+  DualResponseStats, HttpDispatchSummary, ResponseMode, SimNetworkBackpressure, SimSpeedPreset, UnifiedChaosRule, UnifiedScorecard,
+} from "@thenetwork/sim";
 import type { ReviewPlanPreview, ReviewProbePreview, ReviewProbeText } from "../../../packages/network/src/network.ts";
 
 export type NetworkDomain = DomainId;
@@ -313,6 +316,19 @@ export interface Mission { id: string; title: string; description: string; done:
 export interface PlayerPrompt {
   id: string; memberId: MemberId; messageId: string; body: string; type?: string; proposalId?: string; at: number;
 }
+export interface UnifiedGameMeta {
+  scenarioId?: string;
+  responseMode: ResponseMode;
+  speedPreset: Exclude<SimSpeedPreset, "paused">;
+  responseStats?: DualResponseStats;
+  scorecard?: UnifiedScorecard;
+  backpressure?: SimNetworkBackpressure;
+  activeChaos: UnifiedChaosRule[];
+  mockBaseUrl?: string;
+  httpSummary?: HttpDispatchSummary;
+  teenStop: boolean;
+}
+
 export interface GameState {
   sparksLeft: number; sparksPerDay: number; strikes: number; maxStrikes: number; over: boolean;
   lensUsed: boolean; peeks: number;
@@ -321,6 +337,7 @@ export interface GameState {
   missions: Mission[];
   prompts: PlayerPrompt[];
   controlled: MemberId[];
+  unified?: UnifiedGameMeta;
 }
 
 export interface ObsState {
@@ -496,7 +513,7 @@ export interface AuditEntry {
   roles: StaffRole[];
   /** read_member, read_timeline, read_member_app, read_photos, read_opportunity, reveal, reveal_revoke, review, safety_*, config, control, search, lab_run, read_audit, mode, read_person, open_person_app. */
   action: string;
-  targetType?: "member" | "opportunity" | "case" | "config" | "run" | "search" | "mode" | "person" | "report";
+  targetType?: "member" | "opportunity" | "case" | "config" | "run" | "search" | "mode" | "person" | "report" | "analytics" | "trajectory" | "mock";
   /** The app the request was about (network.staff_audit.app_id). Absent: no app (a mode switch). */
   app?: string;
   targetId?: string;
@@ -663,7 +680,7 @@ export interface SearchHit {
 }
 
 export type ControlCommand =
-  | { type: "play" } | { type: "pause" } | { type: "speed"; speed: number }
+  | { type: "play" } | { type: "pause" } | { type: "speed"; speed: number | SimSpeedPreset }
   | { type: "step"; ms: number }
   | { type: "propose"; participants: MemberId[]; category?: Category; objective?: string; why?: string }
   | { type: "takeover"; memberId: MemberId; on: boolean }
@@ -672,8 +689,26 @@ export type ControlCommand =
   | { type: "god"; action: "go_silent" | "force_flake" | "opt_out"; memberId: MemberId }
   | { type: "peek"; participants: MemberId[] }
   | { type: "lens"; on: boolean }
-  | { type: "reset"; seed?: number; engine?: GameState["engine"]; personas?: number; days?: number; network?: "consent" | "stub"; scenario?: string | null }
+  | {
+    type: "reset";
+    seed?: number;
+    engine?: GameState["engine"];
+    personas?: number;
+    days?: number;
+    network?: "consent" | "stub";
+    scenario?: string | null;
+    city?: City | "all";
+    timeAware?: boolean;
+    judge?: "stand-in" | "hold-every-item";
+    responseMode?: ResponseMode;
+  }
   | { type: "check_scenario" }
+  | { type: "set_response_mode"; mode: ResponseMode }
+  | { type: "set_llm_budget"; maxCostUsd?: number; maxRequests?: number }
+  | { type: "trigger_chaos"; rule: UnifiedChaosRule }
+  | { type: "clear_chaos"; id?: string }
+  | { type: "trigger_world_event"; event: "viral_mention" | "sybil_ring_attack" | "minor_wave" | "venue_closure" | "opt_out"; city?: City }
+  | { type: "teen_stop"; stop: boolean }
   | {
     /** reason: a PRD 32.8 code, or an app's own code (src/apps.ts APP_REASONS; the server maps it to its base code). */
     type: "review"; oppId: string; decision: ReviewDecision; reason?: ReviewReason; note?: string;

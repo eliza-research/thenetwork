@@ -1,5 +1,13 @@
 import { MEETUP_GRAPHQL_ENDPOINT } from "../../../packages/core/src/externalEvents.ts";
 import {
+  evaluateComplianceGate,
+} from "../../../packages/core/src/pacing/compliance.ts";
+import {
+  isDeployedEnvironment,
+  resolveMockBaseUrl,
+  resolveRuntimeEnvironment,
+} from "./compliance-runtime.ts";
+import {
   listCityPacks,
   requireCityPack,
   type CityPack,
@@ -92,6 +100,7 @@ export interface DiscoveryOptions {
   arxivQuery?: string;
   includeSources?: readonly DiscoverySource[];
   includeVipBdSources?: boolean;
+  env?: Record<string, string | undefined>;
 }
 
 export const PUBLIC_DISCOVERY_ENDPOINTS = {
@@ -2038,14 +2047,58 @@ const VIP_BD_DISCOVERY_SOURCES: readonly DiscoverySource[] = [
   "clinical_trials",
 ];
 
+function wrapFetchForMockDiscovery(
+  baseFetch: FetchLike,
+  env: Record<string, string | undefined>,
+): FetchLike {
+  const mockBase = resolveMockBaseUrl(env);
+  if (!mockBase) return baseFetch;
+  return (input, init) => {
+    const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    try {
+      const parsed = new URL(rawUrl);
+      const host = parsed.hostname.toLowerCase();
+      let mapped: string | null = null;
+      if (host.includes("hn.algolia.com")) mapped = `${mockBase}/discovery/hn${parsed.search}`;
+      else if (host.includes("api.github.com")) mapped = `${mockBase}/discovery/github${parsed.search}`;
+      else if (host.includes("arxiv.org")) mapped = `${mockBase}/discovery/arxiv${parsed.search}`;
+      else if (host.includes("openalex.org")) mapped = `${mockBase}/discovery/openalex${parsed.search}`;
+      else if (host.includes("sec.gov")) mapped = `${mockBase}/discovery/sec${parsed.search}`;
+      else if (host.includes("propublica.org")) mapped = `${mockBase}/discovery/propublica${parsed.search}`;
+      else if (host.includes("clinicaltrials.gov")) mapped = `${mockBase}/discovery/clinicaltrials${parsed.search}`;
+      if (mapped) {
+        return baseFetch(mapped, init);
+      }
+    } catch {
+      return baseFetch(input, init);
+    }
+    return baseFetch(input, init);
+  };
+}
+
 export async function discoverCityLeads(options: DiscoveryOptions): Promise<DiscoveryRunResult> {
-  const profile = resolveCityProfile(options.city);
+  const effectiveEnv = options.env ?? process.env;
+  const effectiveFetch = wrapFetchForMockDiscovery(options.fetchImpl ?? fetch, effectiveEnv);
+  const opts: DiscoveryOptions = { ...options, fetchImpl: effectiveFetch };
+  const profile = resolveCityProfile(opts.city);
   const city = profile.code;
-  const discoveredAt = readClockIso(options.clock);
-  const defaultSources = options.includeVipBdSources
+  const discoveredAt = readClockIso(opts.clock);
+  const defaultSources = opts.includeVipBdSources
     ? [...CORE_DISCOVERY_SOURCES, ...VIP_BD_DISCOVERY_SOURCES]
     : CORE_DISCOVERY_SOURCES;
-  const enabled = new Set<DiscoverySource>(options.includeSources ?? defaultSources);
+  const enabled = new Set<DiscoverySource>(opts.includeSources ?? defaultSources);
+
+  if (isDeployedEnvironment(effectiveEnv)) {
+    const scrapeGate = evaluateComplianceGate({
+      mode: "unauthenticated_scraping",
+      env: resolveRuntimeEnvironment(effectiveEnv),
+    });
+    if (!scrapeGate.allowed) {
+      enabled.delete("partiful");
+      enabled.delete("eventbrite");
+      enabled.delete("luma");
+    }
+  }
 
   interface SourceJob {
     source: DiscoverySource;
@@ -2069,52 +2122,52 @@ export async function discoverCityLeads(options: DiscoveryOptions): Promise<Disc
 
   if (city === "nyc") {
     addSingle("nyc_open_data", PUBLIC_DISCOVERY_ENDPOINTS.nycDohmhVenues, () =>
-      fetchNycOpenDataVenues({ ...options, city }),
+      fetchNycOpenDataVenues({ ...opts, city }),
     );
     addSingle("nys_sla", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaLicenses, () =>
-      fetchNysSlaVenues({ ...options, city }),
+      fetchNysSlaVenues({ ...opts, city }),
     );
     addSingle("nys_sla_pending", PUBLIC_DISCOVERY_ENDPOINTS.nysSlaNamedPrincipals, () =>
-      fetchNysSlaNamedPrincipals({ ...options, city }),
+      fetchNysSlaNamedPrincipals({ ...opts, city }),
     );
   } else if (enabled.has("city_open_data") && profile.openDataConnectors.length > 0) {
     jobs.push({
       source: "city_open_data",
       url: profile.openDataConnectors[0]?.urlTemplate ?? "",
-      run: () => fetchCityOpenDataVenues({ ...options, city }),
+      run: () => fetchCityOpenDataVenues({ ...opts, city }),
     });
   }
 
   addSingle("hn", PUBLIC_DISCOVERY_ENDPOINTS.hnAlgoliaBase, () =>
-    fetchHnBuilders({ ...options, city }),
+    fetchHnBuilders({ ...opts, city }),
   );
   addSingle("github", PUBLIC_DISCOVERY_ENDPOINTS.githubUsersBase, () =>
-    fetchGithubNycBuilders({ ...options, city }),
+    fetchGithubNycBuilders({ ...opts, city }),
   );
   addSingle("arxiv", PUBLIC_DISCOVERY_ENDPOINTS.arxivApiBase, () =>
-    fetchArxivResearchers({ ...options, city }),
+    fetchArxivResearchers({ ...opts, city }),
   );
   if (enabled.has("reddit")) {
     jobs.push({
       source: "reddit",
       url: PUBLIC_DISCOVERY_ENDPOINTS.redditBase,
-      run: () => fetchRedditNycFeeds({ ...options, city }),
+      run: () => fetchRedditNycFeeds({ ...opts, city }),
     });
   }
-  if (enabled.has("youtube_rss") && (options.youtubeChannelIds?.length ?? 0) > 0) {
+  if (enabled.has("youtube_rss") && (opts.youtubeChannelIds?.length ?? 0) > 0) {
     jobs.push({
       source: "youtube_rss",
       url: PUBLIC_DISCOVERY_ENDPOINTS.youtubeRssBase,
-      run: () => fetchYoutubeChannelRss(options.youtubeChannelIds ?? [], { ...options, city }),
+      run: () => fetchYoutubeChannelRss(opts.youtubeChannelIds ?? [], { ...opts, city }),
     });
   }
-  addSingle("luma", profile.lumaUrl, () => fetchLumaNycEvents({ ...options, city }));
-  addSingle("eventbrite", profile.eventbriteUrl, () => fetchEventbriteNycEvents({ ...options, city }));
-  if (enabled.has("partiful") && (options.partifulUrls?.length ?? 0) > 0) {
+  addSingle("luma", profile.lumaUrl, () => fetchLumaNycEvents({ ...opts, city }));
+  addSingle("eventbrite", profile.eventbriteUrl, () => fetchEventbriteNycEvents({ ...opts, city }));
+  if (enabled.has("partiful") && (opts.partifulUrls?.length ?? 0) > 0) {
     jobs.push({
       source: "partiful",
       url: PUBLIC_DISCOVERY_ENDPOINTS.partifulBase,
-      run: () => fetchPartifulEvents(options.partifulUrls ?? [], { ...options, city }),
+      run: () => fetchPartifulEvents(opts.partifulUrls ?? [], { ...opts, city }),
     });
   }
   if (enabled.has("meetup") && options.meetupOAuthToken?.trim()) {
@@ -2123,16 +2176,16 @@ export async function discoverCityLeads(options: DiscoveryOptions): Promise<Disc
     );
   }
   addSingle("sec_form_d", PUBLIC_DISCOVERY_ENDPOINTS.secFormDSearchBase, () =>
-    fetchSecFormDVips({ ...options, city }),
+    fetchSecFormDVips({ ...opts, city }),
   );
   addSingle("openalex", PUBLIC_DISCOVERY_ENDPOINTS.openAlexAuthorsBase, () =>
-    fetchOpenAlexResearchers({ ...options, city }),
+    fetchOpenAlexResearchers({ ...opts, city }),
   );
   addSingle("irs_990", PUBLIC_DISCOVERY_ENDPOINTS.proPublicaNonprofitsBase, () =>
-    fetchIrs990Foundations({ ...options, city }),
+    fetchIrs990Foundations({ ...opts, city }),
   );
   addSingle("clinical_trials", PUBLIC_DISCOVERY_ENDPOINTS.clinicalTrialsBase, () =>
-    fetchClinicalTrialsPis({ ...options, city }),
+    fetchClinicalTrialsPis({ ...opts, city }),
   );
 
   const collected: DiscoveredLead[] = [];

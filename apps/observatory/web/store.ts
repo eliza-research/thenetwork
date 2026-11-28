@@ -14,15 +14,130 @@ import { CITY_TZ, fromLocal, localParts } from "../../../packages/core/src/time.
 import { APP_IDS, DOMAIN_IDS, DOMAIN_LABELS, isCity, isDomainId, type City, type DomainId } from "../../../packages/core/src/types.ts";
 import { NEIGHBORHOOD, SF_NEIGHBORHOOD } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
+import type { DrawerSize } from "@thenetwork/ui";
+import type {
+  AnomalyAlert, CohortMatrix, FunnelResult, OutreachHeatmap, SafetyInvariantCounters, SliceQuery, SliceResult, TimeSeriesPoint,
+} from "../../../packages/core/src/analytics/types.ts";
+import type {
+  DecryptedTrajectorySpan, TrajectoryManifestRow, TrajectorySpan, TrajectoryStorageDriver,
+} from "../../../packages/core/src/trajectory/types.ts";
 import type {
   AppHealth, AppProfile360, AuditEntry, BiasReportView, HeldQueue, HeldText, ClockInfo, ConfigInfo, ControlCommand, ControlResult, EngineRunSummary, EnvInfo, GameState, LabRequest, LabRun, MemberDetail, MemberTimeline,
   JudgeStats, MemberTruth, Mode, NetworkInfo, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsOpportunity, ObsRequest, ObsState, ObsStats, ObsVenue, OpportunityDetail, ParticipantStatus,
-  MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
+  MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffProbePreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
 export { DOMAIN_IDS, DOMAIN_LABELS, type DomainId };
 export type DomainFilter = Record<DomainId, boolean>;
 export const DEFAULT_DOMAINS: DomainFilter = { dating: true, friendship: true, business: true };
+
+export interface IntentDemandSignal {
+  appId?: string;
+  city?: string;
+  desireLane: string;
+  openRequests7d: number;
+  fulfilledProposals7d: number;
+  unfulfilledDemandRatio: number;
+  teenEligible?: boolean;
+}
+
+export interface AnalyticsTimeseriesResponse {
+  granularity: string;
+  labels: string[];
+  series: Record<string, TimeSeriesPoint[]>;
+}
+
+export interface AnalyticsAnomaliesResponse {
+  alerts: AnomalyAlert[];
+  safety: SafetyInvariantCounters;
+  intentDemand?: IntentDemandSignal[];
+}
+
+export interface SqlSliceResponse {
+  columns: string[];
+  rows: Record<string, string | number | boolean | null>[];
+  truncated?: boolean;
+  error?: string;
+}
+
+export interface TrajectoriesListResponse {
+  traces: TrajectoryManifestRow[];
+  hotTail: TrajectorySpan[];
+  driver: TrajectoryStorageDriver;
+}
+
+export interface TrajectoryDetailResponse {
+  traceId: string;
+  manifest: TrajectoryManifestRow | null;
+  spans: DecryptedTrajectorySpan[];
+}
+
+export interface MockTrafficEntry {
+  id?: string;
+  ts: number;
+  service: string;
+  method: string;
+  path: string;
+  status: number;
+  latencyMs: number;
+  chaosRuleId?: string;
+  webhook?: boolean;
+  error?: string;
+}
+
+export interface MockTrafficResponse {
+  entries: MockTrafficEntry[];
+  stats: {
+    total: number;
+    byService: Record<string, number>;
+    byStatus: Record<string, number>;
+  };
+  baseUrl?: string;
+}
+
+export interface MockChaosRule {
+  id: string;
+  service: string;
+  pathPattern?: string;
+  probability: number;
+  fault: Record<string, unknown>;
+  enabled: boolean;
+}
+
+export interface JudgedReviewRow {
+  opportunityId: string;
+  revision: number;
+  verdict?: string;
+  explanation?: string;
+  exceptionReason?: string;
+  approver?: string;
+  state?: string;
+  decidedAt?: number;
+  stopped?: boolean;
+  participants?: string[];
+  objective?: string;
+}
+
+export interface CityOpsRow {
+  city: string;
+  name?: string;
+  activeMembers?: number;
+  venuesActive?: number;
+  openOpps?: number;
+  matchingEnabled?: boolean;
+  status?: string;
+}
+
+export interface ExternalEventRow {
+  id: string;
+  city?: string;
+  title: string;
+  venueName?: string;
+  startsAt?: number;
+  status: string;
+  allAges?: boolean;
+  source?: string;
+}
 
 /** Default switcher order; the server's list in /api/me replaces it. Core's type module is browser-safe. */
 export const APP_ORDER: readonly string[] = APP_IDS;
@@ -52,13 +167,11 @@ export interface UIState {
   legendOpen: boolean;
   drawer: DrawerTab;
   drawerOpen: boolean;
-  /** Real NYC map (default) or the force-directed social graph. */
+  drawerSize: DrawerSize;
   view: "map" | "graph";
-  /** Search box text (in the store so Esc can clear it). */
   query: string;
-  /** The one open popover or menu ("help", "god"), closed first by Esc. */
   popover: string | null;
-  reviewView: "pending" | "decided";
+  reviewView: "pending" | "decided" | "judged";
   requestSegment: RequestSegment;
   toast?: { text: string; tone: "info" | "good" | "bad"; at: number };
 }
@@ -258,13 +371,14 @@ function loadFilters(mode: Mode): Filters {
     domains: parseHashDomains() ?? normalizeDomains(f.domains),
   };
 }
-const UI_KEYS = ["view", "drawer", "drawerOpen", "colorBy", "edgeTypes", "showOpps", "legendOpen"] as const;
+const UI_KEYS = ["view", "drawer", "drawerOpen", "drawerSize", "colorBy", "edgeTypes", "showOpps", "legendOpen"] as const;
 function loadUIPrefs(): Partial<UIState> {
   const u = readJSON<UIState>("obs.ui.v1") ?? {};
   const out: Partial<UIState> = {};
   if (u.view === "map" || u.view === "graph") out.view = u.view;
   if (typeof u.drawer === "string" && DRAWER_TABS.includes(u.drawer)) out.drawer = u.drawer;
   if (typeof u.drawerOpen === "boolean") out.drawerOpen = u.drawerOpen;
+  if (u.drawerSize === "compact" || u.drawerSize === "expanded" || u.drawerSize === "full") out.drawerSize = u.drawerSize;
   if (u.colorBy && ["community", "state", "activity"].includes(u.colorBy)) out.colorBy = u.colorBy;
   if (u.edgeTypes && typeof u.edgeTypes === "object") out.edgeTypes = u.edgeTypes as Record<string, boolean>;
   if (typeof u.showOpps === "boolean") out.showOpps = u.showOpps;
@@ -389,7 +503,7 @@ class ObsStore {
   ui: UIState = {
     focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS, domains: parseHashDomains() ?? { ...DEFAULT_DOMAINS } }, colorBy: "community",
     edgeTypes: Object.fromEntries(EDGE_TYPES.map(t => [t, t !== "invited_by" && t !== "vouched_for"])), showOpps: true, legendOpen: false,
-    drawer: "feed", drawerOpen: true, view: "map", query: "", popover: null, reviewView: "pending", requestSegment: initialWorkspace.requestSegment,
+    drawer: "feed", drawerOpen: true, drawerSize: "compact", view: "map", query: "", popover: null, reviewView: "pending", requestSegment: initialWorkspace.requestSegment,
     ...loadUIPrefs(),
   };
   /** Bumped on every change; React re-renders off it. */
@@ -747,6 +861,10 @@ class ObsStore {
   }
 
   async control(cmd: ControlCommand, opts: { quiet?: boolean; app?: string } = {}): Promise<ControlResult> {
+    return this.controlRaw(cmd as unknown as Record<string, unknown>, opts);
+  }
+
+  async controlRaw(cmd: Record<string, unknown>, opts: { quiet?: boolean; app?: string } = {}): Promise<ControlResult> {
     let r: ControlResult;
     const appQ = opts.app && opts.app !== this.app ? `?app=${encodeURIComponent(opts.app)}` : "";
     try {
@@ -793,6 +911,91 @@ class ObsStore {
     const src = this.opps.get(id)?.sourceApp;
     const appQ = src && src !== this.app ? `&app=${encodeURIComponent(src)}` : "";
     return this.fetch<{ ok: true; preview: StaffPlanPreview }>(`/api/review/${encodeURIComponent(id)}/plan?revision=${revision}${appQ}`);
+  }
+  reviewProbes(id: string, revision: number) {
+    const src = this.opps.get(id)?.sourceApp;
+    const appQ = src && src !== this.app ? `&app=${encodeURIComponent(src)}` : "";
+    return this.fetch<{ ok: true; preview: StaffProbePreview }>(`/api/review/${encodeURIComponent(id)}/probes?revision=${revision}${appQ}`);
+  }
+  judgedReviews(since?: number) { return this.fetch<{ ok?: boolean; items?: JudgedReviewRow[]; reviews?: JudgedReviewRow[]; error?: string }>(since !== undefined ? `/api/staff/review/judged?since=${since}` : "/api/staff/review/judged"); }
+  stopApprovedReview(id: string, reason: string) { return this.fetch<ControlResult>(`/api/staff/review/${encodeURIComponent(id)}/stop`, { reason }); }
+  teenIntrosSwitch(on: boolean, reason?: string) { return this.fetch<ControlResult>("/api/staff/teen-intros", { on, ...(reason ? { reason } : {}) }); }
+  staffCities(city?: string) { return this.fetch<{ ok?: boolean; cities?: CityOpsRow[]; error?: string }>(city ? `/api/staff/ops/cities?city=${encodeURIComponent(city)}` : "/api/staff/ops/cities"); }
+  staffVenues(city?: string, status?: string) {
+    const p = new URLSearchParams();
+    if (city && city !== "all") p.set("city", city);
+    if (status && status !== "all") p.set("status", status);
+    return this.fetch<{ ok?: boolean; venues?: ObsVenue[]; error?: string }>(`/api/staff/venues${p.size ? `?${p}` : ""}`);
+  }
+  updateVenueStatus(id: string, status: string, reason?: string) {
+    return this.fetch<ControlResult>(`/api/staff/venues/${encodeURIComponent(id)}/status`, { status, ...(reason ? { reason } : {}) });
+  }
+  staffExternalEvents(city?: string, status?: string) {
+    const p = new URLSearchParams();
+    if (city && city !== "all") p.set("city", city);
+    if (status && status !== "all") p.set("status", status);
+    return this.fetch<{ ok?: boolean; events?: ExternalEventRow[]; error?: string }>(`/api/staff/external-events${p.size ? `?${p}` : ""}`);
+  }
+  reviewExternalEvent(id: string, decision: string, reason?: string) {
+    return this.fetch<ControlResult>(`/api/staff/external-events/${encodeURIComponent(id)}/review`, { decision, ...(reason ? { reason } : {}) });
+  }
+  analyticsFunnel(params: { city?: string; desireLane?: string; channel?: string; fromMs?: number; toMs?: number } = {}) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<FunnelResult>(`/api/analytics/funnel${p.size ? `?${p}` : ""}`);
+  }
+  analyticsCohorts(params: { city?: string; desireLane?: string; channel?: string } = {}) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<CohortMatrix>(`/api/analytics/cohorts${p.size ? `?${p}` : ""}`);
+  }
+  analyticsTimeseries(granularity: "hour" | "day" | "week" = "day", params: { city?: string; desireLane?: string; channel?: string } = {}) {
+    const p = new URLSearchParams({ granularity });
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<AnalyticsTimeseriesResponse>(`/api/analytics/timeseries?${p}`);
+  }
+  analyticsHeatmap(params: { city?: string; channel?: string } = {}) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<OutreachHeatmap>(`/api/analytics/heatmap${p.size ? `?${p}` : ""}`);
+  }
+  analyticsAnomalies() { return this.fetch<AnalyticsAnomaliesResponse>("/api/analytics/anomalies"); }
+  analyticsSlice(body: (SliceQuery & { format?: "json" }) | { sql: string; format?: "json" }) {
+    return this.fetch<SliceResult & Partial<SqlSliceResponse>>("/api/analytics/slice", body);
+  }
+  async analyticsSliceCsv(body: Record<string, unknown>): Promise<{ csv?: string; error?: string }> {
+    try {
+      const r = await this.api("/api/analytics/slice", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, format: "csv" }) });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({})) as { error?: string };
+        return { error: j.error ?? `HTTP ${r.status}` };
+      }
+      return { csv: await r.text() };
+    } catch (e) {
+      return { error: (e as Error).message };
+    }
+  }
+  trajectories(params: { kind?: string; status?: string; flag?: string; entityId?: string; limit?: number } = {}) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<TrajectoriesListResponse>(`/api/trajectories${p.size ? `?${p}` : ""}`);
+  }
+  trajectoryDetail(traceId: string) { return this.fetch<TrajectoryDetailResponse>(`/api/trajectories/${encodeURIComponent(traceId)}?decrypt=1`); }
+  mockTraffic(params: { service?: string; status?: string; limit?: number } = {}) {
+    const p = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "" && v !== "all") p.set(k, String(v));
+    return this.fetch<MockTrafficResponse>(`/api/mocks/traffic${p.size ? `?${p}` : ""}`);
+  }
+  mockChaos() { return this.fetch<{ ok?: boolean; rules: MockChaosRule[] }>("/api/mocks/chaos"); }
+  addMockChaos(rule: Omit<MockChaosRule, "id"> & { id?: string }) { return this.fetch<{ ok?: boolean; rule?: MockChaosRule; rules?: MockChaosRule[]; error?: string }>("/api/mocks/chaos", rule); }
+  async deleteMockChaos(id: string): Promise<Fetched<{ ok?: boolean; rules?: MockChaosRule[] }>> {
+    try {
+      const r = await this.api(`/api/mocks/chaos/${encodeURIComponent(id)}`, { method: "DELETE" });
+      const j = await r.json().catch(() => ({})) as { ok?: boolean; rules?: MockChaosRule[]; error?: string };
+      return r.ok ? { data: j, status: 200 } : { status: r.status, error: j.error ?? `HTTP ${r.status}` };
+    } catch (e) {
+      return { status: 0, error: (e as Error).message };
+    }
   }
   safety() { return this.fetch<SafetyInfo>(this.withDomains("/api/safety")); }
   safetyAction(a: SafetyAction) {

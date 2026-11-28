@@ -568,11 +568,27 @@ create index if not exists idx_contact_touchpoints_hash_time
 -- 21. Persistent Global City Pack Overrides (Pass 3)
 create table if not exists marketing.city_packs (
   code                 text primary key check (length(btrim(code)) > 0),
-  stage                text not null default 'scout'
-                       check (stage in ('scout', 'seed_waitlist', 'soft_launch', 'density_growth', 'mature')),
+  stage                text not null default 'researching'
+                       check (stage in (
+                         'researching', 'waitlist_kindling', 'liquidity_seeding', 'live_matching', 'scaling',
+                         'scout', 'seed_waitlist', 'soft_launch', 'density_growth', 'mature'
+                       )),
   config               jsonb not null default '{}'::jsonb,
   updated_at           timestamptz not null default now()
 );
+
+-- 22. Append-only operator audit trail for sensitive mutations
+create table if not exists marketing.operator_audit (
+  id                   text primary key default gen_random_uuid()::text,
+  actor                text not null default 'operator',
+  action               text not null check (length(btrim(action)) > 0),
+  target_type          text not null check (length(btrim(target_type)) > 0),
+  target_id            text not null default '',
+  detail               jsonb not null default '{}'::jsonb,
+  created_at           timestamptz not null default now()
+);
+create index if not exists idx_operator_audit_created
+  on marketing.operator_audit (created_at desc);
 
 -- Pass 3 additive columns (idempotent)
 alter table marketing.humans add column if not exists contact_email text;
@@ -624,7 +640,7 @@ begin
     and c.conname <> 'chk_attribution_verified_adult'
     and pg_get_constraintdef(c.oid) like '%event_type%';
 
-  if v_et_con is not null and v_et_def not like '%first_match_accepted%' then
+  if v_et_con is not null and v_et_def not like '%outreach_sent%' then
     execute format('alter table marketing.attribution_events drop constraint %I', v_et_con);
     alter table marketing.attribution_events
       add constraint chk_attribution_event_type check (
@@ -642,7 +658,48 @@ begin
           'irl_meeting_confirmed',
           'second_meetup_retained',
           'intro_or_hire_unlocked',
-          't3_match_verified'
+          't3_match_verified',
+          'outreach_sent',
+          'outreach_replied',
+          'cta_triggered',
+          'onboarding_completed',
+          'first_proposal_received'
+        )
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_et_con, v_et_def
+  from pg_constraint c
+  where c.conrelid = 'marketing.city_packs'::regclass
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%stage%';
+
+  if v_et_con is not null and v_et_def not like '%researching%' then
+    execute format('alter table marketing.city_packs drop constraint %I', v_et_con);
+    alter table marketing.city_packs
+      add constraint chk_city_packs_stage check (
+        stage in (
+          'researching', 'waitlist_kindling', 'liquidity_seeding', 'live_matching', 'scaling',
+          'scout', 'seed_waitlist', 'soft_launch', 'density_growth', 'mature'
+        )
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_et_con, v_et_def
+  from pg_constraint c
+  where c.conrelid = 'marketing.outreach_messages'::regclass
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%channel%';
+
+  if v_et_con is not null and v_et_def not like '%discord%' then
+    execute format('alter table marketing.outreach_messages drop constraint %I', v_et_con);
+    alter table marketing.outreach_messages
+      add constraint chk_outreach_channel check (
+        channel in (
+          'email', 'craigslist', 'craigslist_relay', 'rentahuman', 'backstage',
+          'collabstr', 'passionfroot', 'youtube', 'tiktok', 'instagram', 'x',
+          'x_dm', 'ig_dm', 'reddit', 'linkedin', 'discord', 'venue',
+          'sms_opted_in', 'eliza_deliver', 'other'
         )
       );
   end if;

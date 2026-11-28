@@ -23,3 +23,7 @@ export * from "./judge/metrics.ts";
 export * from "./judge/llmJudges.ts";
 export * from "./fiveCityHarness.ts";
 export * from "./fiveCitySuite.ts";
+export * from "./marketingTemplates.ts";
+export * from "./responseEngine.ts";
+export * from "./scenarios/unified.ts";
+export * from "./unifiedWorld.ts";

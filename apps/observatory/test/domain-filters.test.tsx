@@ -18,7 +18,7 @@ const makeOpp = (id: string, domain: ObsOpportunity["domain"], category: ObsOppo
   id, kind: "intro", source: "engine", generator: domain === "dating" ? "slop_match" : domain === "business" ? "peon_intro" : "friend_intro",
   category, domain, city: "nyc", objective: `${domain} intro`, score: 0.8, explanations: Object.fromEntries(participants.map(p => [p, "fit"])),
   exploration: false, participants, alternates: [], state: "IN_REVIEW", status: Object.fromEntries(participants.map(p => [p, "pending"])),
-  enjoyment: {}, createdAt: now - 3_600_000, updatedAt: now - 60_000, review: { queuedAt: now - 3_600_000, deadline: now + 7_200_000, rerolls: 0 },
+  enjoyment: {}, createdAt: now - 3_600_000, updatedAt: now - 60_000, review: { queuedAt: now - 3_600_000, deadline: now + 7_200_000, rerolls: 0, exceptionReason: "other_concern" },
 });
 
 test("unified workspace replaces AppSwitcher with Domains checkboxes, filters review/feed/members, and shows generic Member 360 sections", async () => {

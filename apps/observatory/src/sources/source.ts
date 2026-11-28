@@ -1,5 +1,9 @@
 // A data source feeds the observatory: the simulated world (game mode) or Postgres (real mode).
-import type { City } from "@thenetwork/core";
+import type { AnalyticsFilter, City, CohortMatrix, FunnelResult, OutreachHeatmap, SliceQuery, SliceResult, TrajectoryQuery } from "@thenetwork/core";
+import type { UnifiedChaosRule } from "@thenetwork/sim";
+import type {
+  MockTrafficResponse, ObservatoryAnomaliesResponse, ObservatorySqlResult, ObservatoryTimeSeriesResponse, ObservatoryTraceDetailResponse, ObservatoryTrajectoriesResponse,
+} from "../analytics.ts";
 import type {
   BiasReportView, ConfigInfo, ControlCommand, ControlResult, HeldQueue, HeldText, MemberDetail, MemberPhoto, MemberTimeline, Mode,
   ObsCitySummary, ObsDelta, ObsState, ObsVenue, OpportunityDetail, SafetyAction, SafetyInfo, SearchHit,
@@ -68,6 +72,19 @@ export interface DataSource {
   search(q: string, limit?: number): Promise<SearchHit[]>;
   loadVenues?(city?: City): Promise<ObsVenue[]>;
   loadCities?(): Promise<ObsCitySummary[]>;
+  analyticsFunnel?(filter: AnalyticsFilter): Promise<FunnelResult>;
+  analyticsCohorts?(filter: AnalyticsFilter): Promise<CohortMatrix>;
+  analyticsTimeSeries?(granularity: "hour" | "day" | "week", filter: AnalyticsFilter): Promise<ObservatoryTimeSeriesResponse>;
+  analyticsHeatmap?(filter: AnalyticsFilter): Promise<OutreachHeatmap>;
+  analyticsAnomalies?(filter?: AnalyticsFilter): Promise<ObservatoryAnomaliesResponse>;
+  analyticsSlice?(query: SliceQuery): Promise<SliceResult>;
+  analyticsSql?(sqlText: string): Promise<ObservatorySqlResult>;
+  trajectories?(query: TrajectoryQuery, opts?: { allowPayload?: boolean }): Promise<ObservatoryTrajectoriesResponse>;
+  trajectoryDetail?(traceId: string, opts?: { decrypt?: boolean; allowPayload?: boolean }): Promise<ObservatoryTraceDetailResponse>;
+  mockTraffic?(filter?: { service?: string; status?: number; limit?: number }): Promise<MockTrafficResponse>;
+  mockChaos?(): Promise<UnifiedChaosRule[]>;
+  addMockChaos?(rule: UnifiedChaosRule): Promise<UnifiedChaosRule[]>;
+  deleteMockChaos?(id?: string): Promise<UnifiedChaosRule[]>;
   /** Deltas pushed as the source changes (about 4 per second while anything changes). */
   subscribe(fn: (d: ObsDelta) => void): () => void;
   dispose(): Promise<void>;

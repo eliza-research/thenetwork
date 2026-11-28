@@ -6,10 +6,19 @@
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { type LeakGuard } from "../../../packages/core/src/guard.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
+import type { BufferedTrajectoryWriter } from "../../../packages/core/src/trajectory/writer.ts";
 import {
   spendAuthFromCampaign,
   type PaidAdapterRegistry,
 } from "./adapters/paid.ts";
+import {
+  type SocialAdapterRegistry,
+  type SocialPlatform,
+} from "./adapters/social.ts";
+import {
+  resolveMockBaseUrl,
+  type MarketingComplianceRuntime,
+} from "./compliance-runtime.ts";
 import {
   checkCityHiringCompliance,
   getCityConfig,
@@ -214,11 +223,15 @@ export interface CrowdsourcingEngineOptions {
   env?: Record<string, string | undefined>;
   transport?: OutreachTransport;
   paidAdapters?: PaidAdapterRegistry;
+  socialAdapters?: SocialAdapterRegistry;
+  compliance?: MarketingComplianceRuntime;
+  trajectoryWriter?: BufferedTrajectoryWriter;
   leakGuard?: LeakGuard;
   bridge?: NetworkCoreBridge;
 }
 
 const VALID_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const SOCIAL_CHANNELS = new Set<string>(["x", "instagram", "tiktok", "reddit", "linkedin", "discord"]);
 
 const NYC_DIRECT_BOOKING_AGENCIES: readonly string[] = VETTED_NYC_AGENCIES.filter(
   (agency) => agency.zeroTouchBookingReadiness !== "low_m1",
@@ -264,6 +277,9 @@ export class CrowdsourcingEngine {
   private readonly env: Record<string, string | undefined>;
   private readonly transport?: OutreachTransport;
   private readonly paidAdapters?: PaidAdapterRegistry;
+  private readonly socialAdapters?: SocialAdapterRegistry;
+  private readonly compliance?: MarketingComplianceRuntime;
+  private readonly trajectoryWriter?: BufferedTrajectoryWriter;
   private readonly leakGuard: LeakGuard;
   private readonly bridge?: NetworkCoreBridge;
 
@@ -273,6 +289,9 @@ export class CrowdsourcingEngine {
     this.env = opts.env ?? process.env;
     this.transport = opts.transport;
     this.paidAdapters = opts.paidAdapters;
+    this.socialAdapters = opts.socialAdapters;
+    this.compliance = opts.compliance;
+    this.trajectoryWriter = opts.trajectoryWriter;
     this.bridge = opts.bridge;
     this.leakGuard =
       opts.leakGuard ??
@@ -674,6 +693,15 @@ export class CrowdsourcingEngine {
     const suppression =
       (await this.store.isContactSuppressed(contactHash)) ??
       (emailHash ? await this.store.isContactSuppressed(emailHash) : null);
+    const runtimeSuppressed =
+      this.compliance && human.contactEmail
+        ? this.compliance.suppression.check({
+            kind: "email",
+            value: human.contactEmail,
+            scope: "marketing",
+          })
+        : null;
+    const isRuntimeSuppressed = Boolean(runtimeSuppressed?.suppressed && !runtimeSuppressed.failClosed);
 
     let bridgeBanned = false;
     let bridgeStopped = false;
@@ -695,10 +723,12 @@ export class CrowdsourcingEngine {
     const isKnownMinor =
       (human.lowestAge !== null && human.lowestAge < marketingAdultAge) ||
       Boolean(suppression?.isMinor) ||
+      Boolean(runtimeSuppressed?.record?.isMinor) ||
       bridgeMinor;
     const isStopped =
       human.stopped ||
       bridgeStopped ||
+      isRuntimeSuppressed ||
       Boolean(suppression && suppression.reason.includes("stop"));
     const isBanned =
       human.banned ||
@@ -782,10 +812,13 @@ export class CrowdsourcingEngine {
     if (!campaign) throw new Error(`Campaign not found: ${campaignId}`);
 
     const queued = await this.store.listOutreachMessages({ campaignId, status: "queued" });
+    const mockHttpActive = resolveMockBaseUrl(this.env) !== null;
     const hasLiveChannel =
-      Boolean(this.transport) || Boolean(this.paidAdapters?.isLiveBillingEnabled());
+      Boolean(this.transport) ||
+      Boolean(this.paidAdapters?.isLiveBillingEnabled()) ||
+      Boolean(this.socialAdapters && mockHttpActive);
     const liveMode =
-      !opts.dryRun && hasLiveChannel && this.env.MARKETING_LIVE_SEND === "1";
+      !opts.dryRun && (mockHttpActive || (hasLiveChannel && this.env.MARKETING_LIVE_SEND === "1"));
     const dailyCap = opts.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
 
     let sent = 0;
@@ -890,12 +923,44 @@ export class CrowdsourcingEngine {
             processed.push(updated);
             continue;
           }
+          const envelope = this.compliance?.buildCanSpamEmailEnvelope(
+            human.contactEmail ?? human.handleOrEmailHmac,
+            "email",
+          );
+          const finalText = envelope
+            ? `${msg.bodySummary}\n\n${envelope.footerText}`
+            : msg.bodySummary;
+          if (this.compliance) {
+            const lint = this.compliance.lintCopy({
+              channel: "email",
+              text: finalText,
+              subject: msg.subject ?? `The Network ${campaign.city.toUpperCase()} Opportunity`,
+              isCommercial: true,
+              isAiGenerated: true,
+              headers: envelope?.headers,
+            });
+            const entropy = this.compliance.checkTemplateEntropy(
+              `campaign:${campaign.id}:email`,
+              msg.bodySummary,
+            );
+            if (!lint.ok || !entropy.ok) {
+              const updated = await this.store.updateOutreachStatus(
+                msg.id,
+                "blocked_policy",
+                `blocked:${!lint.ok ? lint.violations.join(",") : entropy.reason ?? "entropy"}`,
+              );
+              blockedPolicy += 1;
+              processed.push(updated);
+              continue;
+            }
+          }
           const receipt = await this.paidAdapters.execute(
             "email",
             {
               to: recipientEmail,
               subject: msg.subject ?? `Quick note for ${campaign.city.toUpperCase()}`,
-              text: msg.bodySummary,
+              text: finalText,
+              ...(envelope ? { headers: envelope.headers } : {}),
             },
             {
               spend: spendAuthFromCampaign(campaign, 1, {
@@ -904,6 +969,7 @@ export class CrowdsourcingEngine {
                 env: this.env,
               }),
               idempotencyKey: `outreach:${msg.id}`,
+              campaignId: campaign.id,
               targetStopped: human.stopped,
             },
           );
@@ -926,6 +992,59 @@ export class CrowdsourcingEngine {
           } else {
             const updated = await this.store.updateOutreachStatus(msg.id, "failed");
             failed += 1;
+            processed.push(updated);
+          }
+          continue;
+        }
+
+        if (this.socialAdapters && SOCIAL_CHANNELS.has(msg.channel)) {
+          if (this.compliance) {
+            const entropy = this.compliance.checkTemplateEntropy(
+              `campaign:${campaign.id}:${msg.channel}`,
+              msg.bodySummary,
+            );
+            if (!entropy.ok) {
+              const updated = await this.store.updateOutreachStatus(
+                msg.id,
+                "blocked_policy",
+                `blocked:${entropy.reason ?? "entropy"}`,
+              );
+              blockedPolicy += 1;
+              processed.push(updated);
+              continue;
+            }
+          }
+          const socialRes = await this.socialAdapters.dispatch({
+            platform: msg.channel as SocialPlatform,
+            text: msg.bodySummary,
+            title: msg.subject ?? undefined,
+            campaignId: campaign.id,
+            recipientHandle: human.displayLabel,
+            isDm: true,
+            hasRecordedConsent: !isCold,
+            idempotencyKey: `outreach:${msg.id}`,
+          });
+          if (socialRes.ok) {
+            const updated = await this.store.updateOutreachStatus(
+              msg.id,
+              "sent",
+              socialRes.externalRef ?? `social:${msg.channel}:${msg.id}`,
+            );
+            await this.store.recordContactTouchpoint({
+              contactHash: contactGate.contactHash,
+              campaignId: campaign.id,
+              surface: "outreach",
+              isCold,
+              answered: false,
+            });
+            if (socialRes.mode === "dry_run") dryRun += 1;
+            else sent += 1;
+            processed.push(updated);
+          } else {
+            const nextStatus = socialRes.mode === "blocked_policy" ? "blocked_policy" : "failed";
+            const updated = await this.store.updateOutreachStatus(msg.id, nextStatus);
+            if (nextStatus === "blocked_policy") blockedPolicy += 1;
+            else failed += 1;
             processed.push(updated);
           }
           continue;

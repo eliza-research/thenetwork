@@ -6,10 +6,9 @@
 // spec/consoleMemberView.md, "The timeline shows recorded delivery and leak evidence for the exact message"
 import { CrossAppButton } from "./apps.tsx";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import type { ScoreComponents } from "@thenetwork/core";
 import {
-  Alert, AreaLink as AreaLinkView, Button, cn, Countdown as CountdownView, Disclosure as DisclosureView, FactLine, InspectorSection, Input, Kpi,
-  KpiGrid as KpiGridView, MemberLink as MemberLinkView, MeterBars, OpportunityLink, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
+  Alert, Button, cn, Disclosure as DisclosureView, FactLine, InspectorSection, Input, Kpi,
+  KpiGrid as KpiGridView, Popover, PopoverContent, PopoverTrigger, RevealControl, StatusMark, StatusRow,
   type KpiTone, type StatusTone,
 } from "@thenetwork/ui";
 import { canTogglePick, type Subject } from "../../../packages/core/src/generated/consoleNavigation.ts";
@@ -19,10 +18,11 @@ import {
   receiveViewer, revealOffered, sendWorldEvent, step as stepWorkspace, worldMenuShown, type Event as WorkspaceEvent, type PanelAnswer, type PanelView, type RevealForm, type WorkMode, type WorkPanel,
   type Workspace, type WorldEvent,
 } from "../../../packages/core/src/generated/consoleWorkspace.ts";
+import { teenFriendApp } from "../../../packages/core/src/generated/matchLane.ts";
 import type { AppProfile360, BookedPlan, BusinessProfile360, DatingProfile360, DeliveryReason, HealthAlert, MemberDetail, MemberPhoto, MemberTimeline, ObsFeedItem, ObsMember, ObsMessage, OpportunityDetail, SystemEvent, TimeChoice } from "../src/types.ts";
 import { historyBetween, isBusyElsewhere, ReviewActions, reviewLine, VenueLink, wantsOf, workChannelLabel } from "./review.tsx";
 import { isMemberActive, INACTIVE_PARTICIPANT_STATUS, OPEN, originLabel, originOf, store, useStore, type DrawerTab, type Fetched, type Focus, type Opp } from "./store.ts";
-import { ago, COMPONENT_SIGN, consoleNav, dur, hasScoreParts, humanize, jumpTo, num, pct, pickMember, sentence, shortDate, stamp } from "./ui.tsx";
+import { ago, AreaLink, consoleNav, Countdown, dur, EventBadge, humanize, jumpTo, MemberLink, num, OppLink, pct, pickMember, ScoreParts, sentence, shortDate, stamp } from "./ui.tsx";
 
 const TONE: Record<string, StatusTone> = { bad: "destructive", warn: "warn", good: "ok", info: "primary", gold: "primary", neutral: "neutral" };
 const tone = (word: string | undefined): StatusTone => TONE[word ?? "neutral"] ?? "neutral";
@@ -81,28 +81,8 @@ function answerOf(r?: Fetched<unknown>): PanelAnswer {
 const DETAIL_PANEL: WorkPanel = "RequestsPanel";
 const detailView = (r?: Fetched<unknown>): PanelView => panelView(DETAIL_PANEL, answerOf(r), 1);
 
-/** A member name that moves the focus to the member. */
-function MemberLink({ id, first, children }: { id: string; first?: boolean; children?: ReactNode }) {
-  const m = store.members.get(id);
-  const name = m ? (first ? m.name.split(" ")[0] : m.name) : id;
-  return <MemberLinkView onOpen={() => store.focus({ kind: "member", id })}>{children ?? name}</MemberLinkView>;
-}
-/** An opportunity name ("Maya + Jon") that moves the focus to the opportunity. */
-function OppLink({ o, children }: { o: Opp; children?: ReactNode }) {
-  return <OpportunityLink onOpen={() => store.focus({ kind: "opportunity", id: o.id })}>{children ?? store.oppTitle(o)}</OpportunityLink>;
-}
-/** A neighborhood name that moves the focus to the neighborhood. */
-function AreaLink({ area }: { area?: string }) {
-  if (!area) return null;
-  return <AreaLinkView onOpen={() => store.focus({ kind: "neighborhood", id: area })}>{area}</AreaLinkView>;
-}
-/** The state of an opportunity as a colored shape. */
 function OppMark({ state }: { state: string }) {
   return <StatusMark tone={OPP_STATE_TONE[state] ?? (OPEN.has(state) ? "primary" : "neutral")} label={stateLabel(state)} />;
-}
-/** The time left to a deadline on the console clock. */
-function Countdown({ deadline, prefix, what }: { deadline: number; prefix?: string; what?: string }) {
-  return <CountdownView deadline={deadline} now={store.now()} prefix={prefix} what={what} deadlineLabel={stamp(deadline)} />;
 }
 /** A disclosure whose open state stays for this viewer (localStorage obs.disclosure.<name>). Its content renders only while it is open. */
 function Disclosure({ name, summary, children, defaultOpen = false }: { name: string; summary: ReactNode; children: ReactNode; defaultOpen?: boolean }) {
@@ -403,10 +383,13 @@ function MemberPanel({ id }: { id: string }) {
         ]} />
       </div>
       {game && (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant={picked ? "primary" : "outline"} size="sm" disabled={!canTogglePick(consoleNav(), picked, !!m.minor)} title={m.minor ? "Members under 18 are never introduced" : "Pick for an intro (shift-click on the map)"} onClick={() => pickMember(id)}>{picked ? "Picked ✓" : "Pick for intro"}</Button>
-          <Button variant={controlled ? "primary" : "outline"} size="sm" onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</Button>
-          <WorldMenu id={id} />
+        <div className="flex flex-col gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant={picked ? "primary" : "outline"} size="sm" disabled={!canTogglePick(consoleNav(), picked, !!m.minor)} title={m.minor ? "Members under 18 cannot be manually picked" : "Pick for an intro (shift-click on the map)"} onClick={() => pickMember(id)}>{picked ? "Picked ✓" : "Pick for intro"}</Button>
+            <Button variant={controlled ? "primary" : "outline"} size="sm" onClick={() => store.control({ type: "takeover", memberId: id, on: !controlled })}>{controlled ? "Let go" : "Play as"}</Button>
+            <WorldMenu id={id} />
+          </div>
+          <MemberSayForm id={id} first={m.name.split(" ")[0] ?? id} />
         </div>
       )}
       {(request || activeIntents.length > 0 || pastIntents.length > 0) && (
@@ -449,6 +432,28 @@ function MemberPanel({ id }: { id: string }) {
         </>
       )}
     </>
+  );
+}
+
+function MemberSayForm({ id, first }: { id: string; first: string }) {
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  const submit = async () => {
+    const trimmed = text.trim();
+    if (!trimmed || sending) return;
+    setSending(true);
+    const r = await store.control({ type: "say", memberId: id, text: trimmed });
+    setSending(false);
+    if (r.ok) {
+      setText("");
+      store.toast(`Sent as ${first}`, "good");
+    }
+  };
+  return (
+    <form className="flex items-center gap-2" onSubmit={e => { e.preventDefault(); void submit(); }}>
+      <Input className="min-w-0 flex-1" aria-label={`Send message as ${first}`} placeholder={`Message Network as ${first}…`} value={text} onChange={e => setText(e.target.value)} />
+      <Button variant="outline" size="sm" type="submit" disabled={!text.trim() || sending}>Say</Button>
+    </form>
   );
 }
 
@@ -622,28 +627,6 @@ export function OppList({ opps, me }: { opps: Opp[]; me?: string }) {
 
 type TimelineItem = { t: number; key: string; msg?: ObsMessage & { memberId?: string }; ev?: ObsFeedItem; sys?: SystemEvent };
 
-/** A compact mark per system event type (decisions, probes, refusals, safety, age). */
-function eventIcon(e: SystemEvent): string {
-  const t = e.type, d = e.detail ?? {};
-  if (t === "review_decision") return d.decision === "reject" ? "✕" : d.decision === "reroll" ? "↻" : "✓";
-  if (t === "review_expired") return "⧖";
-  if (t === "review_invalidated" || t === "review_refused" || t === "send_refused" || t === "send_skipped" || t === "proposal_skipped") return "⊘";
-  if (t.startsWith("review")) return "▣";
-  if (t.startsWith("probe") || t === "time_answer") return "◌";
-  if (t === "send_deferred") return "◷";
-  if (t === "gate_reason") return "⊘";
-  if (t === "booked_cancelled") return "✕";
-  if (t === "availability_offer" || t === "calendar_consent" || t === "weekly_checkin_consent" || t === "checkin_sent" || t === "availability_stated") return "▦";
-  if (t === "guard_blocked") return "◈";
-  if (t === "trust" || t === "abuse" || t === "safety_flag" || t === "safety_action" || t === "member_blocked") return "⚑";
-  if (t.startsWith("age") || t === "minor_signal" || t === "join_declined") return "△";
-  if (t.startsWith("request")) return "✦";
-  if (t === "meeting_scheduled" || t === "interaction_occurred" || t === "venue") return "◎";
-  if (t === "matching_switch" || t === "review_mode") return "≡";
-  if (t === "member_accepted") return "✓";
-  return "·";
-}
-/** The leak-check result on an outbound message. */
 function GuardMark({ g }: { g?: ObsMessage["guard"] }) {
   if (!g) return null;
   const mark = guardMarks[g];
@@ -692,8 +675,10 @@ function TimelineList({ items, who }: { items: TimelineItem[]; who: (m: ObsMessa
           {x.msg.booked && <div className="text-muted-foreground">Booked for {stamp(x.msg.booked.at)} · silence for {x.msg.booked.optOutHours} h counts as yes; &quot;can't&quot; cancels</div>}
         </div>
       ) : x.sys ? (
-        <div key={x.key} className={SEVERITY_TEXT[x.sys.severity ?? "info"] ?? "text-foreground"} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
-          <span className="mr-1" aria-hidden>{eventIcon(x.sys)}</span><span className="text-muted-foreground">{stamp(x.sys.t)}</span> {x.sys.text}
+        <div key={x.key} className={cn("flex flex-wrap items-baseline gap-1.5", SEVERITY_TEXT[x.sys.severity ?? "info"] ?? "text-foreground")} title={x.sys.detail ? Object.entries(x.sys.detail).map(([k, v]) => `${k}: ${v}`).join(" · ") : x.sys.type}>
+          <EventBadge e={x.sys} />
+          <span className="text-muted-foreground tabular-nums">{stamp(x.sys.t)}</span>
+          <span>{x.sys.text}</span>
           {x.sys.opportunityId && store.opps.has(x.sys.opportunityId) && !(store.ui.focus?.kind === "opportunity" && store.ui.focus.id === x.sys.opportunityId) && <> <OppLink o={store.opps.get(x.sys.opportunityId)!}>→</OppLink></>}
         </div>
       ) : (
@@ -890,16 +875,6 @@ function Truth({ d }: { d: MemberDetail }) {
   );
 }
 
-/** The score parts of a proposal: gains as green bars, costs as red bars, each from 0 to 1. */
-function ScoreParts({ c }: { c: ScoreComponents }) {
-  if (!hasScoreParts(c)) return null;
-  const rows = (Object.keys(COMPONENT_SIGN) as (keyof ScoreComponents)[]).map(k => ({
-    key: k, label: humanize(k.replace(/([A-Z])/g, "_$1")), value: c[k], tone: COMPONENT_SIGN[k] < 0 ? "destructive" as const : "ok" as const, title: `${k}: ${c[k]}`,
-  }));
-  return <MeterBars rows={rows} ranked={false} max={1} format={v => v.toFixed(2)} />;
-}
-
-/** One opportunity: its state, review actions, people, plan, times, booked plan, feedback, history and score. */
 function OpportunityPanel({ id }: { id: string }) {
   const s = useStore();
   const live = s.opps.get(id);
@@ -944,7 +919,7 @@ function OpportunityPanel({ id }: { id: string }) {
                 <MemberLink id={x} />
                 <StatusMark tone={tone(STATUS_TONE[status])} label={humanize(status)} showLabel />
                 {o.enjoyment[x] !== undefined && <span>enjoyed {pct(o.enjoyment[x]!)}</span>}
-                {m?.minor && <StatusMark tone="destructive" label="Under 18" showLabel title="Members under 18 are never introduced. This must not happen." />}
+                {m?.minor && <StatusMark tone={teenFriendApp(s.app) ? "warn" : "destructive"} label="Under 18" showLabel title={teenFriendApp(s.app) ? "Minor in friendship lane: strict teen age and review rules apply." : "Members under 18 are never introduced on this app."} />}
                 {OPEN.has(o.state) && isBusyElsewhere(o, x) && <StatusMark tone="warn" label="busy" showLabel title="In another open opportunity" />}
                 <TrustMark trust={m?.trust} />
               </div>
@@ -988,7 +963,7 @@ function OpportunityPanel({ id }: { id: string }) {
       {o.source !== "player" && o.components && (
         <Disclosure name="score" summary={<>Score {o.score.toFixed(2)}{d?.run ? <> · <Button variant="ghost" size="sm" className="h-auto px-1" onClick={e => { e.preventDefault(); store.setUI({ drawer: "engine", drawerOpen: true }); }}>run {d.run.id.slice(0, 4)} →</Button></> : null}</>}>
           {o.exploration && <p className={quiet} title="Picked partly to explore, not only exploit">exploration</p>}
-          <ScoreParts c={o.components} />
+          <ScoreParts c={o.components} gainTone="ok" />
         </Disclosure>
       )}
       {o.alternates.length > 0 && (

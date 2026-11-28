@@ -3,9 +3,17 @@ import { heldMeetingMinimum, observatoryMeetingHeld, observatoryProposalCounts }
 import { consoleBookingReceiptCurrent, consoleDeliveryEvidenceAllowed, consoleDeliveryGuard, consolePreparedBodyWithheld, type ConsoleDeliveryGuard } from "../../../../packages/core/src/generated/consoleMemberView.ts";
 import { confirmationWindowHours } from "../../../../packages/core/src/generated/meetingSettlement.ts";
 import {
-  ALL_SEED_VENUES, canBeMatched, CITY_IDS, DAY, earliestDayKeyOf, getCity, groupVenueRubricScore, isCity, isMinor, latestDayKeyOf, listCities, seedVenuesForCity, validAge,
-  type AgeSide, type City, type EdgeType, type VenuePriceTier, type VenueRecord, type VenueStatus, type WorkIntroChannel, type WorldSnapshot,
+  ALL_SEED_VENUES, BufferedTrajectoryWriter, canBeMatched, CITY_IDS, DAY, earliestDayKeyOf, getCity, groupVenueRubricScore, HOUR, isCity, isMinor, latestDayKeyOf, listCities,
+  MemoryHotCache, MemoryTrajectoryBlobStore, MemoryTrajectoryManifestStore, PgTrajectoryKeyRing, PgTrajectoryManifestStore, RealClock, seedVenuesForCity,
+  trajectoryBlobStoreFromEnv, validAge,
+  type AgeSide, type AnalyticsFilter, type City, type CohortMatrix, type EdgeType, type FunnelEvent, type FunnelResult, type OutreachHeatmap,
+  type OutreachTelemetryRecord, type SliceQuery, type SliceResult, type TrajectoryQuery, type VenuePriceTier, type VenueRecord, type VenueStatus,
+  type WorkIntroChannel, type WorldSnapshot,
 } from "@thenetwork/core";
+import {
+  buildAnalyticsEngineFromState, computeAnomalies, computeTimeSeries, redactHotTailForRole, redactTraceDetailForRole, scrubSqlRows, validateReadOnlyAnalyticsSql,
+  type ObservatoryAnomaliesResponse, type ObservatorySqlResult, type ObservatoryTimeSeriesResponse, type ObservatoryTraceDetailResponse, type ObservatoryTrajectoriesResponse,
+} from "../analytics.ts";
 import { ageOnDay } from "../../../../packages/core/src/generated/memberAge.ts";
 import { groupAgeAllowed, teenReady, teenRosterSizeAllowed } from "../../../../packages/core/src/generated/friendIntroAge.ts";
 import { teenFriendApp, teenFriendCategory, teenGenerator } from "../../../../packages/core/src/generated/matchLane.ts";
@@ -272,6 +280,18 @@ export class RealSource implements DataSource {
   private ages: AgeInfo = { latest: new Map(), changes: new Map(), optIns: new Map(), teenHistory: new Map(), flags: new Map() };
   private recordAges = new Map<string, number | null>();
   private firstNames = new Map<string, string>();
+  private readonly hotCache = new MemoryHotCache({ clock: new RealClock(), maxEntries: 256 });
+  private trajectoryWriter?: BufferedTrajectoryWriter;
+  private trajectoryManifest?: PgTrajectoryManifestStore | MemoryTrajectoryManifestStore;
+  private trajectoryKeyRing?: PgTrajectoryKeyRing;
+
+  private async cached<T>(key: string, compute: () => Promise<T>, ttlMs = 5_000): Promise<T> {
+    const hit = await this.hotCache.get<T>(key);
+    if (hit !== undefined) return hit;
+    const value = await compute();
+    await this.hotCache.set(key, value, ttlMs);
+    return value;
+  }
 
   readonly app: AppId;
   private isolation: "rls_role" | "app_filter";
@@ -337,14 +357,41 @@ export class RealSource implements DataSource {
       if (env !== "dev") { this.reveal = false; this.revealRefused = true; }
     }
     this.sql = sql;
+    this.initTrajectoryReader(sql);
     this.store.setEnv(this.env());
     return true;
+  }
+
+  private initTrajectoryReader(sql: SQL) {
+    if (this.trajectoryWriter) return;
+    let blobStore;
+    try {
+      blobStore = trajectoryBlobStoreFromEnv(process.env);
+    } catch {
+      blobStore = new MemoryTrajectoryBlobStore();
+    }
+    const manifest = new PgTrajectoryManifestStore(sql);
+    const masterKey = process.env.TRAJECTORY_MASTER_KEY;
+    const keyRing = masterKey && Buffer.byteLength(masterKey, "utf8") >= 32
+      ? new PgTrajectoryKeyRing({ sql, masterKey, clock: new RealClock() })
+      : undefined;
+    this.trajectoryManifest = manifest;
+    this.trajectoryKeyRing = keyRing;
+    this.trajectoryWriter = new BufferedTrajectoryWriter({
+      blobStore,
+      manifestStore: manifest,
+      ...(keyRing ? { keyRing } : {}),
+      clock: new RealClock(),
+      workerId: `obs-real-${this.app}`,
+      flushIntervalMs: 0,
+    });
   }
 
   private async refresh() {
     if (!this.sql && !(await this.checkLogin())) return;
     try {
       await this.load();
+      this.hotCache.clear();
       const env = this.env();
       if (JSON.stringify(env) !== JSON.stringify(this.store.env)) this.store.setEnv(env);
     } catch (e) {
@@ -355,6 +402,8 @@ export class RealSource implements DataSource {
   async dispose() {
     for (const t of this.timers) clearInterval(t);
     this.timers = [];
+    this.hotCache.clear();
+    await this.trajectoryWriter?.shutdown().catch(() => {});
     await this.sql?.close();
     await this.unchecked?.close();
   }
@@ -462,9 +511,9 @@ export class RealSource implements DataSource {
       sql.unsafe<BookingReceiptView[]>(`select app_id, opportunity_id, member_id, booking_at, received_at
         from network.booking_receipts_${app} where app_id=$1`, [app]),
       // The time keys each member picked (the offered labels are in the message text only).
-      sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
+      sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at desc, id desc limit 50000`,
       sql`select id, city, neighborhood, name, lat, lon, arrival_landmark, status, category, price_tier from platform.venues`.catch(() => null),
-      sql`select object_id, payload from network.events where app_id = ${app} and type = 'venue' order by at asc, id asc`.catch(() => []),
+      sql`select object_id, payload from network.events where app_id = ${app} and type = 'venue' order by at asc, id asc limit 50000`.catch(() => []),
       sql<{ member_id: string; domain: string }[]>`select m.id as member_id, d.domain from network.members m join platform.member_domains d on d.person_id = m.person_id where m.app_id = ${app} and d.enabled = true`.catch(() => []),
       sql<{ member_id: string; category: string }[]>`select distinct member_id, category from network.intents where app_id = ${app}`.catch(() => []),
     ]);
@@ -566,7 +615,7 @@ export class RealSource implements DataSource {
       receipts.set(receipt.opportunity_id, group);
     }
     const times = new Map<string, NonNullable<ObsOpportunity["times"]>>(), cancelled = new Map<string, BookedPlan["cancelled"]>();
-    for (const e of picksEv as any[]) {
+    for (const e of [...(picksEv as any[])].reverse()) {
       const p = e.payload ?? {}, opp = p.oppId as string | undefined, id = p.memberId as string | undefined;
       if (!opp || !id) continue;
       if (e.type === "booked_cancelled") cancelled.set(opp, { ...cancelled.get(opp), [id]: { at: ms(e.at) ?? 0, told: !!p.told } });
@@ -770,16 +819,16 @@ export class RealSource implements DataSource {
     const now = this.store.clock.now, since = new Date(now - ALERT_WINDOW);
     const [st, reqs, msgs, ev24, evAll, contacts, lastRun, expired, service, survey] = await Promise.all([
       this.stateRow("saved_at, matching_enabled as matching, deferred, trust, counters, gate_reasons as gate"),
-      sql`select id, member_id, kind, category, desire_id, outcome, tries, opportunity_id, created_at, fulfilled_at from network.requests where app_id = ${app} order by created_at desc`.catch(() => []),
-      sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system`,
+      sql`select id, member_id, kind, category, desire_id, outcome, tries, opportunity_id, created_at, fulfilled_at from network.requests where app_id = ${app} order by created_at desc limit 50000`.catch(() => []),
+      sql`select member_id, ts, direction, proactive, status from network.messages where app_id = ${app} and not system order by ts desc limit 50000`,
       sql`select type, payload->>'reason' as reason, count(*)::int as n from network.events where app_id = ${app} and at >= ${since} and type in ('send_refused', 'guard_blocked') group by 1, 2`,
       sql`select type, actor_id, at, payload->>'from' as inviter, payload->>'newMemberId' as invitee, payload->>'rule' as rule from network.events
-          where app_id = ${app} and type in ('invite', 'growth_ask', 'invariant_violation')`,
+          where app_id = ${app} and type in ('invite', 'growth_ask', 'invariant_violation') order by at desc, id desc limit 50000`,
       // Messages about an opportunity that went out (or would have, dry-run): not refused, held or blocked.
       // Every message that went out (or would have, dry-run): not refused, held or blocked. The text is read
       // here only to apply the judge's connection-offer rule; it never leaves this function.
       sql<{ member_id: string; ts: Date | string; opportunity_id: string | null; type: string | null; body: string | null }[]>`select member_id, ts, opportunity_id, type, body from network.messages
-          where app_id = ${app} and direction = 'outbound' and not system and status !~ '^(refused|suppressed|blocked|parked|held)'`,
+          where app_id = ${app} and direction = 'outbound' and not system and status !~ '^(refused|suppressed|blocked|parked|held)' order by ts desc limit 50000`,
       sql<{ at: Date | string | null }[]>`select max(at) as at from network.matching_runs where app_id = ${app}`,
       sql`select count(*)::int as n from network.review_items where app_id = ${app} and decision = 'expired' and decided_at >= ${since}`.catch(() => [{ n: 0 }]),
       this.service?.health(),
@@ -1118,6 +1167,7 @@ export class RealSource implements DataSource {
   }
 
   private async afterAction(r: ControlResult): Promise<ControlResult> {
+    this.hotCache.clear();
     await this.loading; await this.reload(); this.push();
     return r;
   }
@@ -1315,7 +1365,175 @@ export class RealSource implements DataSource {
   async snapshot(): Promise<WorldSnapshot> {
     if (!this.sql) throw new Error("not connected");
     this.tickClock();
-    return loadSnapshot(this.isolation === "rls_role" ? appSnapshotSql(this.sql, this.app) : this.sql, this.store.clock.now, { app: this.app, console: this.isolation === "rls_role" });
+    return this.cached(`${this.app}:snapshot`, () =>
+      loadSnapshot(this.isolation === "rls_role" ? appSnapshotSql(this.sql!, this.app) : this.sql!, this.store.clock.now, { app: this.app, console: this.isolation === "rls_role" }),
+    );
+  }
+
+  private async analyticsBundle() {
+    return this.cached(`${this.app}:analytics-bundle`, async () => {
+      const sql = this.sql;
+      const extraFunnel: FunnelEvent[] = [];
+      const extraOutreach: OutreachTelemetryRecord[] = [];
+      if (sql) {
+        const [siteRows, outreachRows] = await Promise.all([
+          sql<{
+            id: string; occurred_at: Date | string; city_bucket: string | null; event_type: string;
+            visit_bucket_hash: string | null; utm_source: string | null; utm_campaign: string | null;
+            desire_lane: string | null; qr_code: string | null;
+          }[]>`select id, occurred_at, city_bucket, event_type, visit_bucket_hash, utm_source, utm_campaign, desire_lane, qr_code
+            from analytics.site_events where app_id = ${this.app} order by occurred_at desc limit 20000`.catch(() => []),
+          sql<{
+            day: Date | string; city: string; channel: string; campaign_id: string | null;
+            persona_id: string | null; template_id: string | null; desire_lane: string | null;
+            local_dow: number; local_hour: number; sent: number; delivered: number; clicked: number;
+            replied: number; converted: number; stopped: number; bounced: number; rate_limited_429: number;
+          }[]>`select day, city, channel, campaign_id, persona_id, template_id, desire_lane,
+              local_dow, local_hour, sent, delivered, clicked, replied, converted, stopped, bounced, rate_limited_429
+            from analytics.outreach_hourly where app_id in (${this.app}, 'all') order by day desc, local_hour desc limit 20000`.catch(() => []),
+        ]);
+        for (const r of siteRows) {
+          if (r.event_type === "join_underage_declined") continue;
+          const stage = r.event_type === "cta_copy_prompt" || r.event_type === "cta_open_sms" || r.event_type === "cta_open_join" || r.event_type === "oauth_start"
+            ? "cta_triggered"
+            : r.event_type === "link_click"
+              ? "link_click"
+              : "site_visit";
+          extraFunnel.push({
+            eventId: String(r.id),
+            occurredAt: ms(r.occurred_at) ?? this.store.clock.now,
+            appId: this.app,
+            city: r.city_bucket ?? "unknown",
+            stage,
+            actorKey: String(r.visit_bucket_hash ?? r.id),
+            ...(r.utm_source ? { channel: r.utm_source } : {}),
+            ...(r.utm_campaign ? { campaignId: r.utm_campaign } : {}),
+            ...(r.desire_lane ? { desireLane: r.desire_lane } : {}),
+            ...(r.qr_code ? { qrCode: r.qr_code } : {}),
+          });
+        }
+        for (const r of outreachRows) {
+          extraOutreach.push({
+            occurredAt: (ms(r.day) ?? this.store.clock.now) + Number(r.local_hour) * HOUR,
+            appId: this.app,
+            city: String(r.city),
+            channel: String(r.channel),
+            ...(r.campaign_id ? { campaignId: r.campaign_id } : {}),
+            ...(r.persona_id ? { personaId: r.persona_id } : {}),
+            ...(r.template_id ? { templateId: r.template_id } : {}),
+            ...(r.desire_lane ? { desireLane: r.desire_lane } : {}),
+            localDayOfWeek: Number(r.local_dow),
+            localHour: Number(r.local_hour),
+            sent: Number(r.sent),
+            delivered: Number(r.delivered),
+            clicked: Number(r.clicked),
+            replied: Number(r.replied),
+            converted: Number(r.converted),
+            stopped: Number(r.stopped),
+            bounced: Number(r.bounced),
+            rateLimited429: Number(r.rate_limited_429),
+          });
+        }
+      }
+      const state = this.state();
+      return buildAnalyticsEngineFromState(state, this.app, {
+        funnelEvents: extraFunnel,
+        outreach: extraOutreach,
+        nowMs: state.clock.now,
+      });
+    });
+  }
+
+  async analyticsFunnel(filter: AnalyticsFilter): Promise<FunnelResult> {
+    const bundle = await this.analyticsBundle();
+    return bundle.engine.computeFunnel({ ...filter, appId: this.app });
+  }
+
+  async analyticsCohorts(filter: AnalyticsFilter): Promise<CohortMatrix> {
+    const bundle = await this.analyticsBundle();
+    return bundle.engine.computeCohortMatrix({ ...filter, appId: this.app });
+  }
+
+  async analyticsTimeSeries(granularity: "hour" | "day" | "week", filter: AnalyticsFilter): Promise<ObservatoryTimeSeriesResponse> {
+    const bundle = await this.analyticsBundle();
+    return computeTimeSeries(bundle.engine, this.state(), granularity, { ...filter, appId: this.app });
+  }
+
+  async analyticsHeatmap(filter: AnalyticsFilter): Promise<OutreachHeatmap> {
+    const bundle = await this.analyticsBundle();
+    return bundle.engine.computeOutreachHeatmap({ ...filter, appId: this.app });
+  }
+
+  async analyticsAnomalies(filter: AnalyticsFilter = {}): Promise<ObservatoryAnomaliesResponse> {
+    const bundle = await this.analyticsBundle();
+    const state = this.state();
+    const ts = computeTimeSeries(bundle.engine, state, "day", { ...filter, appId: this.app });
+    return computeAnomalies(ts, bundle.safety, bundle.intentDemand, state.clock.now);
+  }
+
+  async analyticsSlice(query: SliceQuery): Promise<SliceResult> {
+    const bundle = await this.analyticsBundle();
+    return bundle.engine.slice({ ...query, filter: { ...query.filter, appId: this.app } });
+  }
+
+  async analyticsSql(sqlText: string): Promise<ObservatorySqlResult> {
+    const check = validateReadOnlyAnalyticsSql(sqlText);
+    if (!check.ok) throw new Error(check.error);
+    if (!this.sql) return { columns: [], rows: [], truncated: false };
+    const rows = await this.sql.begin(async tx => {
+      await tx`SET LOCAL statement_timeout = '3000ms'`;
+      return tx.unsafe<Record<string, unknown>[]>(`SELECT * FROM (${check.sql}) AS _obs_q LIMIT 501`);
+    });
+    return scrubSqlRows(rows, 500);
+  }
+
+  async trajectories(query: TrajectoryQuery, opts: { allowPayload?: boolean } = {}): Promise<ObservatoryTrajectoriesResponse> {
+    const scoped: TrajectoryQuery = { ...query, appId: this.app, limit: Math.min(200, Math.max(1, query.limit ?? 50)) };
+    const traces = this.trajectoryManifest
+      ? await this.trajectoryManifest.query(scoped).catch(() => [])
+      : [];
+    const hotTail = this.trajectoryWriter
+      ? redactHotTailForRole(
+        this.trajectoryWriter.tailHot({
+          app: this.app,
+          ...(scoped.traceId ? { traceId: scoped.traceId } : {}),
+          ...(scoped.entityId ? { entityId: scoped.entityId } : {}),
+          ...(scoped.kind ? { kind: scoped.kind } : {}),
+          ...(scoped.status ? { status: scoped.status } : {}),
+          limit: scoped.limit,
+        }),
+        Boolean(opts.allowPayload),
+      )
+      : [];
+    const driver = traces[0]?.storageDriver ?? "memory";
+    return { traces, hotTail, driver };
+  }
+
+  async trajectoryDetail(traceId: string, opts: { decrypt?: boolean; allowPayload?: boolean } = {}): Promise<ObservatoryTraceDetailResponse> {
+    const manifest = this.trajectoryManifest
+      ? await this.trajectoryManifest.getByTraceId(this.app, traceId).catch(() => undefined)
+      : undefined;
+    const allowPayload = Boolean(opts.allowPayload);
+    const decrypt = Boolean(opts.decrypt && allowPayload);
+    let spans = this.trajectoryWriter
+      ? await this.trajectoryWriter.readTrace(this.app, traceId, {
+        decrypt,
+        ...(manifest ? { objectKey: manifest.objectKey, byteOffset: manifest.byteOffset, byteLength: manifest.byteLength } : {}),
+      }).catch(() => [])
+      : [];
+    if (spans.length === 0 && this.trajectoryWriter) {
+      const tail = this.trajectoryWriter.tailHot({ app: this.app, traceId, limit: 200 });
+      spans = tail.map(s => {
+        const { payload, personId: _p, isMinor, ...rest } = s;
+        const canShow = allowPayload && !isMinor && payload !== undefined;
+        return { ...rest, ...(canShow ? { payload } : {}), payloadState: canShow ? "plain" as const : "redacted" as const };
+      });
+    }
+    return {
+      traceId,
+      manifest: manifest ?? null,
+      spans: redactTraceDetailForRole(spans, allowPayload),
+    };
   }
 
   private async shadowRun(city?: City): Promise<ControlResult> {

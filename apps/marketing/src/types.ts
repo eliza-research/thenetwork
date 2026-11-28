@@ -25,19 +25,43 @@ export type CoreDesireLaneId =
   | "travel_expedition"
   | "bespoke_irl_experience";
 
-export type DesireLaneId = CoreDesireLaneId | (string & {});
+export type ExtensibleDesireLaneId =
+  | "cofounder_venture"
+  | "investors_patrons"
+  | "mentorship_mastery"
+  | "creative_collab"
+  | "sport_wellness_crew"
+  | "shared_living_home"
+  | "travel_expedition"
+  | "bespoke_irl_experience";
 
-export type CityLaunchStage =
+export type DesireLaneId = CoreDesireLaneId | ExtensibleDesireLaneId | (string & {});
+
+export type CanonicalCityLaunchStage =
   | "researching"
   | "waitlist_kindling"
   | "liquidity_seeding"
   | "live_matching"
-  | "scaling"
+  | "scaling";
+
+export type LegacyCityLaunchStage =
   | "scout"
   | "seed_waitlist"
   | "soft_launch"
   | "density_growth"
   | "mature";
+
+export type CityLaunchStage = CanonicalCityLaunchStage | LegacyCityLaunchStage;
+
+export function normalizeCityLaunchStage(stage: string | null | undefined): CanonicalCityLaunchStage {
+  const s = (stage ?? "").trim().toLowerCase();
+  if (s === "researching" || s === "scout") return "researching";
+  if (s === "waitlist_kindling" || s === "seed_waitlist") return "waitlist_kindling";
+  if (s === "liquidity_seeding" || s === "soft_launch") return "liquidity_seeding";
+  if (s === "live_matching" || s === "density_growth") return "live_matching";
+  if (s === "scaling" || s === "mature") return "scaling";
+  return "researching";
+}
 
 export const CANONICAL_OUTREACH_PLATFORMS = [
   "reddit",
@@ -143,6 +167,7 @@ export type OutreachChannel =
   | "x"
   | "reddit"
   | "linkedin"
+  | "discord"
   | "tinder"
   | "bumble"
   | "hinge"
@@ -153,11 +178,14 @@ export type OutreachChannel =
   | "venue"
   | "sms_opted_in";
 
+export type OutreachDirection = "outbound" | "inbound";
+
 export type OutreachStatus =
   | "queued"
   | "sent"
   | "delivered"
   | "replied"
+  | "bounced"
   | "blocked_stop"
   | "blocked_policy"
   | "failed";
@@ -350,6 +378,7 @@ export interface OutreachMessage {
   agentId: string;
   humanId: string;
   channel: OutreachChannel;
+  direction?: OutreachDirection;
   tier: ImplementationTier;
   subject: string | null;
   bodySummary: string;
@@ -362,6 +391,7 @@ export interface OutreachMessage {
 export type AttributionEventKind =
   | "qr_scan"
   | "site_visit"
+  | "link_click"
   | "signup_started"
   | "signup_verified_adult"
   | "video_view"
@@ -369,7 +399,22 @@ export type AttributionEventKind =
   | "irl_meeting_confirmed"
   | "second_meetup_retained"
   | "intro_or_hire_unlocked"
-  | "t3_match_verified";
+  | "t3_match_verified"
+  | "outreach_sent"
+  | "outreach_replied"
+  | "cta_triggered"
+  | "onboarding_completed"
+  | "first_proposal_received";
+
+export interface OperatorAuditEntry {
+  id: string;
+  actor: string;
+  action: string;
+  targetType: string | null;
+  targetId: string | null;
+  detail: Record<string, unknown>;
+  createdAt: string;
+}
 
 export interface AttributionEvent {
   id: string;

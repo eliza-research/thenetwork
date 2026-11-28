@@ -297,6 +297,9 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
     const emailHash = input.email ? keyedContactHash("email", input.email, this.env) : null;
     const handleHash = input.handleHash?.trim() || null;
 
+    const rawEnv = (this.env.MARKETING_ENV ?? this.env.NODE_ENV ?? "dev").trim().toLowerCase();
+    const failClosedOnMissingBridge = rawEnv === "production" || rawEnv === "staging";
+
     if (!phoneHash && !e164) {
       const lookupHashes = [emailHash, handleHash].filter((h): h is string => Boolean(h));
       if (lookupHashes.length > 0) {
@@ -345,14 +348,16 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
             }
           }
         } catch (err) {
-          if (!isPgUndefinedObjectError(err)) {
+          if (!isPgUndefinedObjectError(err) || failClosedOnMissingBridge) {
             return {
               allowed: false,
               banned: false,
               globallyStopped: false,
               knownMinor: false,
               recycledHold: false,
-              reason: "bridge_error_fail_closed",
+              reason: isPgUndefinedObjectError(err)
+                ? "bridge_unavailable_fail_closed"
+                : "bridge_error_fail_closed",
               source: "platform_pg",
             };
           }
@@ -397,7 +402,7 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
         source: "platform_pg",
       };
     } catch (err) {
-      if (isPgUndefinedObjectError(err)) {
+      if (isPgUndefinedObjectError(err) && !failClosedOnMissingBridge) {
         return {
           allowed: true,
           banned: false,
@@ -413,7 +418,9 @@ export class PgNetworkCoreBridge implements NetworkCoreBridge {
         globallyStopped: false,
         knownMinor: false,
         recycledHold: false,
-        reason: "bridge_error_fail_closed",
+        reason: isPgUndefinedObjectError(err)
+          ? "bridge_unavailable_fail_closed"
+          : "bridge_error_fail_closed",
         source: "platform_pg",
       };
     }

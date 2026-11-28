@@ -1,4 +1,5 @@
 // spec/sitePages.md, "Every site serves public pages and each special page has one site"
+import { useEffect, useRef } from "react";
 import {
   HomeHelpPageView,
   JoinView,
@@ -24,6 +25,7 @@ import {
 import type { Brand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import type { SitePage } from "../../../packages/core/src/generated/sitePages.ts";
 import type { SiteData } from "./site.ts";
+import { captureAttributionFromLocation, clearStoredAttribution, sendSiteEvent } from "./telemetry.ts";
 
 /** The page to show: a legal page carries its text, which only the prerender reads. */
 export type SiteView =
@@ -117,6 +119,13 @@ type PartProps = Pick<AppProps, "brand" | "site">;
  */
 function Landing({ brand, site }: PartProps) {
   const landing = useLanding(site.links);
+  const sentRef = useRef(false);
+  useEffect(() => {
+    if (sentRef.current) return;
+    sentRef.current = true;
+    captureAttributionFromLocation();
+    sendSiteEvent("page_view", { app: brand.app.toLowerCase() });
+  }, [brand.app]);
   return <LandingView brand={brand} {...landing} />;
 }
 
@@ -126,6 +135,25 @@ function Landing({ brand, site }: PartProps) {
  */
 function Join({ brand, site }: PartProps) {
   const join = useJoin({ siteKey: site.turnstileSiteKey, pageMinAge: site.minJoinAge, pageInviteOnly: brand.joinMode === "InviteOnly" });
+  const viewSentRef = useRef(false);
+  const doneSentRef = useRef(false);
+  useEffect(() => {
+    if (viewSentRef.current) return;
+    viewSentRef.current = true;
+    captureAttributionFromLocation();
+    sendSiteEvent("join_started", { app: brand.app.toLowerCase() });
+  }, [brand.app]);
+  useEffect(() => {
+    if (join.page.screen === "Blocked" && join.page.reason === "UnderAge") {
+      clearStoredAttribution();
+      return;
+    }
+    if (join.page.screen === "Done" && !doneSentRef.current) {
+      doneSentRef.current = true;
+      sendSiteEvent("join_completed", { app: brand.app.toLowerCase() });
+      clearStoredAttribution();
+    }
+  }, [brand.app, join.page.reason, join.page.screen]);
   return (
     <JoinView
       {...join}

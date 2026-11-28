@@ -11,10 +11,11 @@
 // spec/consolePanels.md, "The game tab shows the score of the simulated world"
 // spec/consolePanels.md, "Only an admin resets the world, chooses a level or chooses the reviewer"
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { getCity } from "../../../packages/core/src/cities.ts";
 import {
   canChooseFeedSegment, canPickRun, canReceiveDiff, canResetWorld, canToggleCompare, chooseFeedSegment, columnShown, compareShown, feedEmptyNote,
-  feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, ladderView, maxProactiveHundredths, maxRunPicks, metricsSectionShown, pickRun, proactiveWarns, receiveDiff,
-  receiveRuns, runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
+  feedSegmentNow, feedSegmentOffered, feedShows, gameView, initial as initialPanels, maxRunPicks, pickRun, receiveDiff,
+  runsView, toggleCompare, type ConsolePanels, type EventGroup, type FeedNote, type FeedSegment,
   type PipelineColumn, type RunCompare, type StateFilter,
 } from "../../../packages/core/src/generated/consolePanels.ts";
 import { panelStaffOf } from "./ops.tsx";
@@ -23,21 +24,21 @@ import {
   type ConsoleNav, type DrawerTab as NavTab, type FilterKey as NavFilterKey,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import {
-  Alert, Button, Checkbox, cn, DataCell, DataTable, Disclosure, drawerTabLabel, DrawerTabs, EmptyState, focusRing, Input, InspectorSection, Kpi, KpiGrid, LorenzCurve,
-  MeterBars, Segments, StatusMark, TableRow, type DrawerTabCount, type MeterRow, type MeterTone, type SegmentOption,
+  Alert, Button, Checkbox, cn, DataCell, DataTable, Disclosure, drawerTabLabel, DrawerTabs, EmptyState, FactLine, focusRing, Input, InspectorSection, Kpi, KpiGrid, Label, LorenzCurve,
+  MeterBars, Segments, Select, SelectItem, StatusMark, TableRow, type DrawerTabCount, type MeterRow, type MeterTone, type SegmentOption,
 } from "@thenetwork/ui";
 import type { EngineRunSummary, ObsFeedItem } from "../src/types.ts";
-import { BiasMonitor, Config, Growth, Lab, Requests, RunDiffView, SafetyCases, Scorecard } from "./admin.tsx";
+import { Config, Lab, Requests, RunDiffView, SafetyCases, TeenIntrosSwitch } from "./admin.tsx";
+import { AnalyticsWorkspace, MockTrafficPanel, PipelineFunnel } from "./analytics.tsx";
 import { handleFeedRowKey } from "./feed-row-key.ts";
 import { gamePanelsOf, Levels } from "./network.tsx";
 import { reconcileRunCompare, type RunCompareSelection } from "./run-compare.ts";
-import { CostPanel } from "./ops.tsx";
 import { stateLabel } from "./panels.tsx";
-import { MemberName, ReviewQueue, ScoreParts } from "./review.tsx";
+import { ReviewQueue } from "./review.tsx";
 import {
-  COLUMNS, DAY, DRAWER_TABS, OPEN, originLabel, originOf, stateGroupOf, store, useStore, type DrawerTab, type FilterKey, type Opp,
+  COLUMNS, DRAWER_TABS, LAUNCH_CITY_IDS, OPEN, originLabel, originOf, stateGroupOf, store, useStore, type DrawerTab, type FilterKey, type Opp,
 } from "./store.ts";
-import { dur, humanize, num, pct, shortDate, stamp } from "./ui.tsx";
+import { dur, humanize, MemberLink, num, pct, ScoreParts, shortDate, stamp } from "./ui.tsx";
 
 /** The generated drawer tab of each stored tab. */
 const navTab: Record<DrawerTab, NavTab> = {
@@ -83,6 +84,8 @@ export function Drawer() {
     <DrawerTabs
       nav={nav}
       counts={counts}
+      size={s.ui.drawerSize}
+      onSizeChange={drawerSize => store.setUI({ drawerSize })}
       onChooseTab={tab => { if (canChooseTab(nav, tab)) save(chooseTab(nav, tab)); }}
       onToggleDrawer={() => { if (canToggleDrawer(nav)) save(toggleDrawer(nav)); }}
     >
@@ -121,7 +124,7 @@ function Linked({ x }: { x: ObsFeedItem }) {
   const out: ReactNode[] = parts.map((p, i) => {
     const id = byName.get(p);
     if (!id || i % 2 === 0) return p;
-    return <MemberName key={i} id={id}>{p}</MemberName>;
+    return <MemberLink key={i} id={id}>{p}</MemberLink>;
   });
   return <>{out}</>;
 }
@@ -176,50 +179,9 @@ function Feed() {
   );
 }
 
-function Ladder() {
-  const s = useStore();
-  const n = s.network;
-  const ladder = ladderView(!!n, n?.kind === "stub");
-  if (ladder === "NoLadder" || !n) return null;
-  if (ladder === "StubLadderNote") return <EmptyState title="Stub network: no consent data." />;
-  const c = (k: string) => n.counters[k] ?? 0;
-  const rate = (a: number, b: number) => (b ? pct(a / b) : "–");
-  const candidates = c("engineProposals"), passed = candidates - (c("gatedOut") - (n.gateReasons.daily_cap ?? 0));
-  const answered = c("probeYes") + c("probeNo") + c("probeExpired");
-  const rv = n.review;
-  const steps: [string, number, string][] = [
-    ["candidates", candidates, "Engine candidates"],
-    ["passed gate", passed, `${rate(passed, candidates)} passed the skeptical gate`],
-    ...(rv ? [
-      ["in review", rv.queued, "Waiting for a reviewer now"],
-      ["approved", rv.approved, `${rv.rejected} rejected · ${rv.expired} expired unsent`],
-    ] as [string, number, string][] : []),
-    ["probed", c("probesSent"), "Anonymous availability checks sent"],
-    ["probe yes", c("probeYes"), `Probe yes rate ${rate(c("probeYes"), answered)} · ${c("probeExpired")} unanswered`],
-    ["revealed", c("oppsRevealed"), `Invite yes rate ${rate(c("revealYes"), c("reveals"))} · ${c("replacements")} alternates swapped in`],
-    ["everyone yes", c("oppsAllYes"), `Everyone-yes rate ${rate(c("oppsAllYes"), c("oppsRevealed"))}`],
-    ["scheduled", c("scheduled"), `${rate(c("scheduled"), c("oppsAllYes"))} of everyone-yes`],
-    ["met", s.stats?.meetingsHeld ?? 0, `${rate(s.stats?.meetingsHeld ?? 0, c("scheduled"))} of scheduled`],
-  ];
-  return (
-    <ol className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" aria-label="Consent ladder">
-      {steps.map(([k, v, t], i) => (
-        <li key={k} title={t}>
-          {i > 0 && <span aria-hidden className="text-muted-foreground">→ </span>}
-          {k} <b className="font-semibold tabular-nums">{num(v)}</b>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 const STATE_FILTER: Record<"all" | ReturnType<typeof stateGroupOf>, StateFilter> = { all: "AnyState", review: "ReviewStates", open: "OpenStates", met: "MetStates", closed: "ClosedStates" };
 const PIPELINE_COLUMN: Record<ReturnType<typeof stateGroupOf>, PipelineColumn> = { review: "ReviewColumn", open: "OpenColumn", met: "MetColumn", closed: "ClosedColumn" };
 
-/**
- * The opportunity pipeline: the consent ladder and the columns that the generated state filter keeps.
- * @model spec/consolePanels.md
- */
 function Pipeline() {
   const s = useStore();
   const f = s.ui.focus;
@@ -229,7 +191,7 @@ function Pipeline() {
   const rv = s.network?.review;
   return (
     <div className="flex flex-col gap-3">
-      <Ladder />
+      <PipelineFunnel />
       <div className="grid gap-3 overflow-x-auto" style={{ gridTemplateColumns: `repeat(${cols.length}, minmax(150px, 1fr))` }}>
         {cols.map(c => {
           const list = opps.filter(o => c.states.includes(o.state)).sort((a, b) => b.updatedAt - a.updatedAt);
@@ -380,6 +342,40 @@ function RunDetail({ run }: { run: EngineRunSummary }) {
           </div>
           <p className="text-sm text-muted-foreground">{run.emptyStates} intents with nothing: {Object.entries(run.emptyStatesByReason).map(([k, v]) => `${humanize(k)} ${v}`).join(" · ") || "none"}</p>
         </InspectorSection>
+        {run.matchingJudge && (
+          <InspectorSection title={`Engine judge${run.matchingJudge.model ? ` · ${run.matchingJudge.model}` : ""}`}>
+            <KpiGrid compact>
+              <Kpi label="calls" value={num(run.matchingJudge.calls)} />
+              <Kpi label="verdicts" value={num(run.matchingJudge.verdicts)} />
+              <Kpi label="judged" value={num(run.matchingJudge.judged)} />
+              <Kpi label="selected" value={num(run.matchingJudge.selected)} tone="ok" />
+              <Kpi label="failures" value={num(run.matchingJudge.failures)} tone={run.matchingJudge.failures > 0 ? "destructive" : "ok"} />
+            </KpiGrid>
+          </InspectorSection>
+        )}
+        {run.search && (run.search.members > 0 || run.search.checks > 0 || run.searchOutcomes.length > 0) && (
+          <InspectorSection title="Bounded candidate search">
+            <KpiGrid compact>
+              <Kpi label="members" value={num(run.search.members)} />
+              <Kpi label="checks" value={num(run.search.checks)} />
+              <Kpi label="exact" value={num(run.search.exact)} tone="ok" />
+              <Kpi label="budgeted" value={num(run.search.budgeted)} tone={run.search.budgeted > 0 ? "warn" : undefined} />
+              <Kpi label="memo hits" value={num(run.search.memoHits)} />
+              <Kpi label="bound violations" value={num(run.search.boundViolations + run.search.packBoundViolations + run.search.classCapViolations)} tone={(run.search.boundViolations + run.search.packBoundViolations + run.search.classCapViolations) > 0 ? "destructive" : "ok"} />
+            </KpiGrid>
+            {Object.keys(run.search.refusals ?? {}).length > 0 && (
+              <MeterBars aria-label="Search refusals" rows={rowsOf(run.search.refusals, "warn")} limit={6} format={num} />
+            )}
+            {run.searchOutcomes.length > 0 && (
+              <FactLine parts={[`${run.searchOutcomes.length} outcomes`, `touches ${num(run.search.touches)}`, `empty ${num(run.search.empty)}`]} />
+            )}
+          </InspectorSection>
+        )}
+        {Object.keys(run.timingsMs ?? {}).length > 0 && (
+          <InspectorSection title="Stage timings (ms)">
+            <MeterBars aria-label="Stage timings" rows={rowsOf(run.timingsMs, "primary")} limit={10} format={v => `${v.toFixed(1)}ms`} />
+          </InspectorSection>
+        )}
       </div>
       <InspectorSection title="Top configurations">
         <div className="flex flex-col gap-1">
@@ -398,8 +394,8 @@ function RunDetail({ run }: { run: EngineRunSummary }) {
                 </span>
               }
             >
-              <span className="flex flex-wrap gap-2">{t.participants.map(p => <MemberName key={p} id={p} />)}</span>
-              <ScoreParts c={t.components} />
+              <span className="flex flex-wrap gap-2">{t.participants.map(p => <MemberLink key={p} id={p} />)}</span>
+              <ScoreParts c={t.components} emptyNote />
             </Disclosure>
           ))}
         </div>
@@ -421,6 +417,7 @@ function Safety() {
   const last = (id: string) => [...s.feed].reverse().find(x => (SAFETY_FEED.has(x.kind) || x.kind === "error") && x.members?.includes(id));
   const violations = j?.invariants ?? st?.invariantViolations ?? 0;
   const abuse = s.network?.counters.abuse;
+  const canSafety = s.can("safety");
   return (
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
@@ -433,146 +430,155 @@ function Safety() {
         {j && <Kpi label="canary leaks" value={num(j.canaryLeaks)} tone={j.canaryLeaks ? "destructive" : "ok"} title="Judge-derived: planted private facts that reached another member" />}
         {j && <Kpi label="minor contacts" value={num(j.minorContacts)} tone={j.minorContacts ? "destructive" : "ok"} title="Judge-derived: members under 18 contacted about another member" />}
       </KpiGrid>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <InspectorSection title={`Watch and hold (${flagged.length})`}>
-          {flagged.length ? flagged.slice(0, 50).map(m => {
-            const e = last(m.id);
-            return (
-              <div className="flex min-w-0 items-center gap-2 text-sm" key={m.id}>
-                <MemberName id={m.id} />
-                {m.trust === "hold" ? <StatusMark tone="destructive" label="Hold" showLabel /> : <StatusMark tone="warn" label="Watch" showLabel />}
-                <span className="min-w-0 truncate text-muted-foreground">{e ? `${shortDate(e.t)} · ${e.text}` : ""}</span>
-              </div>
-            );
-          }) : <EmptyState title={s.nothing()} />}
-        </InspectorSection>
-        {j?.byRule && Object.keys(j.byRule).length > 0 && <InspectorSection title="Violations by rule"><MeterBars rows={rowsOf(j.byRule, "destructive")} empty={s.nothing()} /></InspectorSection>}
-        {!s.can("safety") && <InspectorSection title="Safety events">
-          <div className="flex flex-col">
-            {events.map(x => <FeedLine key={x.seq} x={x} />)}
-            {!events.length && <EmptyState title={s.nothing()} />}
-          </div>
-        </InspectorSection>}
-      </div>
-      {s.can("safety") && <SafetyCases />}
+      <TeenIntrosSwitch />
+      {(!canSafety || (j?.byRule && Object.keys(j.byRule).length > 0)) && (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {!canSafety && (
+            <InspectorSection title={`Watch and hold (${flagged.length})`}>
+              {flagged.length ? flagged.slice(0, 50).map(m => {
+                const e = last(m.id);
+                return (
+                  <div className="flex min-w-0 items-center gap-2 text-sm" key={m.id}>
+                    <MemberLink id={m.id} />
+                    {m.trust === "hold" ? <StatusMark tone="destructive" label="Hold" showLabel /> : <StatusMark tone="warn" label="Watch" showLabel />}
+                    <span className="min-w-0 truncate text-muted-foreground">{e ? `${shortDate(e.t)} · ${e.text}` : ""}</span>
+                  </div>
+                );
+              }) : <EmptyState title={s.nothing()} />}
+            </InspectorSection>
+          )}
+          {j?.byRule && Object.keys(j.byRule).length > 0 && <InspectorSection title="Violations by rule"><MeterBars rows={rowsOf(j.byRule, "destructive")} empty={s.nothing()} /></InspectorSection>}
+          {!canSafety && <InspectorSection title="Safety events">
+            <div className="flex flex-col">
+              {events.map(x => <FeedLine key={x.seq} x={x} />)}
+              {!events.length && <EmptyState title={s.nothing()} />}
+            </div>
+          </InspectorSection>}
+        </div>
+      )}
+      {canSafety && <SafetyCases />}
     </div>
   );
 }
 
 function Metrics() {
-  const s = useStore();
-  const st = s.stats;
-  if (!st) return null;
-  const weeks = Math.max(1 / 7, ((s.clock?.now ?? 0) - (s.clock?.start ?? 0)) / (7 * DAY));
-  const staff = panelStaffOf(s);
-  const game = metricsSectionShown("TruthSection", staff);
-  const n = s.network;
-  const learned = ["introduced", "met", "enjoyed", "would_interact_again", "avoid", "blocked"];
-  const proactiveRate = st.scorecard?.find(metric => metric.key === "attention_burden")?.value;
-  const proactiveHundredths = proactiveRate != null && Number.isFinite(proactiveRate)
-    ? Math.ceil(Math.round(proactiveRate * 1000) / 10) : null;
-  const showDen = st.attended + st.noShows + st.cancelledWithNotice;
-  const c = (k: string) => n?.counters[k] ?? 0;
-  const inviteYes = n?.kind === "consent" ? (c("reveals") ? c("revealYes") / c("reveals") : 0) : st.invites ? st.accepts / st.invites : 0;
-  const byOrigin: Record<string, number> = {};
-  for (const o of s.opps.values()) if (o.source !== "shadow" && s.inRange(o.createdAt) && s.matchOpp(o, { range: true, members: true, stateGroup: true })) { const k = originLabel(originOf(o)); byOrigin[k] = (byOrigin[k] ?? 0) + 1; }
-  const byState: Record<string, number> = {};
-  let metSomeone = 0;
-  for (const m of s.members.values()) {
-    if (!s.inBorough(m) || !s.matchMemberDomain(m)) continue;
-    byState[m.state] = (byState[m.state] ?? 0) + 1;
-    if (m.counters.meetings > 0) metSomeone++;
-  }
-  return (
-    <div className="flex flex-col gap-4">
-      <KpiGrid className="lg:grid-cols-4">
-        <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} />
-        <Kpi label="proactive / member / week" value={proactiveHundredths === null ? "–" : (proactiveHundredths / 100).toFixed(2)} tone={proactiveHundredths !== null && proactiveWarns(proactiveHundredths) ? "warn" : undefined} title={`Budget: normal ≤ ${maxProactiveHundredths / 100} proactive messages per member per week`} />
-        <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
-        <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
-        <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
-        <Kpi label="members who met someone" value={num(metSomeone)} title="Members in the selected area with at least one held meeting, all time" />
-        {game && <Kpi label="precision (truth)" value={pct(st.oracleJudged ? st.compatible / st.oracleJudged : 0)} title="Proposals the hidden truth says were truly compatible" />}
-        {game && <Kpi label="unsafe" value={num(st.unsafe)} tone={st.unsafe ? "destructive" : "ok"} title="Proposals the hidden truth says were unsafe" />}
-        <Kpi label="opt-outs" value={num(st.optOuts)} tone={st.optOuts ? "warn" : undefined} />
-      </KpiGrid>
-      {n?.kind === "consent" && (
-        <div className="flex flex-col gap-1 text-sm">
-          <p>requests {num(n.requests.total)} · fulfilled {num(n.requests.fulfilled)} · plans {num(n.requests.plans)}</p>
-          {!st.growth && <p>growth asks {num(c("growthAsks"))} · invites {num(c("invitesSent"))} · joined {num(c("inviteesJoined"))}</p>}
-        </div>
-      )}
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {st.scorecard && <InspectorSection title="Scorecard (PRD 28.2)"><Scorecard rows={st.scorecard} /></InspectorSection>}
-        <Growth />
-        {metricsSectionShown("BiasSection", staff) && <InspectorSection title="Bias monitor (weekly)"><BiasMonitor /></InspectorSection>}
-        {metricsSectionShown("CostSection", staff) && <InspectorSection title="Cost (estimated)"><CostPanel /></InspectorSection>}
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <InspectorSection title="Proposals by origin"><MeterBars rows={rowsOf(byOrigin, undefined, k => k)} empty={s.nothing()} /></InspectorSection>
-        <InspectorSection title="Relationships learned"><MeterBars rows={rowsOf(Object.fromEntries(learned.map(k => [k, st.edgesByType[k] ?? 0])))} empty={s.nothing()} /></InspectorSection>
-        <InspectorSection title="Members by state"><MeterBars rows={rowsOf(byState)} empty={s.nothing()} /></InspectorSection>
-      </div>
-    </div>
-  );
+  return <AnalyticsWorkspace />;
 }
 
-/**
- * The game tab of the simulated world: the scoreboard, the missions, the levels and the player's run. Only an admin resets the world or chooses the reviewer.
- * @model spec/consolePanels.md
- */
 function Game() {
   const s = useStore();
   const g = s.game;
+  const [sub, setSub] = useState<"overview" | "traffic">("overview");
   const [resetSeed, setResetSeed] = useState(1);
+  const [resetCity, setResetCity] = useState("nyc");
+  const [resetPersonas, setResetPersonas] = useState(80);
+  const [resetNetwork, setResetNetwork] = useState<"consent" | "stub">("consent");
+  const [resetResponseMode, setResetResponseMode] = useState<"canned" | "hybrid" | "llm">("canned");
+  const [resetTimeAware, setResetTimeAware] = useState(true);
+  const [resetJudge, setResetJudge] = useState(true);
   const panels = gamePanelsOf(s);
   const view = gameView(panels.game);
   if (view === "NoGameView" || !g) return <EmptyState title="The game runs in the simulated world only." />;
+  const resetWith = (engine: "engine-v1" | "random" | "off") => {
+    void store.controlRaw({
+      type: "reset",
+      seed: resetSeed,
+      engine,
+      city: resetCity,
+      personas: resetPersonas,
+      network: resetNetwork,
+      timeAware: resetTimeAware,
+      judge: resetJudge,
+      responseMode: resetResponseMode,
+    });
+  };
   return (
-    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <InspectorSection title="Scoreboard">
-        <DataTable columns={[
-          { key: "player", label: "Player", hideLabel: true },
-          { key: "points", label: "points", numeric: true, title: "+10 per yes · −2 per no · +100 × enjoyment per meeting · −15 per no-show · −150 per unsafe intro (minor, adversarial, exes, romance mismatch) · −25 per oracle peek" },
-          { key: "perProposal", label: "per proposal", numeric: true }, { key: "proposals", label: "proposals", numeric: true }, { key: "accepted", label: "said yes", numeric: true },
-          { key: "meetings", label: "meetings", numeric: true }, { key: "enjoyment", label: "enjoyment", numeric: true }, { key: "precision", label: "precision", numeric: true }, { key: "unsafe", label: "unsafe", numeric: true },
-        ]}>
-          {g.scores.map(r => (
-            <TableRow key={r.source} className={cn(r.source === "player" && "bg-accent text-accent-foreground")}>
-              <DataCell><span className="flex items-center gap-2"><b className="font-semibold">{r.label}</b>{r.source === "player" && g.lensUsed ? <StatusMark tone="warn" label="assisted" showLabel /> : null}</span></DataCell>
-              <DataCell numeric>{num(r.points)}</DataCell><DataCell numeric>{r.perProposal.toFixed(1)}</DataCell><DataCell numeric>{r.proposals}</DataCell><DataCell numeric>{r.accepted}</DataCell><DataCell numeric>{r.meetings}</DataCell>
-              <DataCell numeric>{r.meetings ? pct(r.meanEnjoyment) : "–"}</DataCell><DataCell numeric>{r.proposals ? pct(r.precision) : "–"}</DataCell><DataCell numeric className={cn(r.unsafe && "text-destructive")}>{r.unsafe}</DataCell>
-            </TableRow>
-          ))}
-        </DataTable>
-      </InspectorSection>
-      <InspectorSection title="Missions">
-        <ul className="flex flex-col gap-2">
-          {g.missions.map(m => (
-            <li key={m.id} className={cn("flex items-start gap-2 text-sm", m.done && "text-muted-foreground")}>
-              <StatusMark tone={m.done ? "ok" : "neutral"} label={m.done ? "Done" : "Not done"} className="mt-1" />
-              <div><b className="font-semibold">{m.title}</b><p className="text-muted-foreground">{m.description}</p><p>{m.progress}</p></div>
-            </li>
-          ))}
-        </ul>
-      </InspectorSection>
-      <Levels />
-      <InspectorSection title="Your run">
-        <KpiGrid compact>
-          <Kpi label="sparks left today" value={`${g.sparksLeft}/${g.sparksPerDay}`} />
-          <Kpi label="safety strikes" value={`${g.strikes}/${g.maxStrikes}`} tone={g.strikes ? "destructive" : "ok"} />
-          <Kpi label="oracle peeks" value={g.peeks} />
-        </KpiGrid>
-        {view === "GameOverView" && <Alert variant="destructive">Game over: three safety strikes.</Alert>}
-        {canResetWorld(panels, false) && (
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">seed <Input type="number" value={resetSeed} onChange={e => setResetSeed(Number(e.target.value))} className="w-20" /></label>
-            <Button variant="outline" size="sm" onClick={() => store.control({ type: "reset", seed: resetSeed, engine: "engine-v1" })}>New world vs engine-v1</Button>
-            <Button variant="outline" size="sm" onClick={() => store.control({ type: "reset", seed: resetSeed, engine: "random" })}>vs random baseline</Button>
-            <Button variant="outline" size="sm" onClick={() => store.control({ type: "reset", seed: resetSeed, engine: "off" })}>Solo (no engine)</Button>
-          </div>
-        )}
-      </InspectorSection>
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Segments
+          aria-label="Game section"
+          value={sub}
+          onValueChange={v => setSub(v as "overview" | "traffic")}
+          options={[
+            { value: "overview", label: "World & Levels" },
+            { value: "traffic", label: "Mock HTTP Traffic & Chaos" },
+          ]}
+        />
+        {g.unified?.mockBaseUrl && <span className="font-mono text-xs text-muted-foreground">mock: {g.unified.mockBaseUrl}</span>}
+      </div>
+      {sub === "traffic" ? (
+        <MockTrafficPanel />
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <InspectorSection title="Scoreboard">
+            <div className="overflow-x-auto">
+              <DataTable columns={[
+                { key: "player", label: "Player", hideLabel: true },
+                { key: "points", label: "points", numeric: true, title: "+10 per yes · −2 per no · +100 × enjoyment per meeting · −15 per no-show · −150 per unsafe intro · −25 per oracle peek" },
+                { key: "perProposal", label: "per proposal", numeric: true }, { key: "proposals", label: "proposals", numeric: true }, { key: "accepted", label: "said yes", numeric: true },
+                { key: "meetings", label: "meetings", numeric: true }, { key: "enjoyment", label: "enjoyment", numeric: true }, { key: "precision", label: "precision", numeric: true }, { key: "unsafe", label: "unsafe", numeric: true },
+              ]}>
+                {g.scores.map(r => (
+                  <TableRow key={r.source} className={cn(r.source === "player" && "bg-accent text-accent-foreground")}>
+                    <DataCell><span className="flex items-center gap-2"><b className="font-semibold">{r.label}</b>{r.source === "player" && g.lensUsed ? <StatusMark tone="warn" label="assisted" showLabel /> : null}</span></DataCell>
+                    <DataCell numeric>{num(r.points)}</DataCell><DataCell numeric>{r.perProposal.toFixed(1)}</DataCell><DataCell numeric>{r.proposals}</DataCell><DataCell numeric>{r.accepted}</DataCell><DataCell numeric>{r.meetings}</DataCell>
+                    <DataCell numeric>{r.meetings ? pct(r.meanEnjoyment) : "–"}</DataCell><DataCell numeric>{r.proposals ? pct(r.precision) : "–"}</DataCell><DataCell numeric className={cn(r.unsafe && "text-destructive")}>{r.unsafe}</DataCell>
+                  </TableRow>
+                ))}
+              </DataTable>
+            </div>
+          </InspectorSection>
+          <InspectorSection title="Missions">
+            <ul className="flex flex-col gap-2">
+              {g.missions.map(m => (
+                <li key={m.id} className={cn("flex items-start gap-2 text-sm", m.done && "text-muted-foreground")}>
+                  <StatusMark tone={m.done ? "ok" : "neutral"} label={m.done ? "Done" : "Not done"} className="mt-1" />
+                  <div><b className="font-semibold">{m.title}</b><p className="text-muted-foreground">{m.description}</p><p>{m.progress}</p></div>
+                </li>
+              ))}
+            </ul>
+          </InspectorSection>
+          <Levels />
+          <InspectorSection title="Your run & world setup">
+            <KpiGrid compact>
+              <Kpi label="sparks left today" value={`${g.sparksLeft}/${g.sparksPerDay}`} />
+              <Kpi label="safety strikes" value={`${g.strikes}/${g.maxStrikes}`} tone={g.strikes ? "destructive" : "ok"} />
+              <Kpi label="oracle peeks" value={g.peeks} />
+            </KpiGrid>
+            {view === "GameOverView" && <Alert variant="destructive">Game over: three safety strikes.</Alert>}
+            {canResetWorld(panels, false) && (
+              <div className="flex flex-col gap-2.5 rounded-md border border-border p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label className="font-normal">Seed <Input type="number" value={resetSeed} onChange={e => setResetSeed(Number(e.target.value))} className="h-8 w-20" /></Label>
+                  <Label className="font-normal">Personas <Input type="number" min={10} max={500} value={resetPersonas} onChange={e => setResetPersonas(Number(e.target.value))} className="h-8 w-20" /></Label>
+                  <Select className="h-8 w-32" aria-label="Reset city" value={resetCity} onValueChange={setResetCity}>
+                    <SelectItem value="all">All cities</SelectItem>
+                    {LAUNCH_CITY_IDS.map(c => <SelectItem key={c} value={c}>{getCity(c)?.shortName ?? c.toUpperCase()}</SelectItem>)}
+                  </Select>
+                  <Select className="h-8 w-32" aria-label="Reset network" value={resetNetwork} onValueChange={v => setResetNetwork(v as "consent" | "stub")}>
+                    <SelectItem value="consent">Consent</SelectItem>
+                    <SelectItem value="stub">Stub</SelectItem>
+                  </Select>
+                  <Select className="h-8 w-32" aria-label="Reset response mode" value={resetResponseMode} onValueChange={v => setResetResponseMode(v as "canned" | "hybrid" | "llm")}>
+                    <SelectItem value="canned">Canned</SelectItem>
+                    <SelectItem value="hybrid">Hybrid</SelectItem>
+                    <SelectItem value="llm">LLM</SelectItem>
+                  </Select>
+                </div>
+                <div className="flex flex-wrap items-center gap-4">
+                  <Label className="font-normal"><Checkbox checked={resetTimeAware} onCheckedChange={v => setResetTimeAware(v === true)} /> Time-aware</Label>
+                  <Label className="font-normal"><Checkbox checked={resetJudge} onCheckedChange={v => setResetJudge(v === true)} /> Review judge</Label>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => resetWith("engine-v1")}>New world vs engine-v1</Button>
+                  <Button variant="outline" size="sm" onClick={() => resetWith("random")}>vs random baseline</Button>
+                  <Button variant="outline" size="sm" onClick={() => resetWith("off")}>Solo (no engine)</Button>
+                </div>
+              </div>
+            )}
+          </InspectorSection>
+        </div>
+      )}
     </div>
   );
 }

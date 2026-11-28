@@ -16,6 +16,12 @@ import {
 } from "../../../packages/core/src/llm.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import { spawnProcess } from "../../../packages/core/src/runtime/process.ts";
+import { evaluateComplianceGate } from "../../../packages/core/src/pacing/compliance.ts";
+import type { BufferedTrajectoryWriter } from "../../../packages/core/src/trajectory/writer.ts";
+import {
+  isDeployedEnvironment,
+  resolveRuntimeEnvironment,
+} from "./compliance-runtime.ts";
 import {
   buildSocialPlaybookBrief,
   CANONICAL_MARKETING_AGENTS,
@@ -163,6 +169,7 @@ export interface AgentLifecycleOptions {
   dailyTokenCap?: number;
   dailyCostCapMicros?: number;
   bridge?: NetworkCoreBridge;
+  trajectoryWriter?: BufferedTrajectoryWriter;
   defaultCooldownMs?: number;
   cliTimeoutMs?: number;
   llmDeadlineMs?: number;
@@ -584,6 +591,7 @@ export class AgentLifecycleManager {
   private readonly dailyTokenCap: number;
   private readonly dailyCostCapMicros: number;
   private readonly bridge?: NetworkCoreBridge;
+  private readonly trajectoryWriter?: BufferedTrajectoryWriter;
   private readonly defaultCooldownMs: number;
   private readonly cliTimeoutMs: number;
   private readonly llmDeadlineMs: number;
@@ -593,11 +601,13 @@ export class AgentLifecycleManager {
   private readonly lastIdleFingerprint = new Map<string, string>();
   private readonly surplusClients = new Map<string, LLM>();
   private readonly surplusCallStore = new AsyncLocalStorage<SurplusCallAccumulator>();
+  private deterministicSkips = 0;
 
   constructor(opts: AgentLifecycleOptions) {
     this.store = opts.store;
     this.clock = opts.clock ?? opts.store.clock ?? new RealClock();
     this.env = opts.env ?? process.env;
+    this.trajectoryWriter = opts.trajectoryWriter;
     this.dryRunDefault = opts.dryRun ?? this.env.MARKETING_LIVE_AGENTS !== "1";
     this.cliRunner = opts.cliRunner ?? defaultCliRunner;
     this.browserRunner = opts.browserRunner;
@@ -884,6 +894,7 @@ export class AgentLifecycleManager {
         taskHint: opts.deterministicTaskHint ?? "auto",
       });
       if (routed && routed.handled) {
+        this.deterministicSkips += 1;
         const leakReasons = this.leakGuard.check(routed.outputText);
         const leakBlocked = leakReasons.length > 0;
         await this.recordTrajectory(utcDay, {
@@ -1541,10 +1552,66 @@ export class AgentLifecycleManager {
     return blank;
   }
 
+  getCacheStats(): {
+    deterministicSkips: number;
+    size: number;
+    maxEntries: number;
+    hits: number;
+    misses: number;
+    hitRate: number;
+    evictions: number;
+  } {
+    return {
+      deterministicSkips: this.deterministicSkips,
+      ...this.promptCache.stats(),
+    };
+  }
+
   private async recordTrajectory(dayIso: string, entry: RecordLlmTrajectoryInput): Promise<void> {
     const ext = this.store as MarketingStore & Pass3StoreMethods;
     if (typeof ext.recordLlmTrajectory === "function") {
       await ext.recordLlmTrajectory(entry);
+    }
+    if (this.trajectoryWriter) {
+      const traceId = `llm-${entry.agentId ?? "sys"}-${this.clock.now()}-${entry.promptHash.slice(0, 8)}`;
+      const status =
+        entry.status === "ok" ||
+        entry.status === "error" ||
+        entry.status === "leak_blocked" ||
+        entry.status === "fallback" ||
+        entry.status === "budget_blocked"
+          ? entry.status
+          : "ok";
+      this.trajectoryWriter.record({
+        schemaVersion: 1,
+        traceId,
+        spanId: `span-${entry.promptHash.slice(0, 12)}`,
+        app: "marketing",
+        kind: "llm",
+        name: `${entry.provider}:${entry.model}`,
+        startedAt: this.clock.now(),
+        durationMs: entry.latencyMs,
+        entityType: entry.campaignId ? "campaign" : "run",
+        entityId: entry.campaignId ?? entry.agentId ?? "marketing",
+        status,
+        metrics: {
+          model: entry.model,
+          provider: entry.provider,
+          inputTokens: entry.inputTokens,
+          outputTokens: entry.outputTokens,
+          costMicros: entry.costMicros,
+        },
+        tags: {
+          cached: entry.cached,
+          promptHash: entry.promptHash.slice(0, 16),
+        },
+        flags: entry.leakBlocked ? ["leak_blocked"] : undefined,
+        payload: {
+          agentId: entry.agentId ?? null,
+          campaignId: entry.campaignId ?? null,
+          failoverChain: entry.failoverChain ?? null,
+        },
+      });
     }
     const prev = this.localDailyUsage.get(dayIso) ?? {
       day: dayIso,
@@ -1856,6 +1923,24 @@ export class AgentLifecycleManager {
 
     if (provider === "surplus") {
       return this.executeSurplusProvider(agent, systemPrompt, prompt, opts);
+    }
+
+    if (
+      isDeployedEnvironment(this.env) &&
+      (agent.authMode === "cli" || agent.authMode === "browser")
+    ) {
+      const gate = evaluateComplianceGate({
+        mode: "consumer_cli_subscription",
+        env: resolveRuntimeEnvironment(this.env),
+      });
+      if (!gate.allowed) {
+        return {
+          ok: false,
+          text: "",
+          model,
+          error: `${gate.code}: ${gate.reason}`,
+        };
+      }
     }
 
     if (agent.authMode === "cli") {

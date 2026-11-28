@@ -22,6 +22,11 @@
 
 import { RealClock } from "../../../../packages/core/src/clock.ts";
 import { canAuthorizeSpend } from "../../../../packages/core/src/generated/marketingPolicy.ts";
+import {
+  isLoopbackHttpUrl,
+  resolveMockBaseUrl,
+  type MarketingComplianceRuntime,
+} from "../compliance-runtime.ts";
 import { DEFAULT_APOLLO_CENTS_PER_CREDIT, RENTAHUMAN_MCP_ENDPOINT } from "../constants.ts";
 import type { Campaign, Clock, FetchFn, ImplementationTier } from "../types.ts";
 
@@ -142,6 +147,7 @@ export interface EmailSendInput {
   text: string;
   html?: string;
   inboxId?: string;
+  headers?: Record<string, string>;
 }
 
 export interface SmsVoiceInput {
@@ -275,6 +281,8 @@ export interface PaidAdapterRegistryOptions {
   clock?: Clock;
   store?: SpendRecorderStore;
   onSpendAuthorized?: OnSpendAuthorizedHook;
+  endpointOverrides?: Partial<Record<string, string>>;
+  compliance?: MarketingComplianceRuntime;
 }
 
 const DEFAULT_HTTP_TIMEOUT_MS = 15_000;
@@ -337,19 +345,57 @@ function hasEnv(
   return typeof val === "string" && val.trim().length > 0;
 }
 
+const MOCK_PROVIDER_PATHS: Readonly<Record<string, string>> = {
+  resend: "/email/resend/emails",
+  agentmail: "/email/agentmail/v0/inboxes",
+  smtp: "/email/smtp/send",
+  twilio: "/twilio/2010-04-01",
+  blooio: "/blooio/v1/api/send-message",
+  rentahuman_mcp: "/ops/rentahuman/api/mcp",
+  printful: "/ops/printful/orders",
+  fourover: "/ops/fourover/orders",
+  lob: "/ops/lob/v1/postcards",
+  dub: "/ops/dub/links",
+  luma: "/ops/luma/public/v1/event/create",
+  elevenlabs: "/ops/elevenlabs/v1/text-to-speech",
+  hedra: "/ops/hedra/web-app/public/generations",
+  kling: "/ops/kling/v1/videos/text2video",
+  stripe_connect: "/ops/stripe/v1/transfers",
+  tremendous: "/ops/tremendous/api/v2/orders",
+};
+
+function resolveProviderEndpoint(
+  spec: ProviderSpec,
+  env: Record<string, string | undefined>,
+  endpointOverrides?: Partial<Record<string, string>>,
+): { endpoint: string; mockActive: boolean } {
+  const override = endpointOverrides?.[spec.id];
+  if (override) return { endpoint: override, mockActive: true };
+  const mockBase = resolveMockBaseUrl(env);
+  const mockPath = MOCK_PROVIDER_PATHS[spec.id];
+  if (mockBase && mockPath) {
+    return { endpoint: `${mockBase}${mockPath}`, mockActive: true };
+  }
+  return { endpoint: spec.endpoint, mockActive: false };
+}
+
 function evaluateProviders(
   providers: readonly ProviderSpec[],
   env: Record<string, string | undefined>,
+  endpointOverrides?: Partial<Record<string, string>>,
 ): ProviderStatus[] {
   return providers.map((spec) => {
-    const missingEnv = spec.requiredEnv.filter((k) => !hasEnv(env, k));
+    const resolved = resolveProviderEndpoint(spec, env, endpointOverrides);
+    const missingEnv = resolved.mockActive
+      ? []
+      : spec.requiredEnv.filter((k) => !hasEnv(env, k));
     return {
       id: spec.id,
       label: spec.label,
       requiredEnv: spec.requiredEnv,
       configured: missingEnv.length === 0,
       missingEnv,
-      endpoint: spec.endpoint,
+      endpoint: resolved.endpoint,
     };
   });
 }
@@ -485,12 +531,14 @@ function buildAdapter<TInput>(
     clock: Clock;
     store?: SpendRecorderStore;
     onSpendAuthorized?: OnSpendAuthorizedHook;
+    endpointOverrides?: Partial<Record<string, string>>;
+    compliance?: MarketingComplianceRuntime;
   },
 ): PaidAdapter<TInput, Record<string, unknown>> {
   const getStatus = (
     env: Record<string, string | undefined>,
   ): AdapterStatus => {
-    const providerStatuses = evaluateProviders(def.providers, env);
+    const providerStatuses = evaluateProviders(def.providers, env, opts.endpointOverrides);
     const active = selectActiveProvider(providerStatuses);
     return {
       id: def.id,
@@ -512,7 +560,7 @@ function buildAdapter<TInput>(
     const executedAt = new Date(opts.clock.now()).toISOString();
     const requiredProvider = def.requiredProviderId?.(input);
     const desiredProvider = requiredProvider ?? preferredProvider;
-    const providerStatuses = evaluateProviders(def.providers, env);
+    const providerStatuses = evaluateProviders(def.providers, env, opts.endpointOverrides);
     const active = selectActiveProvider(
       providerStatuses,
       desiredProvider,
@@ -607,7 +655,7 @@ function buildAdapter<TInput>(
     const requiredProvider = def.requiredProviderId?.(input);
     const desiredProvider = requiredProvider ?? context.preferredProvider;
 
-    const providerStatuses = evaluateProviders(def.providers, opts.env);
+    const providerStatuses = evaluateProviders(def.providers, opts.env, opts.endpointOverrides);
     const active = selectActiveProvider(
       providerStatuses,
       desiredProvider,
@@ -733,7 +781,8 @@ function buildAdapter<TInput>(
       };
     }
 
-    const liveBillingOn = opts.env["MARKETING_LIVE_BILLING"] === "1";
+    const mockActive = Boolean(active && isLoopbackHttpUrl(active.endpoint));
+    const liveBillingOn = opts.env["MARKETING_LIVE_BILLING"] === "1" || mockActive;
     if (!active || !liveBillingOn || context.forceDryRun) {
       const receipt = await dryRun(
         input,
@@ -746,14 +795,87 @@ function buildAdapter<TInput>(
       return boundedReceipt;
     }
 
+    const scopeKey = `paid:${def.id}:${active.id}`;
+    if (opts.compliance) {
+      const breakerCheck = opts.compliance.getBreaker(scopeKey).canDispatch();
+      if (!breakerCheck.allowed) {
+        return {
+          ok: false,
+          adapterId: def.id,
+          provider: active.id,
+          mode: "blocked_policy",
+          authorized: false,
+          amountCents,
+          idempotencyKey: context.idempotencyKey,
+          externalRef: null,
+          reason: `Circuit breaker open for '${scopeKey}': ${breakerCheck.reason ?? "breaker_open"}`,
+          data: null,
+          executedAt,
+        };
+      }
+      const aimdWindow = opts.compliance.getAimd(scopeKey).canDispatch();
+      if (!aimdWindow.allowed) {
+        return {
+          ok: false,
+          adapterId: def.id,
+          provider: active.id,
+          mode: "blocked_policy",
+          authorized: false,
+          amountCents,
+          idempotencyKey: context.idempotencyKey,
+          externalRef: null,
+          reason: `AIMD backoff active for '${scopeKey}' (${aimdWindow.waitMs}ms).`,
+          data: null,
+          executedAt,
+        };
+      }
+      const gcra = opts.compliance.checkRateBudget({
+        provider: scopeKey,
+        campaignId: context.campaignId,
+      });
+      if (!gcra.allowed) {
+        return {
+          ok: false,
+          adapterId: def.id,
+          provider: active.id,
+          mode: "blocked_policy",
+          authorized: false,
+          amountCents,
+          idempotencyKey: context.idempotencyKey,
+          externalRef: null,
+          reason: `GCRA rate limit exceeded for '${scopeKey}' (${gcra.retryAfterMs}ms).`,
+          data: null,
+          executedAt,
+        };
+      }
+    }
+
+    const startMs = opts.clock.now();
     try {
+      const wrappedFetch: FetchFn = opts.compliance
+        ? async (url, init) => {
+            const res = await opts.fetchFn(url, init);
+            const remRaw = res.headers.get("x-rate-limit-remaining");
+            const limRaw = res.headers.get("x-rate-limit-limit");
+            opts.compliance?.recordHttpOutcome(scopeKey, {
+              ok: res.ok,
+              status: res.status,
+              latencyMs: Math.max(0, opts.clock.now() - startMs),
+              retryAfterHeader: res.headers.get("retry-after"),
+              rateLimitRemaining: remRaw !== null ? Number(remRaw) : undefined,
+              rateLimitLimit: limRaw !== null ? Number(limRaw) : undefined,
+            });
+            return res;
+          }
+        : opts.fetchFn;
+
       const liveRes = await def.dispatchLive(
         active,
         input,
         amountCents,
         context.idempotencyKey,
         opts.env,
-        opts.fetchFn,
+        wrappedFetch,
       );
       const receipt: AdapterReceipt<Record<string, unknown>> = {
         ok: true,
@@ -857,6 +979,7 @@ const EMAIL_DEF: AdapterDefinition<EmailSendInput> = {
           subject: input.subject,
           text: input.text,
           ...(input.html ? { html: input.html } : {}),
+          ...(input.headers ? { headers: input.headers } : {}),
         },
       );
       if (!res.ok) throw new Error(`Resend HTTP ${res.status}`);
@@ -1044,6 +1167,12 @@ const SMS_VOICE_DEF: AdapterDefinition<SmsVoiceInput> = {
 
     if (input.action === "lookup" || input.action === "voice") {
       throw new Error(`Blooio does not support action '${input.action}'; configure Twilio for lookup/voice.`);
+    }
+
+    if (!isLoopbackHttpUrl(provider.endpoint)) {
+      throw new Error(
+        "Direct Blooio v1 send is disabled; route SMS through the verified OutboundQueue boundary.",
+      );
     }
 
     const res = await requestJson(
@@ -1828,6 +1957,8 @@ export class PaidAdapterRegistry {
       clock,
       store: opts?.store,
       onSpendAuthorized: opts?.onSpendAuthorized,
+      endpointOverrides: opts?.endpointOverrides,
+      compliance: opts?.compliance,
     };
     this.adapters = {
       email: buildAdapter(EMAIL_DEF, runtime),

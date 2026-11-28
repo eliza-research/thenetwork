@@ -32,6 +32,7 @@
     "marketing:cli": "node --import tsx --env-file-if-exists=.env apps/marketing/src/cli.ts",
     "marketing:sim": "node --import tsx --env-file-if-exists=.env --conditions eliza-source scripts/sim.ts --only marketing",
     "marketing:test": "node --env-file-if-exists=.env node_modules/vitest/vitest.mjs run --project integration apps/marketing/test/",
+    "mocks:dev": "node --import tsx --env-file-if-exists=.env packages/mock-services/src/cli.ts",
     "observatory": "corepack pnpm@10.24.0 run design:build && node --import tsx --env-file-if-exists=.env apps/observatory/src/server.ts",
     "observatory:db": "node --import tsx --env-file-if-exists=.env packages/db/dev-pg.ts up && node --import tsx --env-file-if-exists=.env apps/observatory/db/seed.ts --from-sim --days 14",
     "db:migrate": "node --import tsx --env-file-if-exists=.env packages/db/migrate.ts",

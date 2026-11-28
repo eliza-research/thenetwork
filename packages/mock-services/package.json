@@ -1,0 +1,12 @@
+{
+  "name": "@thenetwork/mock-services",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.ts",
+  "description": "Standalone and embeddable stateful external HTTP mock services for The Network simulation and integration testing.",
+  "dependencies": {
+    "@thenetwork/core": "workspace:*",
+    "@thenetwork/blooio": "workspace:*"
+  }
+}
