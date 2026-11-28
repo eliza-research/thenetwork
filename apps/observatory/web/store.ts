@@ -11,7 +11,7 @@ import {
 import { allowedByRole, scopedGrants } from "../../../packages/core/src/generated/staffPermissions.ts";
 import { ALL_SEED_VENUES, CITIES, CITY_IDS, findNeighborhood, getCity, listCities } from "../../../packages/core/src/cities.ts";
 import { CITY_TZ, fromLocal, localParts } from "../../../packages/core/src/time.ts";
-import { APP_IDS, isCity, type City } from "../../../packages/core/src/types.ts";
+import { APP_IDS, DOMAIN_IDS, DOMAIN_LABELS, isCity, isDomainId, type City, type DomainId } from "../../../packages/core/src/types.ts";
 import { NEIGHBORHOOD, SF_NEIGHBORHOOD } from "@thenetwork/network/geo";
 import type { ConsoleApp } from "../src/apps.ts";
 import type {
@@ -20,11 +20,15 @@ import type {
   MemberPhoto, PersonAppPanel, PersonSummary, RevealGrant, ReviewDecision, ReviewReason, RunDiff, SafetyAction, SafetyInfo, SearchHit, StaffPlanPreview, StaffRole, StaffUser,
 } from "../src/types.ts";
 
+export { DOMAIN_IDS, DOMAIN_LABELS, type DomainId };
+export type DomainFilter = Record<DomainId, boolean>;
+export const DEFAULT_DOMAINS: DomainFilter = { dating: true, friendship: true, business: true };
+
 /** Default switcher order; the server's list in /api/me replaces it. Core's type module is browser-safe. */
 export const APP_ORDER: readonly string[] = APP_IDS;
 /** What the switcher shows: one app, "all" (health of every app) or the cross-app person view. */
 export type Page = { kind: "app" } | { kind: "all" } | { kind: "person"; id: string };
-export type Me = StaffUser & { realOnly?: boolean; apps?: string[]; crossApp?: boolean; appInfo?: ConsoleApp[] };
+export type Me = StaffUser & { realOnly?: boolean; apps?: string[]; domains?: DomainId[]; crossApp?: boolean; appInfo?: ConsoleApp[] };
 
 export type Focus = { kind: "member" | "opportunity" | "neighborhood"; id: string } | null;
 export type ColorLens = "community" | "state" | "activity" | "truth";
@@ -33,7 +37,7 @@ export type MemberFilter = "all" | "active" | "watch" | "hold" | "minor" | "not_
 export type StateGroup = "review" | "open" | "met" | "closed";
 export type DrawerTab = "review" | "feed" | "pipeline" | "requests" | "engine" | "safety" | "metrics" | "lab" | "config" | "game";
 export const DRAWER_TABS: DrawerTab[] = ["review", "feed", "pipeline", "requests", "engine", "safety", "metrics", "lab", "config", "game"];
-export interface Filters { range: RangeKey; borough: string; members: MemberFilter; origin: string; stateGroup: "all" | StateGroup }
+export interface Filters { range: RangeKey; borough: string; members: MemberFilter; origin: string; stateGroup: "all" | StateGroup; domains: DomainFilter }
 export type FilterKey = keyof Filters;
 
 export type Opp = ObsOpportunity;
@@ -182,7 +186,13 @@ export const INACTIVE_PARTICIPANT_STATUS: ReadonlySet<ParticipantStatus> = new S
 import { DAY, HOUR } from "../../../packages/core/src/clock.ts";
 export { DAY, HOUR };
 const DEFAULT_CITY_FILTER = "all";
-export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all" };
+export const DEFAULT_FILTERS: Filters = { range: "7d", borough: "all", members: "all", origin: "all", stateGroup: "all", domains: { ...DEFAULT_DOMAINS } };
+
+function inferDomainClient(input: { app?: string; category?: string; generator?: string; workIntroChannel?: unknown }): DomainId {
+  if (input.app === "slop" || input.category === "romance" || /^(?:slop_|dating_)/i.test(input.generator ?? "")) return "dating";
+  if (input.app === "peon" || input.category === "professional" || input.workIntroChannel !== undefined || /^(?:peon_|work_|business_)/i.test(input.generator ?? "")) return "business";
+  return "friendship";
+}
 
 export function cityDayStart(t: number, city: City = "nyc"): number {
   const tz = getCity(city)?.tz ?? CITY_TZ[city] ?? CITY_TZ.nyc;
@@ -217,6 +227,26 @@ function readJSON<T>(key: string): Partial<T> | undefined {
 function writeJSON(key: string, v: unknown) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { return; } }
 const pick = <T extends string>(v: unknown, allowed: readonly T[], d: T): T => (allowed.includes(v as T) ? v as T : d);
 
+function normalizeDomains(raw: unknown): DomainFilter {
+  const out: DomainFilter = { ...DEFAULT_DOMAINS };
+  if (raw && typeof raw === "object") {
+    const r = raw as Record<string, unknown>;
+    for (const d of DOMAIN_IDS) if (typeof r[d] === "boolean") out[d] = r[d] as boolean;
+  }
+  return out;
+}
+
+function parseHashDomains(): DomainFilter | undefined {
+  const raw = hashParams().get("d");
+  if (raw === null) return undefined;
+  const out: DomainFilter = { dating: false, friendship: false, business: false };
+  if (raw === "none" || raw === "") return out;
+  for (const part of raw.split(",").map(s => s.trim().toLowerCase())) {
+    if (isDomainId(part)) out[part] = true;
+  }
+  return out;
+}
+
 function loadFilters(mode: Mode): Filters {
   const f = readJSON<Filters>(`obs.filters.v1.${mode}`) ?? {};
   return {
@@ -225,6 +255,7 @@ function loadFilters(mode: Mode): Filters {
     members: pick(f.members, MEMBER_FILTERS.map(r => r[0]), "all"),
     origin: typeof f.origin === "string" ? f.origin : "all",
     stateGroup: pick(f.stateGroup, ["all", "review", "open", "met", "closed"] as const, "all"),
+    domains: parseHashDomains() ?? normalizeDomains(f.domains),
   };
 }
 const UI_KEYS = ["view", "drawer", "drawerOpen", "colorBy", "edgeTypes", "showOpps", "legendOpen"] as const;
@@ -256,9 +287,13 @@ function parsePage(): Page {
   const h = hashParams(), p = h.get("p");
   return p ? { kind: "person", id: p } : h.get("a") === "all" ? { kind: "all" } : { kind: "app" };
 }
-/** The hash for an app and a focus (ntwrk with no focus is the empty hash). */
-function hashOf(f: Focus, app: string): string {
+/** The hash for an app, optional domain subset, and a focus (ntwrk with all domains and no focus is the empty hash). */
+function hashOf(f: Focus, app: string, domains?: DomainFilter): string {
   const parts = app !== "ntwrk" ? [`a=${encodeURIComponent(app)}`] : [];
+  if (domains && !DOMAIN_IDS.every(d => domains[d])) {
+    const active = DOMAIN_IDS.filter(d => domains[d]);
+    parts.push(`d=${active.length ? active.join(",") : "none"}`);
+  }
   if (f) parts.push(`${f.kind === "member" ? "m" : f.kind === "opportunity" ? "o" : "n"}=${encodeURIComponent(f.id)}`);
   return parts.length ? `#${parts.join("&")}` : "";
 }
@@ -352,7 +387,7 @@ class ObsStore {
   private appBackTarget?: NonNullable<Focus>;
   private browserFocusDepth = 0;
   ui: UIState = {
-    focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS }, colorBy: "community",
+    focus: parseHash(), picks: [], filters: { ...DEFAULT_FILTERS, domains: parseHashDomains() ?? { ...DEFAULT_DOMAINS } }, colorBy: "community",
     edgeTypes: Object.fromEntries(EDGE_TYPES.map(t => [t, t !== "invited_by" && t !== "vouched_for"])), showOpps: true, legendOpen: false,
     drawer: "feed", drawerOpen: true, view: "map", query: "", popover: null, reviewView: "pending", requestSegment: initialWorkspace.requestSegment,
     ...loadUIPrefs(),
@@ -415,21 +450,41 @@ class ObsStore {
     this.notify();
   }
   setFilters(patch: Partial<Filters>) {
-    this.setUI({ filters: { ...this.ui.filters, ...patch } });
+    this.setUI({ filters: { ...this.ui.filters, ...patch, ...(patch.domains ? { domains: { ...patch.domains } } : {}) } });
     writeJSON(`obs.filters.v1.${this.mode}`, this.ui.filters);
+  }
+  toggleDomain(domain: DomainId, checked: boolean) {
+    this.setFilters({ domains: { ...this.ui.filters.domains, [domain]: checked } });
+    this.replaceHash();
   }
   resetFilters() {
     this.selectedCity = DEFAULT_CITY_FILTER;
-    this.setFilters({ ...DEFAULT_FILTERS });
+    this.setFilters({ ...DEFAULT_FILTERS, domains: { ...DEFAULT_DOMAINS } });
+    this.replaceHash();
   }
   filtersChanged() {
     const f = this.ui.filters;
-    return this.selectedCity !== DEFAULT_CITY_FILTER || (Object.keys(DEFAULT_FILTERS) as FilterKey[]).some(k => f[k] !== DEFAULT_FILTERS[k]);
+    return this.selectedCity !== DEFAULT_CITY_FILTER || f.range !== DEFAULT_FILTERS.range || f.borough !== DEFAULT_FILTERS.borough || f.members !== DEFAULT_FILTERS.members
+      || f.origin !== DEFAULT_FILTERS.origin || f.stateGroup !== DEFAULT_FILTERS.stateGroup
+      || DOMAIN_IDS.some(d => f.domains[d] !== DEFAULT_DOMAINS[d]);
   }
   toast(text: string, tone: "info" | "good" | "bad" = "info") { this.setUI({ toast: { text, tone, at: Date.now() } }); }
 
   /** Every request names the app (the server checks the role for it). */
   private withApp(path: string) { return /[?&]app=/.test(path) ? path : `${path}${path.includes("?") ? "&" : "?"}app=${encodeURIComponent(this.app)}`; }
+  /** Attach caller's permitted domains on unified workspace reads so multi-partition DBs aggregate cleanly. */
+  private withDomains(path: string) {
+    if (this.app !== "ntwrk" || !this.me?.domains?.length || /[?&]domains=/.test(path)) return path;
+    return `${path}${path.includes("?") ? "&" : "?"}domains=${encodeURIComponent(this.me.domains.join(","))}`;
+  }
+  private memberAppParam(id: string) {
+    const src = this.members.get(id)?.sourceApp;
+    return src && src !== this.app ? `?app=${encodeURIComponent(src)}` : "";
+  }
+  private oppAppParam(id: string) {
+    const src = this.opps.get(id)?.sourceApp;
+    return src && src !== this.app ? `?app=${encodeURIComponent(src)}` : "";
+  }
   /** Sends a request with the token and the mode that this page shows; the server refuses a change meant for the other mode (409 mode_changed). */
   private async api(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
@@ -495,7 +550,7 @@ class ObsStore {
         return;
       }
       if (app !== selectedApp) { this.replaceHash(); this.connect(); }
-      const state = await this.getJSON<ObsState>("/api/state");
+      const state = await this.getJSON<ObsState>(this.withDomains("/api/state"));
       if (!ownsLoad(this.sync, generation)) return;
       if (!Number.isSafeInteger(state.version) || !state.env) throw new Error("Invalid snapshot response");
       const next = stepSync(this.sync, {
@@ -691,10 +746,11 @@ class ObsStore {
     };
   }
 
-  async control(cmd: ControlCommand, opts: { quiet?: boolean } = {}): Promise<ControlResult> {
+  async control(cmd: ControlCommand, opts: { quiet?: boolean; app?: string } = {}): Promise<ControlResult> {
     let r: ControlResult;
+    const appQ = opts.app && opts.app !== this.app ? `?app=${encodeURIComponent(opts.app)}` : "";
     try {
-      r = await this.api("/api/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cmd) }).then(x => x.json() as Promise<ControlResult>);
+      r = await this.api(`/api/control${appQ}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(cmd) }).then(x => x.json() as Promise<ControlResult>);
     } catch (e) {
       r = { ok: false, error: e instanceof AuthError ? "Token required" : (e as Error).message };
     }
@@ -726,16 +782,24 @@ class ObsStore {
     if (had) this.pushHash(null);
   }
 
-  member(id: string) { return this.fetch<MemberDetail>(`/api/member/${encodeURIComponent(id)}`); }
-  timeline(id: string) { return this.fetch<MemberTimeline>(`/api/member/${encodeURIComponent(id)}/timeline`); }
-  /** The app's own Member 360 panel (slop dating preferences behind a reveal; peon roles and applications). */
-  memberApp(id: string) { return this.fetch<AppProfile360>(`/api/member/${encodeURIComponent(id)}/app`); }
-  /** slop photos: admin or safety, a typed reason, verified adults only. */
-  photos(id: string, reason: string) { return this.fetch<{ ok: boolean; photos?: MemberPhoto[]; error?: string }>(`/api/member/${encodeURIComponent(id)}/photos`, { reason }); }
-  opportunity(id: string) { return this.fetch<OpportunityDetail>(`/api/opportunity/${encodeURIComponent(id)}`); }
-  reviewPlanPreview(id: string, revision: number) { return this.fetch<{ ok: true; preview: StaffPlanPreview }>(`/api/review/${encodeURIComponent(id)}/plan?revision=${revision}`); }
-  safety() { return this.fetch<SafetyInfo>("/api/safety"); }
-  safetyAction(a: SafetyAction) { return this.fetch<ControlResult>("/api/safety", a); }
+  member(id: string) { return this.fetch<MemberDetail>(`/api/member/${encodeURIComponent(id)}${this.memberAppParam(id)}`); }
+  timeline(id: string) { return this.fetch<MemberTimeline>(`/api/member/${encodeURIComponent(id)}/timeline${this.memberAppParam(id)}`); }
+  /** The member's domain panel(s): dating preferences behind a reveal and business roles/introductions. */
+  memberApp(id: string) { return this.fetch<AppProfile360>(`/api/member/${encodeURIComponent(id)}/app${this.memberAppParam(id)}`); }
+  /** Dating photos: admin or safety, a typed reason, verified adults only. */
+  photos(id: string, reason: string) { return this.fetch<{ ok: boolean; photos?: MemberPhoto[]; error?: string }>(`/api/member/${encodeURIComponent(id)}/photos${this.memberAppParam(id)}`, { reason }); }
+  opportunity(id: string) { return this.fetch<OpportunityDetail>(`/api/opportunity/${encodeURIComponent(id)}${this.oppAppParam(id)}`); }
+  reviewPlanPreview(id: string, revision: number) {
+    const src = this.opps.get(id)?.sourceApp;
+    const appQ = src && src !== this.app ? `&app=${encodeURIComponent(src)}` : "";
+    return this.fetch<{ ok: true; preview: StaffPlanPreview }>(`/api/review/${encodeURIComponent(id)}/plan?revision=${revision}${appQ}`);
+  }
+  safety() { return this.fetch<SafetyInfo>(this.withDomains("/api/safety")); }
+  safetyAction(a: SafetyAction) {
+    const targetApp = "memberId" in a ? this.members.get(a.memberId)?.sourceApp : undefined;
+    const appQ = targetApp && targetApp !== this.app ? `?app=${encodeURIComponent(targetApp)}` : "";
+    return this.fetch<ControlResult>(`/api/safety${appQ}`, a);
+  }
   held(queue: HeldQueue) { return this.fetch<{ ok: boolean; items?: HeldText[]; code?: string; error?: string }>(`/api/held?queue=${queue}`); }
   async heldPhoto(id:string,reason:string):Promise<{blob?:Blob;error?:string}>{
     try{
@@ -755,7 +819,7 @@ class ObsStore {
     const p = new URLSearchParams(Object.entries(q).filter(([, v]) => v !== undefined && v !== "").map(([k, v]) => [k, String(v)]));
     return this.fetch<{ sink: string; entries: AuditEntry[] }>(`/api/audit?${p}`);
   }
-  search(q: string) { return this.fetch<SearchHit[]>(`/api/search?q=${encodeURIComponent(q)}`); }
+  search(q: string) { return this.fetch<SearchHit[]>(this.withDomains(`/api/search?q=${encodeURIComponent(q)}`)); }
   runDiff(a: string, b: string) { return this.fetch<RunDiff>(`/api/runs/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`); }
   lab() { return this.fetch<{ enabled: boolean; running: number; runs: LabRun[] }>("/api/lab"); }
   appsHealth() { return this.fetch<{ mode: Mode; apps: AppHealth[] }>("/api/apps/health"); }
@@ -840,7 +904,7 @@ class ObsStore {
     this.replaceHash();
   }
   private replaceHash() {
-    const h = this.page.kind === "person" ? `#p=${encodeURIComponent(this.page.id)}` : this.page.kind === "all" ? "#a=all" : hashOf(this.ui.focus, this.app);
+    const h = this.page.kind === "person" ? `#p=${encodeURIComponent(this.page.id)}` : this.page.kind === "all" ? "#a=all" : hashOf(this.ui.focus, this.app, this.ui.filters.domains);
     try { history.replaceState(history.state, "", location.pathname + location.search + h); } catch { return; }
   }
   labRun(req: LabRequest) { return this.fetch<{ ok: boolean; run: LabRun }>("/api/lab/run", req); }
@@ -861,7 +925,7 @@ class ObsStore {
   realOnly() { return !!(this.me?.realOnly || this.env?.realOnly); }
   async loadReveals() {
     const { generation } = this.sync;
-    const r = await this.fetch<RevealGrant[]>("/api/reveal");
+    const r = await this.fetch<RevealGrant[]>(this.withDomains("/api/reveal"));
     if (generation !== this.sync.generation) return;
     this.reveals = r.data ?? [];
     this.notify();
@@ -869,12 +933,14 @@ class ObsStore {
   revealFor(memberId: string): RevealGrant | undefined { return this.reveals.find(g => g.memberId === memberId && g.until > Date.now()); }
   /** End a reveal before its time (audited). */
   async unreveal(memberId: string): Promise<void> {
-    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}`, { method: "DELETE" }); } catch {}
+    const src = this.members.get(memberId)?.sourceApp;
+    const appQ = src && src !== this.app ? `&app=${encodeURIComponent(src)}` : "";
+    try { await this.api(`/api/reveal?memberId=${encodeURIComponent(memberId)}${appQ}`, { method: "DELETE" }); } catch {}
     this.reveals = this.reveals.filter(g => g.memberId !== memberId);
     this.notify();
   }
   async reveal(memberId: string, reason: string, minutes: number): Promise<boolean> {
-    const r = await this.fetch<RevealGrant & { ok: boolean }>("/api/reveal", { memberId, reason, minutes });
+    const r = await this.fetch<RevealGrant & { ok: boolean }>(`/api/reveal${this.memberAppParam(memberId)}`, { memberId, reason, minutes });
     if (!r.data) { this.toast(r.error, "bad"); return false; }
     this.reveals = [...this.reveals.filter(g => g.memberId !== memberId), r.data];
     this.toast(`Revealed for ${minutes} min · logged`, "info");
@@ -945,7 +1011,7 @@ class ObsStore {
     if (opts.replace) {
       if (!canReplaceFocus(nav, target)) return;
       this.commitNav(replaceFocus(nav, target), { focus: f });
-      try { history.replaceState(history.state, "", location.pathname + location.search + hashOf(f, this.app)); } catch { return; }
+      try { history.replaceState(history.state, "", location.pathname + location.search + hashOf(f, this.app, this.ui.filters.domains)); } catch { return; }
       return;
     }
     if (!canFocusOn(nav, target, false)) return;
@@ -975,7 +1041,7 @@ class ObsStore {
     }
     this.commitNav(goBack(nav, subjectOf(prev)), { focus: prev, history: this.focusHistory.slice(0, -1) });
     try {
-      history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app));
+      history.replaceState({ obsDepth: 0 }, "", location.pathname + location.search + hashOf(prev, this.app, this.ui.filters.domains));
       this.browserFocusDepth = 0;
     } catch { return; }
   }
@@ -999,7 +1065,7 @@ class ObsStore {
     try {
       const rawDepth = (history.state as { obsDepth?: number } | null)?.obsDepth;
       const depth = (typeof rawDepth === "number" ? rawDepth : this.browserFocusDepth) + 1;
-      history.pushState({ obsDepth: depth }, "", location.pathname + location.search + hashOf(f, this.app));
+      history.pushState({ obsDepth: depth }, "", location.pathname + location.search + hashOf(f, this.app, this.ui.filters.domains));
       this.browserFocusDepth = depth;
     } catch { return; }
   }
@@ -1149,10 +1215,53 @@ class ObsStore {
       default: return true;
     }
   }
-  matchMember(m: ObsMember) { return this.inBorough(m) && this.matchMemberFilter(m); }
+  allDomainsSelected() { return DOMAIN_IDS.every(d => this.ui.filters.domains[d]); }
+  selectedDomains(): DomainId[] { return DOMAIN_IDS.filter(d => this.ui.filters.domains[d]); }
+  memberDomains(m: ObsMember): readonly DomainId[] {
+    if (m.domains?.length) return m.domains;
+    if (m.sourceApp === "slop") return ["dating"];
+    if (m.sourceApp === "peon") return ["business"];
+    return ["friendship"];
+  }
+  oppDomain(o: ObsOpportunity): DomainId {
+    return o.domain ?? inferDomainClient({ app: o.sourceApp, category: o.category, generator: o.generator, workIntroChannel: o.workIntroChannel });
+  }
+  feedDomain(x: ObsFeedItem): DomainId | undefined {
+    if (x.domain) return x.domain;
+    const o = x.opportunityId ? this.opps.get(x.opportunityId) : undefined;
+    if (o) return this.oppDomain(o);
+    return undefined;
+  }
+  requestDomain(r: ObsRequest): DomainId {
+    return r.domain ?? inferDomainClient({ category: r.category });
+  }
+  matchMemberDomain(m: ObsMember) {
+    if (this.allDomainsSelected()) return true;
+    return this.memberDomains(m).some(d => this.ui.filters.domains[d]);
+  }
+  matchOppDomain(o: ObsOpportunity) {
+    if (this.allDomainsSelected()) return true;
+    return this.ui.filters.domains[this.oppDomain(o)];
+  }
+  matchFeedDomain(x: ObsFeedItem) {
+    if (this.allDomainsSelected()) return true;
+    const d = this.feedDomain(x);
+    if (d) return this.ui.filters.domains[d];
+    if (x.members?.length) {
+      const ms = x.members.map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
+      if (ms.length) return ms.some(m => this.matchMemberDomain(m));
+    }
+    return this.ui.filters.domains.friendship;
+  }
+  matchRequestDomain(r: ObsRequest) {
+    if (this.allDomainsSelected()) return true;
+    return this.ui.filters.domains[this.requestDomain(r)];
+  }
+  matchMember(m: ObsMember) { return this.inBorough(m) && this.matchMemberFilter(m) && this.matchMemberDomain(m); }
   /** Global filters on an opportunity. `skip` turns off the filters that do not apply to a panel. */
   matchOpp(o: ObsOpportunity, skip: Partial<Record<FilterKey, boolean>> = {}) {
     const f = this.ui.filters;
+    if (!skip.domains && !this.matchOppDomain(o)) return false;
     if (!skip.range && f.range !== "all" && !OPEN.has(o.state)) {
       const heldAt = stateGroupOf(o.state) === "met" ? (o.meetingAt ?? o.updatedAt) : o.updatedAt;
       if (!this.inRange(heldAt)) return false;
@@ -1170,6 +1279,7 @@ class ObsStore {
   matchFeed(x: ObsFeedItem) {
     const f = this.ui.filters;
     if (!this.inRange(x.t)) return false;
+    if (!this.matchFeedDomain(x)) return false;
     if (this.selectedCity !== "all" || f.borough !== "all" || f.members !== "all") {
       const ms = (x.members ?? []).map(id => this.members.get(id)).filter((m): m is ObsMember => !!m);
       if ((this.selectedCity !== "all" || f.borough !== "all") && !ms.some(m => this.inBorough(m))) return false;
@@ -1261,7 +1371,7 @@ class ObsStore {
     this.deciding.add(o.id);
     let r: ControlResult;
     // The revision this card shows (spec/reviewDeadline.md): a re-roll since then makes the service refuse it as stale.
-    try { r = await this.control({ type: "review", oppId: o.id, decision, ...opts, note, revision: o.review?.rerolls ?? 0, ...(secondsSpent !== undefined ? { secondsSpent } : {}) }, { quiet }); } finally { this.deciding.delete(o.id); }
+    try { r = await this.control({ type: "review", oppId: o.id, decision, ...opts, note, revision: o.review?.rerolls ?? 0, ...(secondsSpent !== undefined ? { secondsSpent } : {}) }, { quiet, app: o.sourceApp }); } finally { this.deciding.delete(o.id); }
     // A refused action changed nothing (no seconds were recorded): keep timing. Otherwise the item moved on.
     if (r.ok || !REFUSED.has(r.code ?? "")) this.reviewOpened.delete(o.id);
     if (decision === "reroll" && r.ok) this.reviewOpened.set(o.id, Date.now());

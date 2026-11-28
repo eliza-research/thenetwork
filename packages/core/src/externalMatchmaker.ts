@@ -39,7 +39,14 @@ import { contactVariants, findContactKinds, textVariants } from "./guard.ts";
 import { ADULT_AGE, canBeMatched, isMinor, relayMinorAge, relayMinorEstimate } from "./policy.ts";
 import { parseOptOut, parseReply, type ReplyAnswer } from "./replies.ts";
 import { clampSms, cleanPhrase, validateOutboundSms } from "./smsCopy.ts";
-import type { AppId, CityId } from "./types.ts";
+import {
+  isBusinessDomain,
+  isDatingDomain,
+  isFriendshipDomain,
+  type AppId,
+  type CityId,
+  type DomainId,
+} from "./types.ts";
 
 export type PersonaGender = "female" | "male";
 export type MemberGender = "woman" | "man" | "nonbinary" | "unknown";
@@ -159,6 +166,7 @@ export interface ExternalSourcingTicket {
   id: string;
   city: string;
   app: "slop" | "friends";
+  domain?: DomainId;
   memberId: string;
   personaId: string;
   prospectDedupeHash?: string;
@@ -179,10 +187,10 @@ export interface KillSwitchFailoverResult {
   updatedTickets: ExternalSourcingTicket[];
 }
 
-export function appToCoreCode(app: AppId): number {
-  if (app === "slop") return matchmakerAppSlop;
-  if (app === "peon") return matchmakerAppPeon;
-  if (app === "friends") return matchmakerAppFriends;
+export function appToCoreCode(app: AppId | DomainId): number {
+  if (isDatingDomain(app)) return matchmakerAppSlop;
+  if (isBusinessDomain(app)) return matchmakerAppPeon;
+  if (isFriendshipDomain(app)) return matchmakerAppFriends;
   return matchmakerAppNtwrk;
 }
 
@@ -446,7 +454,7 @@ export class CityMatchmakerRegistry {
 
   selectPersona(params: {
     city: CityId;
-    app: "slop" | "friends";
+    app: "slop" | "friends" | "dating" | "friendship";
     memberGender: MemberGender;
     targetProspectGender: MemberGender;
     existingLockGender?: PersonaGender | null;
@@ -526,7 +534,7 @@ export function evaluateInviteExternalProspect(input: InviteExternalProspectInpu
   return canInviteExternalProspectToNetwork(input);
 }
 
-export function isAppAllowedToReadExternalProspects(app: AppId): boolean {
+export function isAppAllowedToReadExternalProspects(app: AppId | DomainId): boolean {
   return canReadExternalProspectInApp(appToCoreCode(app));
 }
 
@@ -767,7 +775,7 @@ export class ExternalProspectCache {
     return false;
   }
 
-  getForApp(app: AppId, dedupeHash: string): ExternalProspectRecord | undefined {
+  getForApp(app: AppId | DomainId, dedupeHash: string): ExternalProspectRecord | undefined {
     if (!canReadExternalProspectInApp(appToCoreCode(app))) return undefined;
     return this.prospects.get(dedupeHash);
   }
@@ -1572,7 +1580,7 @@ export function buildQualityGatedNetworkInviteScript(
   gateInput: InviteExternalProspectInput,
   params: {
     variant: "mutual_spark" | "vouched_not_romantic" | "friends_hang";
-    app?: "slop" | "friends";
+    app?: "slop" | "friends" | "dating" | "friendship";
     memberFirstName: string;
     cityName: string;
     tone?: MatchmakerTone;
@@ -1584,7 +1592,7 @@ export function buildQualityGatedNetworkInviteScript(
   const tone = params.tone ?? "standard";
   const memberName = cleanPhrase(params.memberFirstName.trim().split(/\s+/)[0] || "your host");
   const city = cleanPhrase(params.cityName);
-  const isFriends = params.app === "friends" || params.variant === "friends_hang";
+  const isFriends = (params.app !== undefined && isFriendshipDomain(params.app)) || params.variant === "friends_hang";
 
   let raw: string;
   let fallback: string;

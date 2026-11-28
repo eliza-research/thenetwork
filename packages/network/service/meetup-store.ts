@@ -4,6 +4,9 @@ import {
   canBeMatched,
   detectExternalPromptInjection,
   externalEventSourceCode,
+  isBusinessDomain,
+  isDatingDomain,
+  isFriendshipDomain,
   isMinor,
   parseAdult18PlusAnswer,
   sanitizeProspectFacets,
@@ -290,9 +293,9 @@ const VALID_VENUE_STATUSES = new Set<VenueStatus>(["active", "suspect_closed", "
 const VALID_PERSONA_STATUSES = new Set<PersonaHealthStatus>(["active", "degraded", "suspended"]);
 
 function appCodeOf(appId: AppId): number {
-  if (appId === "slop") return matchmakerAppSlop;
-  if (appId === "peon") return matchmakerAppPeon;
-  if (appId === "friends") return matchmakerAppFriends;
+  if (isDatingDomain(appId)) return matchmakerAppSlop;
+  if (isBusinessDomain(appId)) return matchmakerAppPeon;
+  if (isFriendshipDomain(appId)) return matchmakerAppFriends;
   return matchmakerAppNtwrk;
 }
 
@@ -1136,7 +1139,7 @@ export async function listMatchmakerPersonas(
   city?: string,
   appId?: AppId
 ): Promise<MatchmakerPersona[]> {
-  if (appId === "peon") {
+  if (appId && isBusinessDomain(appId)) {
     throw new Error("forbidden: matchmaker personas are unavailable on peon");
   }
   const normalizedCity = city?.trim().toLowerCase();
@@ -1156,7 +1159,7 @@ export async function updateMatchmakerPersonaStatus(
   reason?: string,
   appId?: AppId
 ): Promise<{ persona: MatchmakerPersona; preservedOffAppTickets: number } | null> {
-  if (appId === "peon") {
+  if (appId && isBusinessDomain(appId)) {
     throw new Error("forbidden: matchmaker personas cannot be modified from peon");
   }
   if (!VALID_PERSONA_STATUSES.has(status)) {

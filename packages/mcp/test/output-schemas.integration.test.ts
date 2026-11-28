@@ -32,7 +32,7 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
       expect(tool.outputSchema.type).toBe("object");
       validators.set(tool.name, ajv.compile(tool.outputSchema));
     }
-    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_context", "get_updates", "list_looking_for", "pause_looking_for", "prepare_signup", "read_profile", "resume_looking_for", "set_availability", "set_red_lines", "start_signup", "submit_profile"]);
+    expect([...validators.keys()].sort()).toEqual(["app_info", "check_status", "get_context", "get_updates", "list_looking_for", "manage_domains", "pause_looking_for", "prepare_signup", "read_profile", "resume_looking_for", "set_availability", "set_red_lines", "start_signup", "submit_profile"]);
     const invoke = async (name: string, args: Record<string, unknown> = {}, token?: string) => {
       const response = await call(env, url, name, args, { token });
       expect(response.res.status).toBe(200);
@@ -138,6 +138,7 @@ for (const [host, surface] of [["friends.help", "full"], ["ntwrk.party", "openai
     const prefToken = (await connect(env, host, PHONE_A, { resource: url, scope: "membership:read profile:write" })).token.access_token;
     expect((await invoke("set_availability", { days: ["tue", "thu"], windows: ["after 6pm"], quietHours: { start: "22:00", end: "08:00" } }, prefToken)).saved).toBe(true);
     expect((await invoke("set_red_lines", { redLines: ["halal", "strict_sober"], mode: "merge" }, prefToken)).saved).toBe(true);
+    expect((await invoke("manage_domains", { enable: ["business"] }, prefToken)).updated).toBe(true);
     expect(validators.get("check_status")!({ app: app === "friends" ? "ntwrk" : "friends", status: "active", next_step: "Signed up", manage_url: "https://example.test/settings" })).toBe(false);
   });
 }

@@ -316,6 +316,8 @@ describe("Pass 4 [DECIDE-3]: get_context, set_availability, and set_red_lines MC
       profile: null,
       looking_for: null,
       updates: [{ summary: "Coffee on Saturday at 11 AM in Mission.", at: "2026-10-08T12:05:00.000Z", kind: "plan_confirmed" }],
+      enabled_domains: ["friendship"],
+      available_domains: ["dating", "friendship", "business"],
     });
     expect(lookingForCalls).toBe(0);
 

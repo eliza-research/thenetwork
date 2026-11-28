@@ -1638,7 +1638,7 @@ export function createMcpHandler(o: McpHandlerOptions): McpHandler {
           }
           // A profile is a few messages a day at most (each one reaches the member's own app as a text).
           // Only a well-formed profile counts (a refused one never reaches the app).
-          if ((tool === "submit_profile" || tool === "prepare_signup" || tool === "set_availability" || tool === "set_red_lines") && args.ok) {
+          if ((tool === "submit_profile" || tool === "prepare_signup" || tool === "set_availability" || tool === "set_red_lines" || tool === "manage_domains") && args.ok) {
             // spec/connectorTools.md, "within the daily limit": the earlier calls of this grant in the store's day.
             const sentToday = Math.min((await store.hit(`profile:grant:${auth.grant.id}`, PROFILE_DAY_MS, now())) - 1, profileDailyCap);
             if (profileLimitReached(sentToday)) return out(429, rpcError(id, -31029, "Too many profiles today"), { "retry-after": "3600" });

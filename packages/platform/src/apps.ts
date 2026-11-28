@@ -1,7 +1,119 @@
 import { ADULT_AGE, MIN_MEMBER_AGE } from "../../core/src/policy.ts";
-import { APP_IDS, isAppId, type AppId } from "../../core/src/types.ts";
+import {
+  APP_IDS, APP_TO_DOMAIN, BRAND_DEFAULT_DOMAINS, DOMAIN_IDS, DOMAIN_LABELS, DOMAIN_TO_APP,
+  isAppId, isBusinessDomain, isDatingDomain, isDomainId, isFriendshipDomain, toDomainId,
+  type AppId, type DomainId,
+} from "../../core/src/types.ts";
 import { lookingForApps, type LookingForMention, type LookingForReading } from "../../core/src/generated/lineRouting.ts";
-export { APP_IDS, isAppId, type AppId };
+import {
+  defaultDomainsForJoin, domainAllowedForAge,
+  type Brand as MemberDomainBrand, type Domain as MemberDomain,
+} from "../../core/src/generated/memberDomains.ts";
+export {
+  APP_IDS, APP_TO_DOMAIN, BRAND_DEFAULT_DOMAINS, DOMAIN_IDS, DOMAIN_LABELS, DOMAIN_TO_APP,
+  isAppId, isBusinessDomain, isDatingDomain, isDomainId, isFriendshipDomain, toDomainId,
+  type AppId, type DomainId,
+};
+
+// ---- Generic domains (dating, friendship, business) ----
+
+const APP_TO_BRAND: Record<AppId, MemberDomainBrand> = {
+  ntwrk: "NtwrkBrand",
+  slop: "SlopBrand",
+  peon: "PeonBrand",
+  friends: "FriendsBrand",
+};
+
+const MEMBER_DOMAIN_TO_ID: Record<MemberDomain, DomainId> = {
+  Dating: "dating",
+  Friendship: "friendship",
+  Business: "business",
+};
+
+const ID_TO_MEMBER_DOMAIN: Record<DomainId, MemberDomain> = {
+  dating: "Dating",
+  friendship: "Friendship",
+  business: "Business",
+};
+
+export function toMemberDomain(domain: DomainId): MemberDomain {
+  return ID_TO_MEMBER_DOMAIN[domain];
+}
+
+export function fromMemberDomain(domain: MemberDomain): DomainId {
+  return MEMBER_DOMAIN_TO_ID[domain];
+}
+
+export function toMemberDomainBrand(app: AppId): MemberDomainBrand {
+  return APP_TO_BRAND[app];
+}
+
+export function defaultDomainsForBrand(app: AppId, ageYears?: number | null): DomainId[] {
+  if (ageYears === null || ageYears === undefined) return [...BRAND_DEFAULT_DOMAINS[app]];
+  if (!Number.isFinite(ageYears)) return [];
+  return defaultDomainsForJoin(APP_TO_BRAND[app], Math.floor(ageYears)).map(fromMemberDomain);
+}
+
+export function availableDomainsForAge(ageYears?: number | null): DomainId[] {
+  if (ageYears === null || ageYears === undefined || !Number.isFinite(ageYears)) return [];
+  const age = Math.floor(ageYears);
+  return DOMAIN_IDS.filter(d => domainAllowedForAge(ID_TO_MEMBER_DOMAIN[d], age));
+}
+
+export interface DomainCommand {
+  action: "enable" | "disable" | "list";
+  domains: DomainId[];
+}
+
+const DOMAIN_LIST_PATTERNS = [
+  /^(?:(?:show|list|view|check|get)\s+)?(?:my\s+)?(?:active\s+|enabled\s+)?domains$/,
+  /^(?:what|which)\s+domains\b/,
+];
+
+const DOMAIN_DISABLE_CUE = /\b(?:disable|turn\s+off|switch\s+off|stop|pause|remove|opt\s+out(?:\s+of)?|leave|drop|deactivate|no\s+more)\b/;
+const DOMAIN_ENABLE_CUE = /\b(?:enable|turn\s+on|switch\s+on|add|join|opt\s+in(?:\s+to)?|activate|start|resume|also\s+match(?:\s+me)?(?:\s+for)?|match\s+me(?:\s+for)?|sign\s+me\s+up(?:\s+for)?|include|open\s+up(?:\s+to)?)\b/;
+
+const DOMAIN_ALIAS_PATTERNS: ReadonlyArray<{ domain: DomainId; re: RegExp }> = [
+  { domain: "dating", re: /\b(?:dating|dates?|romance|romantic|slop(?:\.date|\s+date)?)\b/ },
+  { domain: "friendship", re: /\b(?:friendships?|friends?(?:\.help|\s+help)?|social|hang\s*out)\b/ },
+  { domain: "business", re: /\b(?:business|work|jobs?|hiring|hire|co[-\s]?founders?|career|recruiting|peon(?:\.biz|\s+biz)?)\b/ },
+];
+
+const PERSONAL_PAUSE_PREFIX_RE = /^(?:(?:please|can\s+you|could\s+you)\s+)?(?:pause|stop|resume)\s+me\b/;
+
+export function parseDomainCommand(text: string): DomainCommand | null {
+  const norm = text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/[^\p{L}\p{N}\s.'-]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[?.!]+$/, "");
+  if (!norm) return null;
+  if (DOMAIN_LIST_PATTERNS.some(re => re.test(norm))) {
+    return { action: "list", domains: [] };
+  }
+  if (PERSONAL_PAUSE_PREFIX_RE.test(norm)) return null;
+  const hasDisable = DOMAIN_DISABLE_CUE.test(norm);
+  const hasEnable = DOMAIN_ENABLE_CUE.test(norm);
+  if (!hasDisable && !hasEnable) return null;
+  const action: "enable" | "disable" = hasDisable ? "disable" : "enable";
+  const matched: Array<{ domain: DomainId; index: number }> = [];
+  if (/\b(?:all\s+domains|all\s+three|everything)\b/.test(norm)) {
+    return { action, domains: [...DOMAIN_IDS] };
+  }
+  const domainScan = norm.replace(/\b(?:at|from|after|before)\s+work\b/g, " ");
+  for (const { domain, re } of DOMAIN_ALIAS_PATTERNS) {
+    const m = re.exec(domainScan);
+    if (m) matched.push({ domain, index: m.index });
+  }
+  if (!matched.length) return null;
+  matched.sort((a, b) => a.index - b.index);
+  return { action, domains: matched.map(m => m.domain) };
+}
+
+// ---- Brand frontends (slop.date, peon.biz, friends.help, ntwrk.party) ----
 
 export type JoinMode = "invite" | "open" | "waitlist";
 
@@ -98,7 +210,7 @@ export function lookingForReading(text: string): LookingForReading {
     .replace(/ (i|i'm|im|i am) (work|working|worked|date|dating|dated) /g, " ");
   const friends = "friends?|friendship|friendships|new people|people to hang out with|hanging out|hang out|social life|crew";
   const dating = "dating|date|dates|for love|find love|in love|romance|romantic|relationship|partner|boyfriend|girlfriend";
-  const work = "work|job|jobs|hiring|hire|career|employment|recruiting|clients|gigs?";
+  const work = "work|business|job|jobs|hiring|hire|cofounders?|co-founders?|career|employment|recruiting|clients|gigs?";
   const all = "all apps|all of (?:them|it|these|the apps)|everything|all three|anything (?:but|except)";
   const namesAll = new RegExp(` (?:${all}) `).test(t);
   const neg = "not|no|never|nothing|none|neither|nor|without|except|excluding|other than|minus|don't want|dont want|do not want|don't need|dont need";
@@ -121,6 +233,15 @@ export function lookingForReading(text: string): LookingForReading {
 }
 
 export const lookingFor = (text: string): AppId[] => lookingForApps(lookingForReading(text)).filter(isAppId);
+
+export function lookingForDomains(text: string): DomainId[] {
+  const out: DomainId[] = [];
+  for (const app of lookingFor(text)) {
+    const domain = APP_TO_DOMAIN[app];
+    if (domain && !out.includes(domain)) out.push(domain);
+  }
+  return out;
+}
 
 /** The network id for an app and a city: network.network_state.id and platform.networks.id. */
 export const networkId = (app: AppId, city: string) => `${app}:${city}`;

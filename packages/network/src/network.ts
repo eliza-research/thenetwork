@@ -23,7 +23,7 @@
 import {
   ADULT_AGE, ALCOHOL_CENTRIC_CATEGORIES, ALL_SEED_VENUES, canBeMatched, canJoin, checkExternalEventT24Quorum, checkPublishExternalEvent,
   CITY_TZ, cityTimezone, computeFollowupTimestamp, DAY, directAgreementIdiom, evaluateArrivalRelaySafe, evaluateBackupPivotV2, evaluateDensityTier,
-  evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, fromLocal, HOUR, isCity, isLaunchCity, isMinor,
+  evaluateExternalSourcingTrigger, evaluateFollowupSend, evaluateVenueQuarantine, evaluateVenueRedLines, fromLocal, HOUR, isBusinessDomain, isCity, isDatingDomain, isFriendshipDomain, isLaunchCity, isMinor,
   isOwnCalendarIcsUrl, isVenueOpenAt, localParts, LeakGuard, MINUTE, pickPrimaryAndBackupVenue, proposeTopOne, quoteStillOpen, rejectAndPivot, rerankTopVenuesWithLLM,
   seedVenuesForCity, selectWorkIntroChannel, UNDER_MIN_AGE_DECLINE, validAge, venueHardEligible,
   type Category, type City, type CityId, type DensityTier, type ExternalEventDraft, type ExternalQuorumDecision, type Facet, type Intent,
@@ -1615,7 +1615,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
 
   private captureSlopIntroductions(opportunities: Iterable<Opp>) {
-    if (this.app.id !== "slop" || !this.ctx) return;
+    if (!isDatingDomain(this.app.id) || !this.ctx) return;
     const now = this.now();
     for (const opp of pendingSlopIntroductions(opportunities, this.interactions)) {
       const [first, second] = opp.participants as [MemberId, MemberId];
@@ -2004,7 +2004,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (!hireAnswerAllowed(this.memberReply && !msg.reaction, acceptedAt !== undefined,
           msg.signedReceivedAt ?? msg.ts, acceptedAt ?? now, now, deadline)) return "open" as const;
       }
-      if (this.app.id === "slop" && o?.category === "romance") {
+      if (isDatingDomain(this.app.id) && o?.category === "romance") {
         const receipt = this.ctx.initialInviteReceipt?.(probeReplyReceiptKey(o.id, m.id, aw));
         const acceptedAt = this.ctx.initialInviteReceipt ? (receipt?.kind === "accepted" ? receipt.at : undefined) : aw.at;
         // spec/probeDispatch.md, "A Slop answer follows acceptance of the exact question"
@@ -4934,8 +4934,8 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   /** This app rates photos (slop): its outbound words are checked for the rating too (editBlock, the relay desk). */
-  private get ratesPhotos(): boolean { return this.app.id === "slop"; }
-  private probeWindow(timeQuestion: boolean): number { return probeResponseMs(this.app.id === "slop", timeQuestion); }
+  private get ratesPhotos(): boolean { return isDatingDomain(this.app.id); }
+  private probeWindow(timeQuestion: boolean): number { return probeResponseMs(isDatingDomain(this.app.id), timeQuestion); }
 
   private approvalCheck(o: Opp): string | undefined {
     if (this.holdHelpOpportunity(o)) return "bounded_help_requires_safety_review";
@@ -5254,7 +5254,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     return (
       !!o.seat ||
       o.lane === "Cofounder" ||
-      (this.app.id === "peon" && o.category === "professional") ||
+      (isBusinessDomain(this.app.id) && o.category === "professional") ||
       o.tags.some(t => ConsentNetwork.WORK_ONTOLOGY_TAGS.has(t))
     );
   }
@@ -5512,7 +5512,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     this.ctx.log("counter_proposal_relayed", { oppId: o.id, from: m.id, to: partnerId, slots: slots.map(s => s.start) });
     this.send(partner, copy.timesRetry(attention.timeOptionsPhrase(counterOptions, tz)), {
       type: "scheduling", proactive: false, timeOptions: counterOptions,
-      ...(this.app.id === "friends" || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}),
+      ...(isFriendshipDomain(this.app.id) || (isDatingDomain(this.app.id) && o.category === "romance") ? { proposalId: o.id } : {}),
     }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: partnerId } });
     return true;
   }
@@ -5572,7 +5572,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         o.sentAt = { ...o.sentAt, [m.id]: this.now() };
         const gathering = isGatheringRepeat(o);
         this.send(m, copy.timesRetry(attention.timeOptionsPhrase(fresh, this.cityTz())), { type: "scheduling", proactive: false, timeOptions: fresh,
-          ...(gathering || this.app.id === "friends" || (this.app.id === "slop" && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
+          ...(gathering || isFriendshipDomain(this.app.id) || (isDatingDomain(this.app.id) && o.category === "romance") ? { proposalId: o.id } : {}) }, "scheduling", { about: o.participants, hook: { t: "times", oppId: o.id, id: m.id },
           ...(gathering ? { key: gatheringRepeatProbeKey(o.id, m.id, true), noDefer: true } : {}) });
         return;
       }
@@ -5804,7 +5804,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const memberPrefs = participantPrefs.map(p => p.prefs);
     const venuePool = this.venuePoolForCity(bookingCity);
     const modeForOpp: "date" | "group" | "solo" | "professional" =
-      this.app.id === "peon" ? "professional" : o.participants.length >= 3 ? "group" : "date";
+      isBusinessDomain(this.app.id) ? "professional" : o.participants.length >= 3 ? "group" : "date";
     const excludedIds = this.venues.excludedIdsFor(o.participants);
     const prefs = this.memberVenuePrefs(o.participants);
     const useVenuePrefs = city !== "nyc" || excludedIds.size > 0 || prefs.nonDrinker || prefs.maxBudgetTier !== undefined;
@@ -6459,7 +6459,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private restoreFeedbackInteraction(record: InteractionRecord): InteractionRecord {
-    const slop = this.app.id === "slop", group = record.kind === "group";
+    const slop = isDatingDomain(this.app.id), group = record.kind === "group";
     if ((!slop && !group) || (record.outcome !== "completed" && record.outcome !== "no_show")) return record;
     const marker = record.id.lastIndexOf(":fb:");
     if (marker < 0) return record;
@@ -6519,7 +6519,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (own?.came && !otherMissing) {
         if (f.sentiment === "positive" || own.again) own.worthwhile = true;
         if (this.explicitlyConfirmsAttendance(body, others.length === 1)) own.confirmedRoster = true;
-        if (this.app.id === "friends" && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
+        if (isFriendshipDomain(this.app.id) && o.plan && own.again) own.repeatProof = { revision: o.scheduleRevision ?? 0 };
       }
       if (!counterpartAbsence) this.helpFeedback(m, o, f);
       if (f.selfNoShow) {
@@ -6536,7 +6536,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       this.interactions.push({
         id: `${o.id}:fb:${m.id}`, kind: o.kind, category: o.category, participants: going,
         at: this.now(), outcome: f.selfNoShow ? "no_show" : "completed", contributors: [],
-        ...(this.app.id === "slop" ? {
+        ...(isDatingDomain(this.app.id) ? {
           opportunityId: o.id,
           ...(f.selfNoShow ? { noShowBy: [m.id] } : { bookedMeeting: this.bookedMeeting(o) }),
         } : {}),
@@ -6927,7 +6927,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     o.settledAttendance = Object.fromEntries(findings.map(({ p, finding }) => [p, finding.mark]));
     const present = findings.filter(({ finding }) => finding.mark === "Attended").map(({ p }) => p);
     const origin = this.originOf(o);
-    const friendsPlan = this.app.id === "friends" && !!o.plan;
+    const friendsPlan = isFriendshipDomain(this.app.id) && !!o.plan;
     for (const { p, vouchers, organizerVerified, finding } of findings) {
       const key = `${o.id}:${p}`;
       const confirmers = vouchers.filter(x => said(x)?.confirmedRoster);
@@ -7200,7 +7200,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   private friendsRosterVerificationCurrent(roster: readonly MemberId[]): boolean {
-    if (this.app.id !== "friends") return true;
+    if (!isFriendshipDomain(this.app.id)) return true;
     const seats = roster.map(id => ({ id, side: this.rosterSideOf(id) }));
     const withMinor = this.teenIntrosEnabled() && rosterHasMinor(seats.map(seat => seat.side));
     const now = this.now();
@@ -7467,7 +7467,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const pack = this.appPack();
     const cityPlanVenues = planVenuesForCity(city);
     const cityGeoVenues = venuesForCity(city);
-    const made: plans.Plan[] = pack?.id === "friends" ? this.friendsWeekPlans(now, evidence) : plans.planProposals(this.planWorld(now, true), {
+    const made: plans.Plan[] = pack && isFriendshipDomain(pack.id) ? this.friendsWeekPlans(now, evidence) : plans.planProposals(this.planWorld(now, true), {
       now, city, tz, evidence, venues: cityPlanVenues, exclude, carry: this.planCarry, lastPlannedAt: this.lastPlannedAt,
       hints: new Map([...this.members.values()].filter(m => m.hints?.length && m.stated && m.stated.until > now).map(m => [m.id, m.hints!] as [MemberId, string[]])),
       busyAt: (id, slot) => this.bookedNear(id, slot.start),
@@ -7786,7 +7786,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       || !planTurnDue(o.planRun.answers[id] === "pending", participantProbe(o, id).told)) return;
     const about = o.participants.filter(peer => peer === id || (o.stage === "scheduled"
       ? o.status.get(peer) === "yes" : activeOpportunityParticipant(o, peer)));
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     const friendPartner = friends && o.plan.partner;
     const friendReplacement = friends && !o.plan.invited.includes(id);
     // spec/planDispatch.md, "A missing seat or an absence rules out the invitation"
@@ -7881,7 +7881,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // spec/planFormation.md, "Alternates must fit the entire offered group"
     // spec/planDecision.md, "A Friends replacement needs a current pair value with every remaining member"
     let world: EngineWorld | undefined;
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     let probeWorld: EngineWorld | undefined;
     const keepsWords = (alternate: MemberId): boolean => {
       const plan = o.plan;
@@ -7994,7 +7994,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     }
     const a = plans.activityById.get(plan.activityId)!;
     if (o.replacementFor && !this.replacementPlanCurrent(o, now)) return this.planFallback(o);
-    const friendWorld = this.appPack()?.id === "friends" ? this.planWorld(now, true) : undefined;
+    const friendWorld = this.appPack() && isFriendshipDomain(this.appPack()!.id) ? this.planWorld(now, true) : undefined;
     const friendPartnerEligible = !friendWorld || !plan.partner || this.planFriendPartnerFits(friendWorld, going, plan.category);
     // Yes-sayers left out here were told "I'll tell you once enough people are in": they hear that it did not come together (never why).
     const left: MemberId[] = [];
@@ -8118,7 +8118,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const now = this.now();
     if (this.bookedNear(id, plan.window.start, o.id) || !this.calendarAllows([id], plan.window, now)
       || !this.checkRecipient(id, "reveal", { about: [...going, id], reply: false, opp: o }).ok
-      || (this.appPack()?.id === "friends" && !this.planFriendSeatFits(this.planWorld(now, true), id, going, "existingPlan"))) {
+      || (!!this.appPack() && isFriendshipDomain(this.appPack()!.id) && !this.planFriendSeatFits(this.planWorld(now, true), id, going, "existingPlan"))) {
       o.status.set(id, "unavailable");
       return;
     }
@@ -8151,7 +8151,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const candidates = eligible ? { ...run, answers: Object.fromEntries(eligible.map(id => [id, run.answers[id]!])) } : run;
     const chosen = plans.planFallback(candidates, now, w.events, this.pcfg);
     const partner = chosen.fallback.kind === "smaller" ? chosen.fallback.partnerPlan : undefined;
-    const friends = this.appPack()?.id === "friends";
+    const friends = !!this.appPack() && isFriendshipDomain(this.appPack()!.id);
     const { fallback, carry } = friends && partner && !this.planFriendPartnerFits(this.planWorld(now, true), partner.invited, partner.category)
       ? plans.planFallback(candidates, now, w.events, { ...this.pcfg, fallback: { ...this.pcfg.fallback, smaller: false } })
       : chosen;
@@ -8361,7 +8361,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const w = this.planWorld(now);
     const a = plans.activityById.get(plan.activityId)!;
     const last = this.lastParticipation(now);
-    const friends = w.pack.id === "friends";
+    const friends = isFriendshipDomain(w.pack.id);
     const ranked = [...this.members.values()]
       .filter(m => !invited.includes(m.id) && !plan.alternates.includes(m.id) && this.adultMember(m.id) && this.planSeatOk(m) && (m.age ?? this.statedToday(m) ?? 0) >= a.ageMin && this.crewWindowAvailable(m, plan.window, now)
         && (plans.activityFit(w, m.id, this.pcfg).get(plan.activityId) ?? 0) >= this.pcfg.minFit)
@@ -9154,7 +9154,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Recheck this same reviewed pair without using its own pending proposal as a discovery exclusion. */
   private currentDatingPair(o: Pick<Opp, "category" | "participants">): boolean {
     const check = this.opts.hooks?.hardDatingPairCurrent;
-    if (!check || this.app.id !== "slop" || o.category !== "romance") return true;
+    if (!check || !isDatingDomain(this.app.id) || o.category !== "romance") return true;
     const [first, second] = o.participants;
     if (!first || !second || !this.pairAllowed(first, second)) return false;
     return o.participants.every(id => this.checkRecipient(id, "reveal", { about: o.participants, reply: false }).ok)
@@ -9597,7 +9597,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         ...input.edges.filter(e => bothAdmitted(e.from, e.to)),
         // Pairs the gate refuses (a "no", a review reject): slop's re-probe window is shorter than PAIR_HISTORY_DAYS,
         // and every pick the gate drops takes both members' slot of the run (SD-223).
-        ...(this.appPack()?.id === "slop" ? [...this.declined].filter(([k, at]) => at > now - PAIR_HISTORY_DAYS * DAY && both(...(k.split("|") as [MemberId, MemberId])))
+        ...(this.appPack() && isDatingDomain(this.appPack()!.id) ? [...this.declined].filter(([k, at]) => at > now - PAIR_HISTORY_DAYS * DAY && both(...(k.split("|") as [MemberId, MemberId])))
           .map(([k, at]) => { const [a, b] = k.split("|") as [MemberId, MemberId]; return { from: a, to: b, type: "avoid" as const, strength: 1, explicit: false, createdAt: at }; }) : []),
       ],
       recentProposals: (input.recentProposals ?? []).filter(p => p.participants.every(id => admitted.has(id))),
@@ -9899,12 +9899,12 @@ export class ConsentNetwork implements NetworkUnderTest {
   private send(m: MemberState, body: string, meta: SimMeta, kind: SendKind, o: SendOpts = {}): SendResult {
     const now = this.now();
     const opportunity = this.opps.get(meta.proposalId ?? meta.probe?.key ?? meta.plan?.planId ?? "");
-    if (opportunity && this.app.id === "friends" && meta.type && peerContactTypes.includes(meta.type)) {
+    if (opportunity && isFriendshipDomain(this.app.id) && meta.type && peerContactTypes.includes(meta.type)) {
       const peers = meta.booked && meta.participants?.length ? meta.participants : o.about ?? this.blockRoster(opportunity);
       const roster = [...new Set([m.id, ...peers])];
       if (!this.friendsRosterVerificationCurrent(roster)) return this.refuse(m.id, kind, "friends_verification_required", this.hookFns(m, o.hook));
     }
-    if (this.app.id === "slop" && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
+    if (isDatingDomain(this.app.id) && opportunity?.category === "romance" && this.opts.hooks?.hardDatingPairCurrent
       && (o.hook?.t === "probe" || o.hook?.t === "times" || o.hook?.t === "reveal")) {
       const approved = reviewApproved(opportunity.review);
       const accepted = opportunity.participants.every(id => opportunity.status.get(id) === "yes");
@@ -11778,8 +11778,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const ov = opts.memberOverrides?.[base.memberId];
       return ov ? { ...base, ...ov } : base;
     });
-    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
-    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const mode = opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = isFriendshipDomain(this.app.id) ? "friends" : isDatingDomain(this.app.id) ? "slop" : isBusinessDomain(this.app.id) ? "peon" : "ntwrk";
     const pool = this.venuePoolForCity(city, opts.venues);
     const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
     return pickPrimaryAndBackupVenue(
@@ -11842,8 +11842,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       const ov = opts.memberOverrides?.[p.prefs.memberId];
       return ov ? { ...p.prefs, ...ov } : p.prefs;
     });
-    const mode = opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
-    const app = this.app.id === "friends" ? "friends" : this.app.id === "slop" ? "slop" : this.app.id === "peon" ? "peon" : "ntwrk";
+    const mode = opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : participantIds.length === 2 ? "date" : "solo");
+    const app = isFriendshipDomain(this.app.id) ? "friends" : isDatingDomain(this.app.id) ? "slop" : isBusinessDomain(this.app.id) ? "peon" : "ntwrk";
     const pool = this.venuePoolForCity(city, opts.venues);
     const concurrentHeadcountByVenue = opts.concurrentHeadcountByVenue ?? this.venueRuntimeCtx.concurrentHeadcountByVenue;
     return proposeTopOne(
@@ -11888,7 +11888,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       llm: opts.llm ?? this.opts.engineLLM,
       candidates: state.candidates,
       shareableInterests: [...new Set(shareableInterests)],
-      mode: opts.mode ?? (this.app.id === "peon" ? "professional" : participantIds.length >= 3 ? "group" : "date"),
+      mode: opts.mode ?? (isBusinessDomain(this.app.id) ? "professional" : participantIds.length >= 3 ? "group" : "date"),
       forbiddenFacts: [...new Set(forbiddenFacts)],
       extraLeakCheck: text => (this.ratesPhotos && appearanceLeak(text) ? "appearance_leak" : null),
       deadlineMs: opts.deadlineMs ?? 8_000,
@@ -11968,7 +11968,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const city: CityId = this.opts.city ?? "nyc";
     const tz = o.meetingTimeZone ?? this.cityTz();
     const pool = this.venuePoolForCity(city);
-    const mode: "date" | "group" | "solo" | "professional" = this.app.id === "peon" ? "professional" : going.length >= 3 ? "group" : "date";
+    const mode: "date" | "group" | "solo" | "professional" = isBusinessDomain(this.app.id) ? "professional" : going.length >= 3 ? "group" : "date";
     const oldVenueId = o.venueId;
     let state = o.venueSuggestion;
     if (!state) {
@@ -12085,7 +12085,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   }
 
   densityTierFor(qualifiedLocalCount: number): DensityTier {
-    const appKind = this.app.id === "slop" ? "slop" : this.app.id === "friends" ? "friends" : "ntwrk";
+    const appKind = isDatingDomain(this.app.id) ? "slop" : isFriendshipDomain(this.app.id) ? "friends" : "ntwrk";
     return evaluateDensityTier(appKind, qualifiedLocalCount);
   }
 

@@ -15,10 +15,11 @@ import {
   canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
   initial as photoChangeInitial, photoChangeStaleMs, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
+import { domainAllowsPhotos } from "../../core/src/generated/memberDomains.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { effectiveAgeAt } from "./age.ts";
 import { ageFloorColumns, ageStandingOf, PgPeopleStore } from "./pg-store.ts";
-import type { AppId } from "./apps.ts";
+import { isDatingDomain, type AppId } from "./apps.ts";
 import { readCapped, readCappedText } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
@@ -563,7 +564,16 @@ export class PhotoService {
   private async adultNow(people: PeopleStore, personId: string): Promise<{ live: boolean; adult: boolean }> {
     const standing = await people.ageStanding(personId, null);
     const live = !!standing.person && standing.person.deletedAt === null;
-    return { live, adult: live && canBeMatched(effectiveAgeAt(standing, this.now())) };
+    const age = effectiveAgeAt(standing, this.now());
+    return { live, adult: live && age !== undefined && canBeMatched(age) && domainAllowsPhotos("Dating", age) };
+  }
+
+  private async photoAppAllowed(personId: string, app: AppId, tx?: SQL): Promise<boolean> {
+    if (isDatingDomain(app)) return true;
+    if (app !== "ntwrk") return false;
+    const people = tx ? new PgPeopleStore(tx) : this.o.people;
+    const domains = await people.listMemberDomains(personId);
+    return domains.some(d => d.domain === "dating" && d.enabled);
   }
 
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
@@ -576,15 +586,16 @@ export class PhotoService {
 
   async mayTake(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     if (!this.o.storage) return "photos_off";
-    if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
+    if (!(await this.photoAppAllowed(personId, app, tx))) return "app_not_allowed";
     if (await (this.o.banned?.(personId, tx) ?? Promise.resolve(false))) return "banned";
     return this.adult(personId, app, tx);
   }
 
   async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, holderRefused?: () => Promise<boolean>, batchId: string = newPhotoBatchId()): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
+    const appAllowed = await this.photoAppAllowed(personId, app);
     let change = stepPhotoChange(photoChangeInitial, {
-      type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
+      type: "beginUpload", appAllowed, consentCurrent: consentVersion === PHOTO_CONSENT.version,
     });
     if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
     if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };

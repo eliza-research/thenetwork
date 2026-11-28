@@ -1,0 +1,219 @@
+import { photoSubjectAllowed } from "../../../../core/src/generated/photoPolicy.ts";
+import type { Facet, MemberId } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
+import { aestheticReadAllowed } from "../../humanVector.ts";
+
+export const BODY_TYPES = ["slim", "athletic", "average", "curvy", "plus_size"] as const;
+export type BodyType = (typeof BODY_TYPES)[number];
+const isBodyType = (x: unknown): x is BodyType => typeof x === "string" && (BODY_TYPES as readonly string[]).includes(x);
+
+export interface AppearanceScore {
+  face: number; body: number; overall: number;
+  bodyType?: BodyType; bodyTypeConfidence?: number;
+  confidence: number;
+  photos?: number;
+  spread?: number;
+  model: string;
+}
+export interface PhotoRef { id: string; url?: string; bytes?: Uint8Array }
+export interface RatingSubject { age: number; ageVerified?: boolean }
+export const canRatePhotos = (s: RatingSubject | undefined): boolean => photoSubjectAllowed(canBeMatched(s?.age), s?.ageVerified === false);
+
+export interface AppearanceRater {
+  id: string;
+  rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null>;
+}
+
+export function adultsOnly(r: AppearanceRater): AppearanceRater {
+  return { id: r.id, rate: (s, photos) => (canRatePhotos(s) ? r.rate(s, photos) : Promise.resolve(null)) };
+}
+
+const clampZ = (x: number) => Math.max(-3, Math.min(3, Number.isFinite(x) ? x : 0));
+const clamp01 = (x: number) => Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+export const ratingPermille = (overall: number): number => Math.round(((clampZ(overall) + 3) * 1000) / 6);
+const cos = (a: readonly number[], b: readonly number[]) => {
+  let s = 0, na = 0, nb = 0;
+  for (let i = 0; i < Math.min(a.length, b.length); i++) { s += a[i]! * b[i]!; na += a[i]! ** 2; nb += b[i]! ** 2; }
+  return na && nb ? s / Math.sqrt(na * nb) : 0;
+};
+
+export class ClipAppearanceRater implements AppearanceRater {
+  readonly id: string;
+  constructor(private o: {
+    embedImage(p: PhotoRef): Promise<number[]>;
+    embedText?(text: string): Promise<number[]>;
+    head?: { face: number[]; body: number[]; overall: number[]; bias?: [number, number, number] };
+    scale?: number; version?: string;
+  }) { this.id = `clip-${o.head ? "head" : "prompts"}-${o.version ?? "v0"}`; }
+
+  static PROMPTS = {
+    face: ["a photo of a person with an attractive face", "a photo of a person with an unattractive face"],
+    body: ["a full-body photo of a person with an attractive body", "a full-body photo of a person with an unattractive body"],
+    overall: ["a photo of an attractive person", "a photo of an unattractive person"],
+  } as const;
+
+  async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
+    if (!canRatePhotos(subject) || !photos.length) return null;
+    const embs = await Promise.all(photos.map(p => this.o.embedImage(p)));
+    const scale = this.o.scale ?? 25;
+    const per: [number, number, number][] = [];
+    if (this.o.head) {
+      const h = this.o.head, b = h.bias ?? [0, 0, 0];
+      for (const e of embs) per.push([dot(h.face, e) + b[0], dot(h.body, e) + b[1], dot(h.overall, e) + b[2]]);
+    } else {
+      if (!this.o.embedText) throw new Error("ClipAppearanceRater: prompts mode needs embedText");
+      const t = await Promise.all(Object.values(ClipAppearanceRater.PROMPTS).flat().map(s => this.o.embedText!(s)));
+      for (const e of embs) per.push([0, 1, 2].map(d => scale * (cos(e, t[2 * d]!) - cos(e, t[2 * d + 1]!))) as [number, number, number]);
+    }
+    const mean = [0, 1, 2].map(d => per.reduce((s, x) => s + x[d]!, 0) / per.length);
+    const spread = per.length > 1 ? Math.sqrt(per.reduce((s, x) => s + (x[2]! - mean[2]!) ** 2, 0) / (per.length - 1)) : 1;
+    return { face: clampZ(mean[0]!), body: clampZ(mean[1]!), overall: clampZ(mean[2]!), confidence: clamp01((1 - 1 / (1 + per.length)) * (1 / (1 + spread))), photos: per.length, ...(per.length > 1 ? { spread } : {}), model: this.id };
+  }
+}
+const dot = (w: readonly number[], e: readonly number[]) => w.reduce((s, x, i) => s + x * (e[i] ?? 0), 0);
+
+export interface VisionChat {
+  chat(messages: { role: "system" | "user"; content: string | ({ type: "text"; text: string } | { type: "image_url"; url: string })[] }[], opts?: { json?: boolean; maxTokens?: number }): Promise<string>;
+}
+export const VISION_RATER_SYSTEM = "You rate dating-profile photos for an internal matching signal that is never shown to anyone. Return JSON only: {\"face\": z, \"body\": z, \"overall\": z, \"confidence\": c} where z is a number from -3 to 3 (0 = typical) and c is 0-1. If the photos do not show one adult clearly, return {\"confidence\": 0}. Do not describe the person.";
+
+export class VisionLlmAppearanceRater implements AppearanceRater {
+  readonly id: string;
+  constructor(private llm: VisionChat, model = "vision-llm") { this.id = `vlm-${model}`; }
+  async rate(subject: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
+    if (!canRatePhotos(subject) || !subject || !aestheticReadAllowed(true, subject.age, ADULT_AGE)) return null;
+    const urls = photos.map(p => p.url).filter((u): u is string => !!u);
+    if (!urls.length) return null;
+    const raw = await this.llm.chat([
+      { role: "system", content: VISION_RATER_SYSTEM },
+      { role: "user", content: [{ type: "text", text: "Rate these photos." }, ...urls.map(url => ({ type: "image_url" as const, url }))] },
+    ], { json: true, maxTokens: 200 });
+    let j: Record<string, unknown>;
+    try { j = JSON.parse(raw.slice(raw.indexOf("{"), raw.lastIndexOf("}") + 1)); } catch { return null; }
+    const c = clamp01(Number(j.confidence));
+    if (!c) return null;
+    return { face: clampZ(Number(j.face)), body: clampZ(Number(j.body)), overall: clampZ(Number(j.overall)), confidence: c, photos: urls.length, model: this.id };
+  }
+}
+
+export async function rateMember(rater: AppearanceRater, member: RatingSubject, photos: readonly PhotoRef[]): Promise<AppearanceScore | null> {
+  return adultsOnly(rater).rate(member, photos);
+}
+
+export const APPEARANCE_PREFIX = "appearance:";
+export function appearanceFacet(memberId: MemberId, subject: RatingSubject, s: AppearanceScore, at: number): Facet {
+  if (!canRatePhotos(subject)) throw new Error("appearance ratings are for verified adults only");
+  const f = (x: number) => x.toFixed(2);
+  return {
+    id: `${memberId}:appearance`, memberId, kind: "fact", value: "photo rating (internal)",
+    tags: [`${APPEARANCE_PREFIX}face=${f(s.face)}`, `${APPEARANCE_PREFIX}body=${f(s.body)}`, `${APPEARANCE_PREFIX}overall=${f(s.overall)}`, `${APPEARANCE_PREFIX}conf=${f(s.confidence)}`,
+      ...(s.bodyType ? [`${APPEARANCE_PREFIX}bodyType=${s.bodyType}`, `${APPEARANCE_PREFIX}bodyTypeConf=${f(s.bodyTypeConfidence ?? s.confidence)}`] : []),
+      ...(s.photos !== undefined && Number.isSafeInteger(s.photos) && s.photos > 0 ? [`${APPEARANCE_PREFIX}photos=${s.photos}`] : []),
+      ...(s.spread !== undefined && Number.isFinite(s.spread) && s.spread >= 0 ? [`${APPEARANCE_PREFIX}spread=${f(s.spread)}`] : [])],
+    scope: "agent_private", provenance: "inferred", confidence: s.confidence, validFrom: at, observedAt: at, inferred: true, confirmedByMember: false,
+  };
+}
+export function parseAppearance(tags: readonly string[]): (Omit<AppearanceScore, "model">) | undefined {
+  const v: Record<string, number> = {};
+  let bodyType: BodyType | undefined;
+  for (const t of tags) if (t.startsWith(APPEARANCE_PREFIX)) {
+    const [k, x] = t.slice(APPEARANCE_PREFIX.length).split("=");
+    if (k === "bodyType") { if (isBodyType(x)) bodyType = x; } else v[k!] = Number(x);
+  }
+  if (![v.face, v.body, v.overall, v.conf].every(x => Number.isFinite(x))) return undefined;
+  return {
+    face: v.face!, body: v.body!, overall: v.overall!, confidence: v.conf!,
+    ...(bodyType ? { bodyType, bodyTypeConfidence: Number.isFinite(v.bodyTypeConf) ? v.bodyTypeConf! : v.conf! } : {}),
+    ...(Number.isSafeInteger(v.photos) && v.photos! > 0 ? { photos: v.photos! } : {}),
+    ...(Number.isFinite(v.spread) && v.spread! >= 0 ? { spread: v.spread! } : {}),
+  };
+}
+
+export const APPEARANCE_LEAK_PATTERNS: readonly RegExp[] = [
+  /\battractive(ness)?\b/i, /\bunattractive\b/i, /\bgood[- ]looking\b/i, /\b(cute|pretty|handsome|beautiful|gorgeous|sexy)\b/i,
+  /\b(similar|same|matching|compatible)\s+(looks|attractiveness|appearance|level)\b/i, /\blooks?\s+(match|similar|alike|level|rating|score)\b/i,
+  /\bout of your league\b/i, /\bin your league\b/i,
+  /\b(appearance|beauty|looks|face|body|photo|selfie|picture)\s*(rating|score|rank|ranking|bucket|tier|percentile|band)s?\b/i,
+  /\b(rating|score|rank|ranking|bucket|tier|percentile)\s+(of|for)\s+(your|their|his|her)\s+(looks|face|body|photos?|appearance)\b/i,
+  /\bappearance\b/i, /\bbody[- ]?type\b/i, /\b(slim|athletic|curvy|plus[- ]size[d]?|heavyset|overweight|skinny|petite|chubby)\b/i,
+  /\bappearance:/i, /\bclef\b/i, /\bphoto rating\b/i, /\btop\s+\d+\s*%/i, /\b\d+(st|nd|rd|th)\s+percentile\b/i,
+];
+export function appearanceLeak(text: string, scoreTags: readonly string[] = []): string | null {
+  for (const re of APPEARANCE_LEAK_PATTERNS) { const m = re.exec(text); if (m) return m[0]; }
+  for (const t of scoreTags) if (t && text.includes(t)) return t;
+  return null;
+}
+
+export type PhotoReadinessCode =
+  | "add_more_photos"
+  | "ensure_single_adult_visible"
+  | "show_face_clearly"
+  | "improve_photo_quality"
+  | "improve_lighting"
+  | "warmer_expression";
+
+export interface PhotoReadinessDiagnostic {
+  readonly ready: boolean;
+  readonly usablePhotoCount: number;
+  readonly codes: readonly PhotoReadinessCode[];
+  readonly scope: "agent_private";
+}
+
+export interface ClefAuxFeatureRow {
+  readonly photoId?: string;
+  readonly x: Readonly<Record<string, number>>;
+  readonly confidence?: number;
+}
+
+export function photoReadinessDiagnostic(
+  subject: RatingSubject | undefined,
+  featureRows: readonly ClefAuxFeatureRow[],
+  opts: { minPhotos?: number; oneAdultGate?: number } = {},
+): PhotoReadinessDiagnostic | null {
+  if (!canRatePhotos(subject) || !subject || !aestheticReadAllowed(true, subject.age, ADULT_AGE)) return null;
+  const minPhotos = Math.max(1, opts.minPhotos ?? 2);
+  const oneAdultGate = opts.oneAdultGate ?? 0.65;
+  const codes: PhotoReadinessCode[] = [];
+  if (!featureRows.length) {
+    return { ready: false, usablePhotoCount: 0, codes: ["add_more_photos"], scope: "agent_private" };
+  }
+  const usable = featureRows.filter(r => {
+    const g = r.x["gate.one_adult"];
+    return typeof g === "number" && Number.isFinite(g) && g >= oneAdultGate;
+  });
+  if (usable.length < featureRows.length && usable.length === 0) {
+    codes.push("ensure_single_adult_visible");
+  }
+  if (usable.length < minPhotos) {
+    codes.push("add_more_photos");
+  }
+  if (usable.length > 0) {
+    const meanAux = (key: string, fallbackKey?: string): number => {
+      let sum = 0;
+      let count = 0;
+      for (const r of usable) {
+        const raw = r.x[key] ?? (fallbackKey ? r.x[fallbackKey] : undefined);
+        if (typeof raw === "number" && Number.isFinite(raw)) {
+          sum += Math.max(0, Math.min(1, raw));
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : 0.6;
+    };
+    const faceVis = meanAux("gate.face_visible");
+    const quality = meanAux("aux.photo_quality");
+    const lighting = meanAux("aux.lighting", "aux.photo_quality");
+    const expression = meanAux("aux.expression");
+
+    if (faceVis < 0.55) codes.push("show_face_clearly");
+    if (quality < 0.42) codes.push("improve_photo_quality");
+    if (lighting < 0.40) codes.push("improve_lighting");
+    if (expression < 0.38) codes.push("warmer_expression");
+  }
+  return {
+    ready: usable.length >= minPhotos && codes.length === 0,
+    usablePhotoCount: usable.length,
+    codes,
+    scope: "agent_private",
+  };
+}

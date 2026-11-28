@@ -1,5 +1,5 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, type MemberId, type TimeOption, type WorkIntroState } from "@thenetwork/core";
+import { DAY, isBusinessDomain, isDatingDomain, isFriendshipDomain, type MemberId, type TimeOption, type WorkIntroState } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
 import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
@@ -320,7 +320,7 @@ function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactM
   const reviewed = current.reviewed_options;
   const offered = current.offered;
   if (!exactMessage || !row.oppId || !row.memberId || row.id !== friendsPlanProbeDeliveryKey(row.oppId, current.review_revision, row.memberId)
-    || row.app !== "friends" || current.stage !== "probing" || current.partner !== true
+    || !isFriendshipDomain(row.app) || current.stage !== "probing" || current.partner !== true
     || invited.length !== 2 || !first || !second || first === second || !current.pending_delivery
     || (row.memberId !== first && row.memberId !== second) || !current.peer_id
     || !Array.isArray(reviewed) || !Array.isArray(offered) || !offered.length) return refused;
@@ -601,7 +601,7 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
     },
     lockAdmission: async (row, tx) => {
       if (!(await rt.stateCurrent(tx))) return false;
-      if (row.app === "slop" && row.oppId) await rt.lockSlopPairAdmission(tx, row);
+      if (isDatingDomain(row.app) && row.oppId) await rt.lockSlopPairAdmission(tx, row);
       if (row.oppId) await lockPublicEventContact(tx, row, rt.pg.id);
       if (row.id.startsWith(monthlyGatheringInvitePrefix)) await lockGatheringAdmission(tx, rt.app.id, rt.pg.id, row);
       if (row.id.startsWith(monthlyGatheringNoticePrefix)) await lockGatheringNoticeAdmission(tx, rt.app.id, rt.pg.id, row);
@@ -614,11 +614,11 @@ function lineQueue(rt: NetworkRuntime, o: LineQueueOptions): OutboundQueue {
       if (row.id.startsWith("ntf_")) {
         return await rt.notificationClaimCurrent(tx, row) ? { ok: true } : { ok: false, reason: "notification_obsolete" };
       }
-      if (row.app === "slop" && row.oppId) {
+      if (isDatingDomain(row.app) && row.oppId) {
         const authority = await rt.slopPairAdmission(tx, row);
         if (!authority.ok) return authority;
       }
-      if (row.app === "peon" && row.oppId) {
+      if (isBusinessDomain(row.app) && row.oppId) {
         const authority = await rt.peonHireAdmission(tx, row);
         if (!authority.ok) return authority;
       }

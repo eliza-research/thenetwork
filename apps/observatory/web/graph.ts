@@ -187,8 +187,8 @@ export class GraphView {
     this.view = { k, x: this.w / 2 - n.x! * k, y: this.h / 2 - n.y! * k };
   }
 
-  /** Shown under the borough filter (the focus and the picks always are). */
-  private visible(id: string) { const m = store.members.get(id); return !!m && this.nodes.has(id) && (store.inBorough(m) || !!this.fs?.has(id)); }
+  /** Shown under the borough and domain filters (the focus and the picks always are). */
+  private visible(id: string) { const m = store.members.get(id); return !!m && this.nodes.has(id) && ((store.inBorough(m) && store.matchMemberDomain(m)) || !!this.fs?.has(id)); }
   /** The store's focus set, read once per frame. */
   private fs: Set<string> | null = null;
 
@@ -296,7 +296,7 @@ export class GraphView {
     const area = f?.kind === "neighborhood" ? f.id : null;
     const focusSet = this.fs ?? new Set<string>();
     const dimmed = focusSet.size > 0;
-    const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m);
+    const bright = (m: ObsMember) => (!dimmed || focusSet.has(m.id)) && store.matchMemberFilter(m) && store.matchMemberDomain(m);
     const ink = readPalette();
     for (const [type, st] of Object.entries(EDGE_STYLE)) {
       if (!ui.edgeTypes[type]) continue;

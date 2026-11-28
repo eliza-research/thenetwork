@@ -9,7 +9,7 @@
 // BYTE IDENTITY (section 3.2). Pack identity travels BESIDE the config (`deps.pack`, the World
 // constructor), never inside it: EngineConfig / AttentionConfig / PlansConfig keep their shapes and
 // hashes. Run logs get no new fields for networkPack. Rule and generator order is the contract.
-import type { AppId, Category, City, Facet, Intent, MemberId, OpportunityKind, Proposal } from "@thenetwork/core";
+import { isBusinessDomain, isDatingDomain, isFriendshipDomain, type AppId, type Category, type City, type Facet, type Intent, type MemberId, type OpportunityKind, type Proposal } from "@thenetwork/core";
 import { teenFriendCategory, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import type { ActivityType } from "./packs/network/activities.ts";
 import type { AttentionConfig, EngineConfig } from "./config.ts";
@@ -288,9 +288,10 @@ export function validatePack(p: AppPack): AppPack {
     if ((t as { matchable: boolean }).matchable !== false) errs.push(`account tier ${t.label} must not be matchable`);
     if (t.maxAge >= 18 && t.minAge < 18) errs.push(`account tier ${t.label} straddles 18`);
   }
+  const packApp = isDatingDomain(p.id) ? "slop" : isBusinessDomain(p.id) ? "peon" : isFriendshipDomain(p.id) ? "friends" : p.id;
   for (const l of p.ontology.lanes) {
     const minors: unknown = l.minors;
-    if (minors !== "never" && !(minors === "teenFriendship" && teenFriendCategory(p.id, l.id))) errs.push(`lane ${l.id} cannot admit minors`);
+    if (minors !== "never" && !(minors === "teenFriendship" && teenFriendCategory(packApp, l.id))) errs.push(`lane ${l.id} cannot admit minors`);
   }
   const dup = (xs: string[], what: string) => { const s = new Set<string>(); for (const x of xs) { if (s.has(x)) errs.push(`duplicate ${what} ${x}`); s.add(x); } };
   dup(p.generators.map(g => g.name), "generator");

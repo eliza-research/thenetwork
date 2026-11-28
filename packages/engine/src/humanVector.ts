@@ -1,7 +1,7 @@
 import type { AppId, Facet, Intent, MemberId, PrivacyScope, Provenance, SourceKind } from "@thenetwork/core";
-import { ADULT_AGE, canBeMatched, findNeighborhood, getCity } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, findNeighborhood, getCity, isBusinessDomain, isDatingDomain } from "@thenetwork/core";
 import { centroid } from "./embed.ts";
-import { hood } from "./packs/friends/geo.ts";
+import { hood } from "./packs/friendship/geo.ts";
 import { parseOntologyTags } from "./packs/network/ontology.ts";
 import { connectionTypeForIntent, detailTags, isHypePitchIntent, objectivesFor } from "./packs/network/taxonomy.ts";
 import {
@@ -14,8 +14,8 @@ import {
   type LifeStage,
   type SpendComfortTier,
 } from "./packs/network/vocabulary.ts";
-import { T as PEON_TAG } from "./packs/peon/schema.ts";
-import { parseAppearance, type BodyType } from "./packs/slop/appearance.ts";
+import { isBusinessProxyTag, stripBusinessTag } from "./packs/business/schema.ts";
+import { parseAppearance, type BodyType } from "./packs/dating/appearance.ts";
 import { latLonToHex } from "./spatialIndex.ts";
 import type { MemberIndex, World } from "./world.ts";
 
@@ -28,14 +28,15 @@ export function vectorEligible(age: number, adultMin = ADULT_AGE): boolean {
   return true;
 }
 
-export function aestheticReadAllowed(isSlop: boolean, age: number, adultMin = ADULT_AGE): boolean {
-  if (!isSlop) return false;
+export function aestheticReadAllowed(isDating: boolean, age: number, adultMin = ADULT_AGE): boolean {
+  if (!isDating) return false;
   return vectorEligible(age, adultMin);
 }
 
-export function peonCapitalAllowed(dimKind: string): boolean {
+export function businessCapitalAllowed(dimKind: string): boolean {
   return dimKind === "domain_craft" || dimKind === "verified_skill" || dimKind === "seniority" || dimKind === "work_style";
 }
+export const peonCapitalAllowed = businessCapitalAllowed;
 
 export function discretionGateOk(
   targetPublicity: number,
@@ -291,8 +292,8 @@ function makeCoord(
 interface WorldVectorCache {
   readonly w: World;
   readonly adultMin: number;
-  readonly isSlop: boolean;
-  readonly isPeon: boolean;
+  readonly isDating: boolean;
+  readonly isBusiness: boolean;
   readonly allFacetsBy: Map<MemberId, Facet[]>;
   readonly fbStats: Map<MemberId, { pos: number; neg: number; explicitNeg: number; total: number }>;
   readonly attStats: Map<MemberId, { completed: number; noShow: number; resolved: number }>;
@@ -320,8 +321,8 @@ function getOrCompileMember(cache: WorldVectorCache, id: MemberId): HumanVector 
     cache.brokerage.get(id) ?? 0.2,
     cache.vouchQuality.get(id) ?? 0.35,
     cache.adultMin,
-    cache.isSlop,
-    cache.isPeon,
+    cache.isDating,
+    cache.isBusiness,
   );
   cache.byMember.set(id, vec);
   return vec;
@@ -368,8 +369,8 @@ function buildWeeklyBitmap(facets: readonly Facet[]): number[] {
           if (dIdx >= 0) { bits[dIdx * 3 + p] = 1; anyExplicit = true; }
         }
       }
-      if (t.startsWith("friends:free:")) {
-        const slot = t.slice(13);
+      if (t.startsWith("friendship:free:") || t.startsWith("friends:free:")) {
+        const slot = t.startsWith("friendship:free:") ? t.slice(16) : t.slice(13);
         const [dStr, pStr] = slot.split("_");
         const dIdx = DAYS3.indexOf(dStr ?? "");
         const pIdx = pStr === "am" ? 0 : pStr === "pm" ? 1 : pStr === "eve" ? 2 : -1;
@@ -440,14 +441,14 @@ function computeSocialGraphSignals(w: World, adultMin: number): {
 function buildWorldVectorCache(w: World): WorldVectorCache {
   const now = w.now;
   const adultMin = Math.max(ADULT_AGE, w.pack.eligibility.minMatchAge);
-  const isSlop = w.pack.id === "slop";
-  const isPeon = w.pack.id === "peon";
+  const isDating = isDatingDomain(w.pack.id);
+  const isBusiness = isBusinessDomain(w.pack.id);
 
   const allFacetsBy = new Map<MemberId, Facet[]>();
   for (const f of w.input.facets) {
     if (f.validTo !== undefined && f.validTo < now) continue;
     if (f.validFrom !== undefined && f.validFrom > now) continue;
-    if (isPeon && f.tags.some(t => t.startsWith(PEON_TAG.proxy))) continue;
+    if (isBusiness && f.tags.some(t => isBusinessProxyTag(t) || t.startsWith("appearance:") || t.startsWith("dating:") || t.startsWith("slop:"))) continue;
     const id = w.canonical(f.memberId);
     let list = allFacetsBy.get(id);
     if (!list) { list = []; allFacetsBy.set(id, list); }
@@ -489,8 +490,8 @@ function buildWorldVectorCache(w: World): WorldVectorCache {
   return {
     w,
     adultMin,
-    isSlop,
-    isPeon,
+    isDating,
+    isBusiness,
     allFacetsBy,
     fbStats,
     attStats,
@@ -566,13 +567,13 @@ function compileAdultVector(
   brokerageVal: number,
   vouchVal: number,
   adultMin: number,
-  isSlop: boolean,
-  isPeon: boolean,
+  isDating: boolean,
+  isBusiness: boolean,
 ): HumanVector {
   const now = w.now;
   const id = mi.m.id;
   const age = mi.m.age;
-  const allowAesthetic = aestheticReadAllowed(isSlop, age, adultMin);
+  const allowAesthetic = aestheticReadAllowed(isDating, age, adultMin);
   const nonAppearanceFacets = allFacets.filter(f => !f.tags.some(t => t.startsWith("appearance:")));
   const parsedTags = parseOntologyTags(nonAppearanceFacets);
 
@@ -585,7 +586,7 @@ function compileAdultVector(
   const explicitNeg = fb?.explicitNeg ?? 0;
   const reciprocalApprovalRate = clamp01((posFb + 3.0) / (posFb + negFb + 4.0));
 
-  const hasSafetyCue = nonAppearanceFacets.some(f => f.tags.some(t => t.startsWith("peon:safety:")));
+  const hasSafetyCue = nonAppearanceFacets.some(f => f.tags.some(t => t.startsWith("business:safety:") || t.startsWith("peon:safety:")));
   const hasHypeIntent = mi.intents.some(i => isHypePitchIntent(i));
   const hasUnverifiedHype = !parsedTags.verifiedCraft && (parsedTags.hypeClaimCount > 0 || hasHypeIntent);
   const hypeExtractionBoost = hasUnverifiedHype
@@ -773,9 +774,10 @@ function compileAdultVector(
           domainRungs[dom] = makeCoord(baseRung, isVerifiedCap ? 0.78 : 0.55, now, f.provenance, "agent_private");
         }
       }
-      if (t.startsWith(PEON_TAG.seniority)) {
-        const lvl = Number(t.slice(PEON_TAG.seniority.length));
-        if (Number.isFinite(lvl) && peonCapitalAllowed("seniority")) {
+      const seniorityVal = stripBusinessTag(t, "seniority");
+      if (seniorityVal !== undefined) {
+        const lvl = Number(seniorityVal);
+        if (Number.isFinite(lvl) && businessCapitalAllowed("seniority")) {
           const rung = clampRung(lvl * 2);
           domainRungs.career = makeCoord(rung, isVerifiedCap ? 0.8 : 0.6, now, f.provenance, "agent_private");
         }
@@ -816,7 +818,7 @@ function compileAdultVector(
   const peerPrestigeVal = clamp01(0.45 * vouchVal + 0.35 * (topDomainRung / 10) + 0.20 * reciprocalApprovalRate);
 
   let aestheticSlopOnly: CapitalProfile["aestheticSlopOnly"];
-  if (allowAesthetic && !isPeon) {
+  if (allowAesthetic && !isBusiness) {
     for (const f of allFacets) {
       const parsed = parseAppearance(f.tags);
       if (parsed && parsed.confidence > 0) {
@@ -835,11 +837,11 @@ function compileAdultVector(
   }
 
   const capital: CapitalProfile = {
-    economic: makeCoord(isPeon ? 0.5 : inferredEcon, isPeon ? 0 : (parsedTags.economicHint !== undefined || parsedTags.spendTier !== undefined ? 0.72 : 0.35), now, "inferred", "agent_private"),
+    economic: makeCoord(isBusiness ? 0.5 : inferredEcon, isBusiness ? 0 : (parsedTags.economicHint !== undefined || parsedTags.spendTier !== undefined ? 0.72 : 0.35), now, "inferred", "agent_private"),
     cultural: {
-      embodied: makeCoord(isPeon ? 0.5 : embodiedVal, isPeon ? 0 : 0.5, now, "inferred", "agent_private"),
-      institutionalized: makeCoord(isPeon ? 0.5 : instVal, isPeon ? 0 : 0.45, now, "inferred", "agent_private"),
-      omnivorousness: makeCoord(isPeon ? 0.5 : omnivorousVal, isPeon ? 0 : 0.65, now, "inferred", "agent_private"),
+      embodied: makeCoord(isBusiness ? 0.5 : embodiedVal, isBusiness ? 0 : 0.5, now, "inferred", "agent_private"),
+      institutionalized: makeCoord(isBusiness ? 0.5 : instVal, isBusiness ? 0 : 0.45, now, "inferred", "agent_private"),
+      omnivorousness: makeCoord(isBusiness ? 0.5 : omnivorousVal, isBusiness ? 0 : 0.65, now, "inferred", "agent_private"),
     },
     social: {
       vouchQuality: makeCoord(vouchVal, mi.degree > 0 ? 0.75 : 0.3, now, "inferred", "agent_private"),
@@ -847,7 +849,7 @@ function compileAdultVector(
       warmGraphDegree: mi.degree,
     },
     symbolic: {
-      publicityTier: makeCoord(isPeon ? 0.15 : inferredPublicity, isPeon ? 0 : (parsedTags.publicityHint !== undefined ? 0.75 : 0.35), now, "inferred", "agent_private"),
+      publicityTier: makeCoord(isBusiness ? 0.15 : inferredPublicity, isBusiness ? 0 : (parsedTags.publicityHint !== undefined ? 0.75 : 0.35), now, "inferred", "agent_private"),
       peerPrestige: makeCoord(peerPrestigeVal, 0.55, now, "inferred", "agent_private"),
     },
     domainRungs,

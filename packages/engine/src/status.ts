@@ -1,7 +1,7 @@
-import type { AppId, Facet, MemberId } from "@thenetwork/core";
-import { ADULT_AGE, canBeMatched } from "@thenetwork/core";
-import { humanVectorOf, peonCapitalAllowed } from "./humanVector.ts";
-import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./packs/slop/appearance.ts";
+import type { AppId, DomainId, Facet, MemberId } from "@thenetwork/core";
+import { ADULT_AGE, canBeMatched, isBusinessDomain, isDatingDomain, isFriendshipDomain } from "@thenetwork/core";
+import { businessCapitalAllowed, humanVectorOf } from "./humanVector.ts";
+import { APPEARANCE_PREFIX, canRatePhotos, parseAppearance } from "./packs/dating/appearance.ts";
 import { provenanceWeight, type World } from "./world.ts";
 
 export type StatusTuple = readonly [number, number, number, number, number, number];
@@ -52,8 +52,8 @@ export function clampStatusSigma(s: number): number {
   return Math.max(0.15, Math.min(1.2, s));
 }
 
-export function physDimensionWeight(isSlop: boolean, rawWeight: number): number {
-  if (!isSlop || !Number.isFinite(rawWeight) || rawWeight <= 0) return 0;
+export function physDimensionWeight(isDating: boolean, rawWeight: number): number {
+  if (!isDating || !Number.isFinite(rawWeight) || rawWeight <= 0) return 0;
   return Math.min(1, rawWeight);
 }
 
@@ -84,59 +84,77 @@ export function explorationTargetAllowed(
   return !isUncalibratedExplorer || !targetAboveP80 || targetWelcomesNewcomers || priorClearsBand;
 }
 
-export const VERTICAL_KERNELS: Readonly<Record<AppId, VerticalStatusKernel>> = {
-  slop: {
-    appId: "slop",
-    D: [0.18, 0.02, 0.05, 0.04, 0.08, 0],
-    A: [],
-    parityWeights: [0.65, 0.05, 0.10, 0.10, 0.10, 0],
-    parityPenalty: 0.04,
-    gapFree: 0.35,
-    warmthFloor: -0.6,
-  },
-  friends: {
-    appId: "friends",
-    D: [0, 0.02, 0.10, 0.08, 0.14, 0.02],
-    A: [
-      { iDim: 3, jDim: 4, weight: 0.08 },
-      { iDim: 4, jDim: 3, weight: 0.08 },
-    ],
-    parityWeights: [0, 0.05, 0.35, 0.30, 0.30, 0],
-    parityPenalty: 0.05,
-    gapFree: 0.45,
-    warmthFloor: -0.5,
-  },
-  peon: {
-    appId: "peon",
-    D: [0, 0.04, 0.16, 0.04, 0.12, 0.05],
-    A: [
-      { iDim: 1, jDim: 2, weight: 0.16 },
-      { iDim: 2, jDim: 1, weight: 0.16 },
-      { iDim: 1, jDim: 5, weight: 0.12 },
-      { iDim: 5, jDim: 1, weight: 0.12 },
-    ],
-    parityWeights: [0, 0.35, 0.35, 0.05, 0.10, 0.15],
-    parityPenalty: 0.10,
-    gapFree: 0.40,
-    warmthFloor: -0.5,
-  },
-  ntwrk: {
-    appId: "ntwrk",
-    D: [0, 0.04, 0.08, 0.07, 0.12, 0.04],
-    A: [
-      { iDim: 1, jDim: 2, weight: 0.14 },
-      { iDim: 2, jDim: 1, weight: 0.14 },
-      { iDim: 1, jDim: 5, weight: 0.12 },
-      { iDim: 5, jDim: 1, weight: 0.12 },
-      { iDim: 3, jDim: 5, weight: 0.09 },
-      { iDim: 5, jDim: 3, weight: 0.09 },
-    ],
-    parityWeights: [0, 0.30, 0.30, 0.15, 0.10, 0.15],
-    parityPenalty: 0.10,
-    gapFree: 0.45,
-    warmthFloor: -0.5,
-  },
+const DATING_KERNEL: VerticalStatusKernel = {
+  appId: "slop",
+  D: [0.18, 0.02, 0.05, 0.04, 0.08, 0],
+  A: [],
+  parityWeights: [0.65, 0.05, 0.10, 0.10, 0.10, 0],
+  parityPenalty: 0.04,
+  gapFree: 0.35,
+  warmthFloor: -0.6,
 };
+
+const FRIENDSHIP_KERNEL: VerticalStatusKernel = {
+  appId: "friends",
+  D: [0, 0.02, 0.10, 0.08, 0.14, 0.02],
+  A: [
+    { iDim: 3, jDim: 4, weight: 0.08 },
+    { iDim: 4, jDim: 3, weight: 0.08 },
+  ],
+  parityWeights: [0, 0.05, 0.35, 0.30, 0.30, 0],
+  parityPenalty: 0.05,
+  gapFree: 0.45,
+  warmthFloor: -0.5,
+};
+
+const BUSINESS_KERNEL: VerticalStatusKernel = {
+  appId: "peon",
+  D: [0, 0.04, 0.16, 0.04, 0.12, 0.05],
+  A: [
+    { iDim: 1, jDim: 2, weight: 0.16 },
+    { iDim: 2, jDim: 1, weight: 0.16 },
+    { iDim: 1, jDim: 5, weight: 0.12 },
+    { iDim: 5, jDim: 1, weight: 0.12 },
+  ],
+  parityWeights: [0, 0.35, 0.35, 0.05, 0.10, 0.15],
+  parityPenalty: 0.10,
+  gapFree: 0.40,
+  warmthFloor: -0.5,
+};
+
+const NETWORK_KERNEL: VerticalStatusKernel = {
+  appId: "ntwrk",
+  D: [0, 0.04, 0.08, 0.07, 0.12, 0.04],
+  A: [
+    { iDim: 1, jDim: 2, weight: 0.14 },
+    { iDim: 2, jDim: 1, weight: 0.14 },
+    { iDim: 1, jDim: 5, weight: 0.12 },
+    { iDim: 5, jDim: 1, weight: 0.12 },
+    { iDim: 3, jDim: 5, weight: 0.09 },
+    { iDim: 5, jDim: 3, weight: 0.09 },
+  ],
+  parityWeights: [0, 0.30, 0.30, 0.15, 0.10, 0.15],
+  parityPenalty: 0.10,
+  gapFree: 0.45,
+  warmthFloor: -0.5,
+};
+
+export const VERTICAL_KERNELS: Readonly<Record<AppId | DomainId, VerticalStatusKernel>> = {
+  slop: DATING_KERNEL,
+  dating: DATING_KERNEL,
+  friends: FRIENDSHIP_KERNEL,
+  friendship: FRIENDSHIP_KERNEL,
+  peon: BUSINESS_KERNEL,
+  business: BUSINESS_KERNEL,
+  ntwrk: NETWORK_KERNEL,
+};
+
+export function verticalKernelFor(packOrDomain: string): VerticalStatusKernel {
+  if (isDatingDomain(packOrDomain)) return DATING_KERNEL;
+  if (isBusinessDomain(packOrDomain)) return BUSINESS_KERNEL;
+  if (isFriendshipDomain(packOrDomain)) return FRIENDSHIP_KERNEL;
+  return NETWORK_KERNEL;
+}
 
 const ECON_RE = /\b(founder|ceo|cto|partner|investor|angel|patron|vp|director|principal|staff|lead|executive|hiring|seed|series|grant|sponsor)\b/i;
 const CULT_RE = /\b(research|phd|scientist|engineer|architect|artist|writer|author|musician|composer|filmmaker|designer|curator|professor|fellow|published|open[\s_-]?source|craft)\b/i;
@@ -439,10 +457,10 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
   }
 
   const adultSet = new Set<MemberId>(adults);
-  const isSlop = w.pack.id === "slop";
-  const isPeon = w.pack.id === "peon";
-  const physGate = physDimensionWeight(isSlop, 1.0);
-  const brokerageMap = isPeon ? undefined : w.brokerage;
+  const isDating = isDatingDomain(w.pack.id);
+  const isBusiness = isBusinessDomain(w.pack.id);
+  const physGate = physDimensionWeight(isDating, 1.0);
+  const brokerageMap = isBusiness ? undefined : w.brokerage;
 
   const allFacetsBy = new Map<MemberId, Facet[]>();
   if (physGate > 0) {
@@ -548,13 +566,13 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
 
     const vec = humanVectorOf(w, id);
     let topVerifiedRung = 0;
-    if (vec && peonCapitalAllowed("domain_craft")) {
+    if (vec && businessCapitalAllowed("domain_craft")) {
       for (const coord of Object.values(vec.capital.domainRungs)) {
         const weighted = coord.value * coord.confidence;
         if (weighted > topVerifiedRung) topVerifiedRung = weighted;
       }
     }
-    const econPrior = !isPeon && vec && vec.explicitSignals.spendTier
+    const econPrior = !isBusiness && vec && vec.explicitSignals.spendTier
       ? 0.9 * (vec.capital.economic.value - 0.5) * vec.capital.economic.confidence
       : 0;
     const econScore = facetSignal(mi.caps, ECON_RE) + 0.5 * facetSignal(mi.match, ECON_RE) + 0.2 * mi.caps.length + econPrior;
@@ -567,18 +585,18 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
     const extractPen = vec && vec.behavioral.extractionRiskScore > 0.25
       ? 2.4 * (vec.behavioral.extractionRiskScore - 0.25)
       : 0;
-    const discretionPen = !isPeon && vec && vec.explicitSignals.hypeOrExtraction && vec.behavioral.discretionVouchScore < 0.45
+    const discretionPen = !isBusiness && vec && vec.explicitSignals.hypeOrExtraction && vec.behavioral.discretionVouchScore < 0.45
       ? 0.8 * (0.45 - vec.behavioral.discretionVouchScore)
       : 0;
     const warmScore = 0.8 * (posFbCount.get(id) ?? 0) - 1.4 * (negFbCount.get(id) ?? 0) + 0.4 * completed - 1.5 * noShows
       + (mi.isHost ? 0.35 : 0) - (w.holds.has(id) ? 2.5 : 0) - extractPen - discretionPen;
-    const brokPrior = !isPeon ? 0.25 * (brokerageMap?.get(id) ?? 0) : 0;
-    const vouchPrior = !isPeon && vec ? 0.30 * (vec.capital.social.vouchQuality.value - 0.35) : 0;
+    const brokPrior = !isBusiness ? 0.25 * (brokerageMap?.get(id) ?? 0) : 0;
+    const vouchPrior = !isBusiness && vec ? 0.30 * (vec.capital.social.vouchQuality.value - 0.35) : 0;
     const socScore = 0.55 * (eigenZ.get(id) ?? 0) + 0.45 * (springZ.get(id) ?? 0) + 0.12 * Math.log1p(mi.degree) + brokPrior + vouchPrior;
     const invId = mi.m.invitedBy ? w.canonical(mi.m.invitedBy) : undefined;
     const invLift = invId && adultSet.has(invId) ? 0.35 * Math.max(0, eigenZ.get(invId) ?? 0) : 0;
     const potScore = facetSignal(mi.match, POT_RE) + 0.45 * vouchedCount + invLift + 0.2 * Math.min(4, mi.caps.length)
-      + 0.15 * topVerifiedRung + (!isPeon && vec ? 0.25 * (vec.capital.social.vouchQuality.value - 0.35) : 0);
+      + 0.15 * topVerifiedRung + (!isBusiness && vec ? 0.25 * (vec.capital.social.vouchQuality.value - 0.35) : 0);
 
     econRaw.set(id, econScore);
     cultRaw.set(id, cultScore);
@@ -627,7 +645,7 @@ export function worldStatusBeliefs(w: World): ReadonlyMap<MemberId, StatusBelief
     obsCount.set(id, 0);
   }
 
-  const primaryDim = physGate > 0 ? 0 : w.pack.id === "peon" ? 2 : 3;
+  const primaryDim = physGate > 0 ? 0 : isBusiness ? 2 : 3;
   const sortedInteractions = [...w.interactions]
     .filter(r => r.at <= w.now && r.participants.length === 2 && adultSet.has(r.participants[0]!) && adultSet.has(r.participants[1]!))
     .sort((a, b) => (a.at - b.at) || (a.id < b.id ? -1 : 1));
@@ -716,11 +734,11 @@ export function directionalStatusMultiplier(
 ): number {
   const sA = sampleA ?? a.mu;
   const sB = sampleB ?? b.mu;
-  const isSlop = K.appId === "slop";
+  const isDating = isDatingDomain(K.appId);
 
   let pamSq = 0;
   for (let d = 0; d < 6; d++) {
-    const w = d === 0 ? physDimensionWeight(isSlop, K.D[0]) : Math.max(0, K.D[d]!);
+    const w = d === 0 ? physDimensionWeight(isDating, K.D[0]) : Math.max(0, K.D[d]!);
     if (w <= 0) continue;
     const effGap = effectiveAssortativeGap(sA[d] ?? 0, sB[d] ?? 0, K.gapFree);
     pamSq += w * effGap * effGap;
@@ -728,7 +746,7 @@ export function directionalStatusMultiplier(
 
   let namGain = 0;
   for (const { iDim, jDim, weight } of K.A) {
-    const effW = iDim === 0 || jDim === 0 ? physDimensionWeight(isSlop, weight) : weight;
+    const effW = iDim === 0 || jDim === 0 ? physDimensionWeight(isDating, weight) : weight;
     namGain += namExchangeCredit(sA[iDim] ?? 0, sB[jDim] ?? 0, effW);
   }
   namGain = Math.min(0.30, namGain);
@@ -736,7 +754,7 @@ export function directionalStatusMultiplier(
   const capNorm = (s: readonly number[]) => {
     let acc = 0;
     for (let d = 0; d < 6; d++) {
-      const w = d === 0 ? physDimensionWeight(isSlop, K.parityWeights[0]) : Math.max(0, K.parityWeights[d]!);
+      const w = d === 0 ? physDimensionWeight(isDating, K.parityWeights[0]) : Math.max(0, K.parityWeights[d]!);
       const pos = Math.max(0, s[d] ?? 0);
       acc += w * pos * pos;
     }
@@ -761,7 +779,7 @@ export function worldStatusPairMultipliers(
   const beliefs = worldStatusBeliefs(w);
   const bA = beliefs.get(a), bB = beliefs.get(b);
   if (!bA || !bB) return { ab: 1, ba: 1 };
-  const K = VERTICAL_KERNELS[w.pack.id] ?? VERTICAL_KERNELS.ntwrk;
+  const K = verticalKernelFor(w.pack.id);
   return {
     ab: directionalStatusMultiplier(bA, bB, K, sampleA, sampleB),
     ba: directionalStatusMultiplier(bB, bA, K, sampleB, sampleA),
@@ -778,12 +796,12 @@ export function explorationPairAllowed(
   const beliefs = worldStatusBeliefs(w);
   const bA = beliefs.get(a), bB = beliefs.get(b);
   if (!bA || !bB) return true;
-  const K = VERTICAL_KERNELS[w.pack.id] ?? VERTICAL_KERNELS.ntwrk;
-  const isSlop = K.appId === "slop";
+  const K = verticalKernelFor(w.pack.id);
+  const isDating = isDatingDomain(K.appId);
   const capOf = (s: StatusBelief) => {
     let acc = 0;
     for (let d = 0; d < 6; d++) {
-      const wt = d === 0 ? physDimensionWeight(isSlop, K.parityWeights[0]) : Math.max(0, K.parityWeights[d]!);
+      const wt = d === 0 ? physDimensionWeight(isDating, K.parityWeights[0]) : Math.max(0, K.parityWeights[d]!);
       const pos = Math.max(0, s.mu[d]!);
       acc += wt * pos * pos;
     }

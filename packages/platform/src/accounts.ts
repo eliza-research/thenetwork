@@ -28,9 +28,10 @@ import {
 import { declineEndsUnboundAccess, joinAgeFieldsValid, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { adultAge, verifiedBrowserBirthMayBeKept } from "../../core/src/generated/memberAge.ts";
-import { canJoin, validAge } from "../../core/src/policy.ts";
+import { canEnableDomain } from "../../core/src/generated/memberDomains.ts";
+import { canJoin, MIN_MEMBER_AGE, validAge } from "../../core/src/policy.ts";
 import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, lowestAge, readingAge, signupEligibilityAt, type TeenBarReason } from "./age.ts";
-import type { AppId, AppInfo } from "./apps.ts";
+import { availableDomainsForAge, defaultDomainsForBrand, DOMAIN_IDS, DOMAIN_TO_APP, toMemberDomain, type AppId, type AppInfo, type DomainId } from "./apps.ts";
 import { type ConsentEvent, resolveConsent } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
@@ -305,6 +306,126 @@ export interface Who { e164: string; personId: string | null; session?: string }
 /** The public shape of a membership: this app only. */
 export const publicMembership = (m: Membership | undefined) =>
   m && m.state !== "removed" ? { state: m.state, joinedAt: m.joinedAt === null ? null : new Date(m.joinedAt).toISOString(), firstName: m.firstName } : null;
+
+export type DomainBlockReason = "minor_restricted" | "under_13" | "banned" | "held";
+
+export interface BlockedDomain {
+  domain: DomainId;
+  reason: DomainBlockReason;
+}
+
+export interface UpdateMemberDomainsInput {
+  store: PeopleStore;
+  personId: string;
+  enable?: readonly DomainId[];
+  disable?: readonly DomainId[];
+  originBrand?: AppId;
+  source?: string;
+  now?: number;
+  banned?: boolean;
+  held?: boolean;
+  onProvisionMembership?: (membership: Membership) => Promise<void> | void;
+}
+
+export interface UpdateMemberDomainsResult {
+  enabledDomains: DomainId[];
+  availableDomains: DomainId[];
+  blocked: BlockedDomain[];
+  applied: { enabled: DomainId[]; disabled: DomainId[] };
+}
+
+export async function updateMemberDomains(input: UpdateMemberDomainsInput): Promise<UpdateMemberDomainsResult> {
+  const { store, personId } = input;
+  const at = input.now ?? Date.now();
+  const source = input.source ?? "member_update";
+  const person = await store.getPerson(personId);
+  const phoneHashes = await store.phoneHashesOf(personId);
+  const banned = input.banned ?? (
+    (await Promise.all(phoneHashes.map(h => store.isBanned(h, personId)))).some(Boolean)
+    || await store.isBanned("", personId)
+  );
+  const held = input.held ?? (
+    !person || person.deletedAt !== null || (await store.heldPhones()).some(p => p.personId === personId)
+  );
+  const age = effectiveAgeAt(await store.ageStanding(personId, phoneHashes[0] ?? null), at);
+  const availableDomains = banned || held ? [] : availableDomainsForAge(age);
+  const enableList = [...new Set(input.enable ?? [])];
+  const disableList = [...new Set(input.disable ?? [])];
+  const blocked: BlockedDomain[] = [];
+  const applied: { enabled: DomainId[]; disabled: DomainId[] } = { enabled: [], disabled: [] };
+
+  const existingMemberships = await store.memberships(personId);
+  const existingFirstName = existingMemberships.find(m => m.state !== "removed" && m.firstName)?.firstName ?? null;
+
+  // Materialize any fallback-derived enabled domains before inserting new rows so fallback domains are preserved.
+  const currentDomains = await store.listMemberDomains(personId);
+  for (const row of currentDomains) {
+    if (row.source === "membership_fallback" && row.enabled && !disableList.includes(row.domain)) {
+      await store.setMemberDomain({
+        personId,
+        domain: row.domain,
+        enabled: true,
+        originBrand: row.originBrand,
+        source: "membership_backfill",
+        at: row.enabledAt || at,
+      });
+    }
+  }
+
+  for (const domain of enableList) {
+    const allowed = canEnableDomain(toMemberDomain(domain), age ?? 0, banned, held);
+    if (!allowed) {
+      const reason: DomainBlockReason = banned
+        ? "banned"
+        : held
+          ? "held"
+          : (age === undefined || age < MIN_MEMBER_AGE ? "under_13" : "minor_restricted");
+      blocked.push({ domain, reason });
+      continue;
+    }
+    await store.setMemberDomain({ personId, domain, enabled: true, originBrand: input.originBrand, source, at });
+    const backingApp = DOMAIN_TO_APP[domain];
+    const current = await store.getMembership(personId, backingApp);
+    if (!current || current.state === "removed" || current.state === "invited") {
+      const provisioned: Membership = {
+        app: backingApp,
+        personId,
+        memberId: current?.state === "invited" ? current.memberId : `${backingApp}_${randomUUID()}`,
+        state: "active",
+        review: null,
+        firstName: existingFirstName,
+        profile: {},
+        joinedAt: at,
+        leftAt: null,
+      };
+      await store.putMembership(provisioned);
+      await input.onProvisionMembership?.(provisioned);
+    } else if (current.state === "paused") {
+      const resumed: Membership = { ...current, state: "active" };
+      await store.putMembership(resumed);
+      await input.onProvisionMembership?.(resumed);
+    }
+    applied.enabled.push(domain);
+  }
+
+  for (const domain of disableList) {
+    if (banned || held) {
+      blocked.push({ domain, reason: banned ? "banned" : "held" });
+      continue;
+    }
+    await store.setMemberDomain({ personId, domain, enabled: false, originBrand: input.originBrand, source, at });
+    const backingApp = DOMAIN_TO_APP[domain];
+    const current = await store.getMembership(personId, backingApp);
+    if (current && (current.state === "active" || current.state === "onboarding")) {
+      await store.putMembership({ ...current, state: "paused" });
+    }
+    applied.disabled.push(domain);
+  }
+
+  const rows = await store.listMemberDomains(personId);
+  const enabledDomains = rows.filter(r => r.enabled && availableDomains.includes(r.domain)).map(r => r.domain);
+  return { enabledDomains, availableDomains, blocked, applied };
+}
 
 export class Accounts {
   private readonly phoneListeners: ((ctx: { personId: string }) => Promise<unknown> | unknown)[] = [];
@@ -712,7 +833,10 @@ export class Accounts {
     if (!r.ok) return r;
     if (await this.store.ageFloorRecord(this.phoneHash(newE164))) {
       const age = await this.lowestAge(newE164, await this.store.getPerson(person.id));
-      if (age !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age });
+      if (age !== undefined) {
+        await this.revokeRestrictedDomainsForAge(person.id, age);
+        await this.hooks.onAgeLowered?.({ personId: person.id, age });
+      }
     }
     await this.ageRecorded(this.phoneHash(newE164));
     for (const fn of this.phoneListeners) await Promise.resolve().then(() => fn({ personId: person.id })).catch(() => {});
@@ -755,10 +879,45 @@ export class Accounts {
     await this.recordReading(e164, person, { kind: "birthDate", birthDate: birthKey });
   }
 
+  private async revokeRestrictedDomainsForAge(personId: string, age: number, at = this.now()): Promise<void> {
+    if (age < MIN_MEMBER_AGE) {
+      await this.store.disableMemberDomains(personId, DOMAIN_IDS, "age_lowered", at);
+    } else if (age < adultAge) {
+      await this.store.disableMemberDomains(personId, ["dating", "business"], "age_lowered", at);
+    }
+  }
+
+  async memberDomains(personId: string, e164?: string): Promise<{ enabledDomains: DomainId[]; availableDomains: DomainId[] }> {
+    const person = await this.store.getPerson(personId);
+    const age = e164
+      ? await this.lowestAge(e164, person)
+      : effectiveAgeAt(await this.store.ageStanding(personId, null), this.now());
+    const availableDomains = availableDomainsForAge(age);
+    const rows = await this.store.listMemberDomains(personId);
+    const enabledDomains = rows.filter(r => r.enabled && availableDomains.includes(r.domain)).map(r => r.domain);
+    return { enabledDomains, availableDomains };
+  }
+
+  async updateDomains(input: Omit<UpdateMemberDomainsInput, "store" | "now"> & { e164?: string }): Promise<UpdateMemberDomainsResult> {
+    const person = await this.store.getPerson(input.personId);
+    const banned = input.banned ?? (input.e164 ? await this.banned(input.e164, person) : undefined);
+    const held = input.held ?? (input.e164 ? await this.held(input.e164) : undefined);
+    return updateMemberDomains({
+      ...input,
+      store: this.store,
+      now: this.now(),
+      ...(banned !== undefined ? { banned } : {}),
+      ...(held !== undefined ? { held } : {}),
+    });
+  }
+
   private async recordReading(e164: string, person: Person | undefined, reading: AgeReading): Promise<void> {
     const phoneHash = this.phoneHash(e164);
     const after = await this.store.recordAgeReading(person?.id ?? null, phoneHash, reading, this.now());
-    if (person && after !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+    if (person && after !== undefined) {
+      await this.revokeRestrictedDomainsForAge(person.id, after);
+      await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+    }
     await this.ageRecorded(phoneHash);
   }
 
@@ -780,6 +939,7 @@ export class Accounts {
   async projectRecordedAge(recorded: RecordedMemberAge): Promise<void> {
     const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
     if (person?.deletedAt === null && validAge(person.lowestAge)) {
+      await this.revokeRestrictedDomainsForAge(person.id, person.lowestAge);
       await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
     }
     await this.ageRecorded(recorded.phoneHash);
@@ -945,6 +1105,12 @@ export class Accounts {
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) return this.undoFailedJoin(app, who.e164, person.id, membership.memberId, at, hook.error, !!referredJoin || !!commitBrowserSignup, suppressed);
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
+    const joinAge = age.effective ?? statedAge;
+    if (joinAge < adultAge) await this.revokeRestrictedDomainsForAge(person.id, joinAge, at);
+    const defaults = defaultDomainsForBrand(app.id, joinAge);
+    for (const domain of defaults) {
+      await this.store.setMemberDomain({ personId: person.id, domain, enabled: true, originBrand: app.id, source: "onboarding", at });
+    }
     return { ok: true, membership, created: true };
   }
 
@@ -995,6 +1161,7 @@ export class Accounts {
     await this.store.deletePending(this.phoneHash(e164), "join");
     if (!person) return;
     const at = this.now();
+    await this.revokeRestrictedDomainsForAge(person.id, lowest, at);
     for (const m of await this.store.memberships(person.id)) {
       if (m.state === "removed") continue;
       await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 }, "account_erasure");

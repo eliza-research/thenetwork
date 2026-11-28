@@ -5,6 +5,7 @@ import { consoleBookingReceiptCurrent } from "../../../packages/core/src/generat
 import { confirmationWindowHours } from "../../../packages/core/src/generated/meetingSettlement.ts";
 import { currentConsentViewChanges } from "../../../packages/core/src/generated/observatoryMemberConsent.ts";
 import { closedProbeUpdate, observatoryMeetingHeld, replacementRosterMode } from "../../../packages/core/src/generated/observatoryRoster.ts";
+import { inferDomain, type AppId, type DomainId } from "./apps.ts";
 import { requestLabel } from "./events.ts";
 import { emptyCounters, type Store } from "./store.ts";
 import type { MemberStatus, ObsOpportunity, OppSource, OppState, ParticipantStatus, ReviewInfo, ReviewReason, TimeChoice } from "./types.ts";
@@ -27,6 +28,8 @@ const YES_BEFORE_FLAKE: ReadonlySet<ParticipantStatus> = new Set<ParticipantStat
 const JUDGE_VERDICT_SET: ReadonlySet<unknown> = new Set(JUDGE_VERDICTS);
 
 export interface ProjectorOptions {
+  /** App this projector runs for (used to infer opportunity and feed domains). */
+  app?: AppId;
   /** State a member takes when they join (from their profile: normal, quiet...). */
   joinState?: (id: MemberId) => MemberStatus;
   /** Engine run id that produced a proposal (engine capture). */
@@ -92,6 +95,16 @@ export class Projector {
     if (delta === 1) this.counted.add(o.id); else this.counted.delete(o.id);
     for (const id of o.participants) { const k = this.counters(id); if (k) k.proposals += delta; }
   }
+  private addMemberDomain(ids: readonly MemberId[], domain: DomainId) {
+    for (const id of ids) {
+      const m = this.store.member(id);
+      if (!m) continue;
+      if (m.domains?.includes(domain)) continue;
+      m.domains = [...(m.domains ?? []), domain];
+      this.store.touchMember(id);
+    }
+  }
+
   private setState(o: ObsOpportunity, s: OppState, reason?: string) {
     if (o.state === s) return;
     o.state = s;
@@ -137,19 +150,21 @@ export class Projector {
         const p = r.proposal;
         const source = r.source as OppSource;
         const prev = s.opps.get(p.id);
+        const domain = prev?.domain ?? inferDomain({ app: this.opts.app, category: p.category, generator: p.generator, workIntroChannel: prev?.workIntroChannel });
         const o: ObsOpportunity = {
           origin: prev?.origin, venue: prev?.venue, ...(prev?.backupVenue ? { backupVenue: prev.backupVenue } : {}), ...(prev?.workIntroChannel ? { workIntroChannel: prev.workIntroChannel } : {}), review: prev?.review, ...(prev?.times ? { times: prev.times } : {}), ...(prev?.booked ? { booked: prev.booked } : {}),
-          id: p.id, kind: p.kind, source, generator: p.generator, category: p.category, city: p.city,
+          id: p.id, kind: p.kind, source, generator: p.generator, category: p.category, city: p.city, domain,
           objective: p.objective, score: p.score, components: p.components, explanations: p.explanations ?? {},
           exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
           state: "PROPOSED", status: Object.fromEntries(p.participants.map(id => [id, "pending" as ParticipantStatus])),
           enjoyment: {}, createdAt: prev?.createdAt ?? r.t, updatedAt: r.t, oracle: r.oracle, runId: prev?.runId ?? this.opts.runOf?.(p.id),
         };
         s.upsertOpp(o);
+        this.addMemberDomain(o.participants, domain);
         if (!prev) this.count(o);
         this.opts.onOpp?.(o, r);
         if (source === "player" || source === "scenario") {
-          s.pushFeed({ t: r.t, kind: "proposal", text: `${source === "player" ? "You proposed" : "Scenario proposed"} ${p.kind.replace(/_/g, " ")}: ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
+          s.pushFeed({ t: r.t, kind: "proposal", text: `${source === "player" ? "You proposed" : "Scenario proposed"} ${p.kind.replace(/_/g, " ")}: ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id, domain });
         }
         return;
       }
@@ -338,10 +353,11 @@ export class Projector {
         o.review = { queuedAt: r.t, deadline: Number(d.deadline) };
         o.stateSince = r.t; this.lastState.set(o.id, o.state);
         s.upsertOpp(o);
+        if (o.domain) this.addMemberDomain(o.participants, o.domain);
         // Not a proposal to anyone yet: it counts when a reviewer approves it (a staff-composed one
         // counted at its "proposal" record is taken back until then).
         this.count(o, -1);
-        s.pushFeed({ t: r.t, kind: "review", text: `In review: ${originLabel(o.origin!).toLowerCase()} for ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id });
+        s.pushFeed({ t: r.t, kind: "review", text: `In review: ${originLabel(o.origin!).toLowerCase()} for ${this.names(p.participants)}`, members: p.participants, opportunityId: p.id, ...(o.domain ? { domain: o.domain } : {}) });
         return true;
       }
       case "review_decision": {
@@ -443,8 +459,9 @@ export class Projector {
         o.state = "PROPOSED"; o.reason = "checking availability (no names yet)";
         o.status = Object.fromEntries(p.participants.map(id => [id, (primed.has(id) ? "available" : "checking") as ParticipantStatus]));
         s.upsertOpp(o);
+        if (o.domain) this.addMemberDomain(o.participants, o.domain);
         if (!prev) this.count(o);
-        if (origin !== "engine") s.pushFeed({ t: r.t, kind: "probe", text: `${originLabel(origin)}: checking with ${this.names(p.participants.filter(id => !primed.has(id)))} (no names yet)`, members: p.participants, opportunityId: p.id });
+        if (origin !== "engine") s.pushFeed({ t: r.t, kind: "probe", text: `${originLabel(origin)}: checking with ${this.names(p.participants.filter(id => !primed.has(id)))} (no names yet)`, members: p.participants, opportunityId: p.id, ...(o.domain ? { domain: o.domain } : {}) });
         return true;
       }
       case "probe_answer": case "time_answer": {
@@ -531,7 +548,7 @@ export class Projector {
       }
       case "request":
         // What was asked for (the want or the category), never the member's own words.
-        s.pushFeed({ t: r.t, kind: "request", text: `${this.name(d.memberId)} asked: ${requestLabel(d)}`, members: [d.memberId] });
+        s.pushFeed({ t: r.t, kind: "request", text: `${this.name(d.memberId)} asked: ${requestLabel(d)}`, members: [d.memberId], domain: inferDomain({ app: this.opts.app, category: d.category }) });
         return true;
       case "request_result":
         if (d.outcome === "fulfilled") s.pushFeed({ t: r.t, kind: "request", text: `Request fulfilled for ${this.name(d.memberId)} in ${d.hours}h`, members: [d.memberId], severity: "good" });
@@ -628,9 +645,10 @@ export class Projector {
 
   /** A consent-network opportunity from its proposal (state and statuses set by the caller). */
   private consentOpp(p: Proposal, origin: string, createdAt: number, runId: unknown): ObsOpportunity {
+    const domain = inferDomain({ app: this.opts.app, category: p.category, generator: p.generator });
     return {
       id: p.id, kind: p.kind, source: origin === "engine" ? "engine" : origin === "player" ? "player" : "network", origin,
-      generator: p.generator, category: p.category, city: p.city, objective: p.objective, score: p.score, components: p.components,
+      generator: p.generator, category: p.category, city: p.city, domain, objective: p.objective, score: p.score, components: p.components,
       explanations: p.explanations ?? {}, exploration: p.exploration, participants: [...p.participants], alternates: [...(p.alternates ?? [])],
       state: "PROPOSED", status: {}, enjoyment: {}, createdAt, updatedAt: createdAt, runId: typeof runId === "string" ? runId : undefined,
     };

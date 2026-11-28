@@ -234,15 +234,18 @@ export function SafetyCases() {
   const cases = info.cases
     .filter(c => show === "all" || c.status !== "closed")
     .filter(c => f?.kind !== "member" || c.memberId === f.id)
-    .filter(c => { const m = s.members.get(c.memberId); return !m || s.inBorough(m); });
+    .filter(c => { const m = s.members.get(c.memberId); return !m || (s.inBorough(m) && s.matchMemberDomain(m)); });
   const minors = info.minors;
-  const reports = (info.reports ?? []).filter(x => show === "all" || x.status === "open").filter(x => f?.kind !== "member" || x.subjectId === f.id || x.reporterId === f.id);
+  const reports = (info.reports ?? [])
+    .filter(x => show === "all" || x.status === "open")
+    .filter(x => f?.kind !== "member" || x.subjectId === f.id || x.reporterId === f.id)
+    .filter(x => { const m = s.members.get(x.subjectId); return !m || s.matchMemberDomain(m); });
   const mode = safetyMode(!!info.canBan, info.canAct);
   return (
     <div className={grid}>
       {panelAllowed("HeldPanel", viewer.staff) && <HeldTexts />}
       {info.reports && (
-        <InspectorSection title={`Reports after a date (${reports.length})`}>
+        <InspectorSection title={`Post-meeting reports (${reports.length})`}>
           <StatusRow view={panelView("ReportsPanel", "AnswerRows", reports.length)} empty={s.nothing()}>
             {reports.slice(0, 80).map(x => <ReportItem key={x.id} r={x} mode={mode} onDone={r.reload} />)}
           </StatusRow>
@@ -472,6 +475,7 @@ export function Requests() {
   const f = s.ui.focus;
   const isOpen = (r: ObsRequest) => requestShown(OUTCOME[r.outcome], "OpenSegment");
   const scoped = s.requests.filter(r => {
+    if (!s.matchRequestDomain(r)) return false;
     const m = s.members.get(r.memberId);
     if (m && !s.matchMember(m)) return false;
     if (!isOpen(r) && !s.inRange(r.openedAt)) return false;
@@ -600,7 +604,7 @@ export function Config() {
   return (
     <div className="flex flex-col gap-6">
       <div className={grid}>
-        <InspectorSection title={`Proactive matching · ${s.app} · NYC`}>
+        <InspectorSection title="Proactive matching · NYC">
           <ConfigField
             control={configControl(c.canChange, viewer.staff.admin, packLocked, c.matchingEnabled)}
             phase={phase}

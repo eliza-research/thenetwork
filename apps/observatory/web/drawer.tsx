@@ -47,7 +47,7 @@ const navTab: Record<DrawerTab, NavTab> = {
 /** The stored tab of each generated drawer tab. */
 const storeTab = Object.fromEntries(DRAWER_TABS.map(t => [navTab[t], t])) as Record<NavTab, DrawerTab>;
 /** The generated filter key of each stored filter. */
-const navFilter: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey" };
+const navFilter: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey", domains: "DomainsKey" };
 
 /** The name of each stored drawer tab: the generated tab's name. */
 export const TAB_LABEL = Object.fromEntries(DRAWER_TABS.map(t => [t, drawerTabLabel[navTab[t]]])) as Record<DrawerTab, string>;
@@ -72,10 +72,10 @@ export function Drawer() {
   const s = useStore();
   const nav = navOf(s);
   const now = s.now();
-  const queued = [...s.opps.values()].filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason);
+  const queued = s.reviewPending();
   const dueSoon = queued.some(o => o.review && o.review.deadline - now < 3_600_000);
   const counts: Partial<Record<NavTab, DrawerTabCount>> = {
-    ReviewTab: { value: s.network?.review?.queued ?? queued.length, tone: dueSoon ? "warn" : undefined, label: "waiting" },
+    ReviewTab: { value: queued.length, tone: dueSoon ? "warn" : undefined, label: "waiting" },
     ...(s.game ? { GameTab: { value: `${s.game.scores.find(x => x.source === "player")?.points ?? 0} pts` } } : {}),
   };
   const save = (next: ConsoleNav) => store.setUI({ drawer: storeTab[next.wantedTab], drawerOpen: next.drawerOpen });
@@ -479,7 +479,7 @@ function Metrics() {
   const byState: Record<string, number> = {};
   let metSomeone = 0;
   for (const m of s.members.values()) {
-    if (!s.inBorough(m)) continue;
+    if (!s.inBorough(m) || !s.matchMemberDomain(m)) continue;
     byState[m.state] = (byState[m.state] ?? 0) + 1;
     if (m.counters.meetings > 0) metSomeone++;
   }
