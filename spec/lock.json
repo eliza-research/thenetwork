@@ -1516,8 +1516,8 @@
         "654d70fe5d1e"
       ],
       "Story: Use the stage and the drawer / The filter bar dims the filters that do not apply to the open tab": [
-        "d08edf8f0df3",
-        "3b79195a09e1",
+        "e3fa658b9a49",
+        "aca6684fe022",
         "32813669d231"
       ]
     },
@@ -3571,6 +3571,28 @@
       "Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps": [
         "bf1baf6147de",
         "82d11452a76a"
+      ]
+    },
+    "spec/memberDomains.md": {
+      "@document": [
+        "9ba04e2f7eb0"
+      ],
+      "## Story: Enable domains safely by brand and age": [
+        "ca14e0016566"
+      ],
+      "Story: Enable domains safely by brand and age / Each brand maps to its default set of domains": [
+        "3c62b18a40b9",
+        "9e7b21d139e2"
+      ],
+      "Story: Enable domains safely by brand and age / Age determines which domains a member may enable": [
+        "75072353ee4d",
+        "ebf343c3ae58",
+        "d16c4c78e832"
+      ],
+      "Story: Enable domains safely by brand and age / Photos apply only to adult dating and the business firewall applies only to business": [
+        "0d20155aff4b",
+        "5fd8875a2ee8",
+        "d16c4c78e832"
       ]
     },
     "spec/memberRequest.md": {
