@@ -507,3 +507,73 @@
 {"text": "Tell him only after Ari agrees. Ari agreed? Send him my number.", "want": "text"}
 {"text": "Tell him only after Ari agrees. Ari agreed. Send him my number.", "want": "contact_share"}
 {"text": "Tell him “If it rains, bring a jacket.” Send him my number.", "want": "contact_share"}
+{"text": "She can have my email.", "want": "contact_share"}
+{"text": "He can have my phone.", "want": "contact_share"}
+{"text": "They can have my cell.", "want": "contact_share"}
+{"text": "She can have my contact info.", "want": "contact_share"}
+{"text": "She can have my email address.", "want": "contact_share"}
+{"text": "She can have my cell number.", "want": "contact_share"}
+{"text": "She can have my contact details.", "want": "contact_share"}
+{"text": "She can have my contact information.", "want": "contact_share"}
+{"text": "She can have my email, please.", "want": "contact_share"}
+{"text": "They can have my cell, thank you.", "want": "contact_share"}
+{"text": "She can have my email, thanks.", "want": "contact_share"}
+{"text": "Yeah, she can have my email.", "want": "contact_share"}
+{"text": "Sure, he can have my phone.", "want": "contact_share"}
+{"text": "Sure. She can have my email.", "want": "contact_share"}
+{"text": "He can have my phone!", "want": "contact_share"}
+{"text": "She can have my email", "want": "contact_share"}
+{"text": "She can have my email please", "want": "contact_share"}
+{"text": "She can have my email if she asks.", "want": "none"}
+{"text": "She can have my phone charger.", "want": "none"}
+{"text": "She can have my email password.", "want": "none"}
+{"text": "She can have my cell phone.", "want": "none"}
+{"text": "She can have my contact list.", "want": "none"}
+{"text": "She can have my email address book.", "want": "none"}
+{"text": "She can have my email?", "want": "none"}
+{"text": "They can have my cell?", "want": "none"}
+{"text": "She can have my email, please?", "want": "none"}
+{"text": "She can have my email…", "want": "none"}
+{"text": "She can have my email,", "want": "none"}
+{"text": "She can have my email:", "want": "none"}
+{"text": "She can have my email;", "want": "none"}
+{"text": "She can have my phone charger. She can have my email.", "want": "none"}
+{"text": "She can have my email account. She can have my email.", "want": "none"}
+{"text": "My phone is in my bag. She can have my phone.", "want": "none"}
+{"text": "She can have my email, please send her my charger.", "want": "none"}
+{"text": "She can have my email before she asks for my password.", "want": "none"}
+{"text": "She can have my phone and my charger.", "want": "none"}
+{"text": "She can have my email and my password.", "want": "none"}
+{"text": "They can have my number and my email.", "want": "contact_share"}
+{"text": "\"My phone is in my bag.\" She can have my phone.", "want": "none"}
+{"text": "She can have my email \"if she asks\"", "want": "none"}
+{"text": "She can have my phone \"charger\"", "want": "none"}
+{"text": "\"no\" she can have my email", "want": "none"}
+{"text": "She can have my email \"jk\"", "want": "none"}
+{"text": "She can have my email \"lol\"", "want": "none"}
+{"text": "She can have my email...", "want": "none"}
+{"text": "She can have my email....", "want": "none"}
+{"text": "She can have my email \"from work\" please", "want": "none"}
+{"text": "She can have my email \"jk\" thanks", "want": "none"}
+{"text": "Yeah... she can have my email.", "want": "none"}
+{"text": "She can have my phone \"charger\" please", "want": "none"}
+{"text": "\"She can have my email.\"", "want": "none"}
+{"text": "She can have my email 'from work' please", "want": "none"}
+{"text": "She can have my email 'jk'", "want": "none"}
+{"text": "She can have my email... please", "want": "none"}
+{"text": "“no” she can have my email", "want": "none"}
+{"text": "She can have my email “if she asks”", "want": "none"}
+{"text": "She can have my email... maybe", "want": "none"}
+{"text": "She can have my email, \"call me\"", "want": "none"}
+{"text": "She can have my email!!", "want": "contact_share"}
+{"text": "She can have my email..", "want": "contact_share"}
+{"text": "Yeah \"no\" she can have my phone  number", "want": "none"}
+{"text": "Sure \"lol\" she can have my phone  number please", "want": "none"}
+{"text": "\"no\" she can have my phone  number", "want": "none"}
+{"text": "Yeah “no” she can have my phone  number", "want": "none"}
+{"text": "Sure “lol” she can have my phone  number please", "want": "none"}
+{"text": "“no” she can have my phone  number", "want": "none"}
+{"text": "Yeah 'no' she can have my phone  number", "want": "none"}
+{"text": "Sure 'lol' she can have my phone  number please", "want": "none"}
+{"text": "'no' she can have my phone  number", "want": "none"}
+{"text": "She can have my phone  number.", "want": "contact_share"}

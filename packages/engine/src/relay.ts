@@ -486,7 +486,8 @@ const CONTACT_REQ = new RegExp(
   String.raw`\b(?:send|give|share|pass|forward|text)\s+(?<leadingRecipient>${PRIVATE_RELAY_RECIPIENT})\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\b${CONTACT_ITEM_END}`
   + String.raw`|\b(?:share|send|give|pass|forward|text)\s+my\s+(?:${CONTACT_SWAP_NAME}|email)\s+(?:with|to)\s+(?<trailingRecipient>${PRIVATE_RELAY_RECIPIENT})`
   + String.raw`|${RELAY_AFFIRMED_SEND}(?:it|my number|them my number)\b(?:${RELAY_DESTINATION}\s+(?<affirmedRecipient>${PRIVATE_RELAY_RECIPIENT})|(?!${RELAY_DESTINATION}))`
-  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b${CONTACT_ITEM_END}`,
+  + String.raw`|\b(?:they|she|he) can have my (?:number|digits|phone number)\b${CONTACT_ITEM_END}`
+  + String.raw`|^(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)(?:[\s,;:!-]|(?<!\.)\.(?!\.))*)*\b(?:they|she|he) can have my (?:email|phone|cell|contact(?:\s+info)?)(?:\s+(?:number|address|details?|info|information|phone\s+number))?(?=(?:(?:!+|\.{1,2}) *$|$|[\s,]*\b(?:please|thanks|thank\s+you)(?:!+|\.{1,2})? *$))`,
   "giu",
 );
 const PHOTO_REQ = new RegExp(
@@ -1132,8 +1133,12 @@ export function parseRelayRequest(text: string): RelayRequest {
   const start = own.length - own.trimStart().length;
   const contacts = [...spoken.matchAll(CONTACT_REQ)];
   const photos = [...spoken.matchAll(PHOTO_REQ)];
+  const NEW_CAN_HAVE_GRANT = /\b(?:they|she|he) can have my (?:email|cell|contact(?:\s+info)?|phone(?! number))\b/i;
+  const newCanHaveHasQuotation = (candidate: RegExpMatchArray): boolean =>
+    NEW_CAN_HAVE_GRANT.test(candidate[0]) && t !== own;
   const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
-    && !reportsPrivateRequest(spoken, candidate);
+    && !reportsPrivateRequest(spoken, candidate)
+    && !newCanHaveHasQuotation(candidate);
   let contact = contacts.find(direct);
   const modal = RELAY_MODAL.exec(t);
   const afterModal = t.slice(modal?.[0].length ?? 0);
