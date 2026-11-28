@@ -624,6 +624,7 @@ const freshIds: string[] = [];
     const maxFresh = args["max-fresh"] !== undefined ? Number(args["max-fresh"]) : Infinity;
     if (freshIds.length > maxFresh) { console.error(`refusing: ${freshIds.length} > --max-fresh ${maxFresh}`); process.exit(2); }
   }
+  if (args["dry-run"]) { console.error("dry-run: nothing written"); process.exit(0); }
   const llm: LLM | undefined = useLLM && freshIds.length ? defaultLLM({
     timeoutMs: 180_000,
     onResponse: i => {
