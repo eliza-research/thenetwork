@@ -39,13 +39,13 @@ describe("probe conditional clause checks on clause-dense repeats", () => {
     { key: "b", start: Date.UTC(2026, 11, 5, 15), end: Date.UTC(2026, 11, 5, 16), label: "Saturday 3pm" },
   ];
 
-  test("repeated conditional clauses stay fast and read the same", () => {
-    const unit = "if it works, maybe 3pm or 4pm, ";
+  test("many clocks in one long sentence stay fast and read the same", () => {
+    const clocks = "3pm or 4pm, ".repeat(600);
     const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
     const t0 = performance.now();
-    const r = parseProbeReply(unit.repeat(1200), options as never, false, ctx);
+    const r = parseProbeReply(clocks + "blah, ".repeat(12000), options as never, false, ctx);
     const ms = performance.now() - t0;
-    expect(r).toEqual(parseProbeReply(unit, options as never, false, ctx));
-    expect(ms).toBeLessThan(6200);
+    expect(r).toEqual(parseProbeReply(clocks, options as never, false, ctx));
+    expect(ms).toBeLessThan(2000);
   }, 60_000);
 });
