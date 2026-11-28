@@ -92,7 +92,6 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   if (!participationControlAllowed(true, !!member) || !binding || !member) return;
   const { app, memberId, e164 } = owner;
   if (command.kind === "mode") {
-    const state = participationControlState(command.pause);
     let until = command.pause && command.durationDays ? new Date(now + command.durationDays * DAY).toISOString() : null;
     if (command.pause && (command.untilWeekday !== undefined || command.untilTomorrow)) {
       const tz = cityTimezone(member.home_city) ?? "UTC";
@@ -101,7 +100,9 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
       const end = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysAhead));
       until = new Date(fromLocal(end.getUTCFullYear(), end.getUTCMonth() + 1, end.getUTCDate(), 0, tz)).toISOString();
     }
-    const windowPayload = until ? { state: "paused", from: new Date(now).toISOString(), until } : null;
+    const state = !until ? participationControlState(command.pause)
+      : member.participation_state === "paused" ? participationControlState(false) : member.participation_state;
+    const windowPayload = until ? { state: "paused", from: new Date(now).toISOString(), until, note: null } : null;
     const saved = await tx`update network.members set participation_state=${state}, participation_window=${windowPayload}::jsonb
       where app_id=${app.id} and id=${memberId} and (participation_state is distinct from ${state} or participation_window is distinct from ${windowPayload}::jsonb) returning id`;
     if (saved.length) await tx`insert into network.events(app_id, at, actor_type, actor_id, type, object_type, object_id, payload)
