@@ -156,15 +156,27 @@ const FIRST_PERSON_SAFETY_REQUEST = /^(?:please\s+)?i(?:\s+(?:want|need)|'d like
 const FIRST_PERSON_NON_PERSON_HEAD = /^(?:a|an|the|some|any|all|every|this|that|it|one|two|three|four|five|six|seven|eight|nine|ten|monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun|today|tomorrow|tonight|weekend|weekday|lunch|dinner|breakfast|brunch|coffee|hour|hours|minute|minutes|min|mins|second|seconds|day|days|week|weeks|month|months|year|years|time|afternoon|morning|evening|night|noon|midnight|moment|calendar|schedule|agenda|plan|plans|event|events|meeting|meetings|appointment|appointments|session|sessions|class|classes|date|feedback|bug|bugs|issue|issues|problem|problems|complaint|complaints|review|reviews)$/i;
 const FIRST_PERSON_OBJECT_END = /^(?:for|with|on|about|at|in|from|after|before|during|over|to|is|was|are|were|not|but)$/i;
 
+const FIRST_PERSON_PRONOUN = /^(?:him|her|them|he|she|they)$/i;
+
 function firstPersonTarget(raw: string): string | undefined {
-  const clause = raw.split(/[,;:!?.]/)[0]!.split(/\s+[-—]\s+/)[0]!;
-  const tokens = clause.trim().replace(/\s+please$/i, "").split(/\s+/).filter(Boolean);
-  const end = tokens.findIndex(token => FIRST_PERSON_OBJECT_END.test(token));
-  const object = end === -1 ? tokens : tokens.slice(0, end);
-  if (!object.length) return undefined;
-  const head = object[0]!.toLowerCase().replace(/'s$/, "").replace(/[^a-z0-9'-]/g, "");
-  if (/^\d/.test(head) || FIRST_PERSON_NON_PERSON_HEAD.test(head)) return undefined;
-  return object.join(" ");
+  const clause = raw.split(/[,;:!?.(]/)[0]!.split(/\s+[-—–]\s+|[—–]/)[0]!;
+  const tokens = clause.trim().replace(/\s+please$/i, "").split(/\s+/).filter(Boolean)
+    .map(token => token.replace(/^["']+|["')\]]+$/g, "")).filter(Boolean);
+  if (!tokens.length) return undefined;
+  const head = tokens[0]!;
+  if (FIRST_PERSON_PRONOUN.test(head)) return head;
+  if (/'s$/i.test(head) || !/^\p{Lu}/u.test(head)) return undefined;
+  if (FIRST_PERSON_NON_PERSON_HEAD.test(head.toLowerCase().replace(/[^a-z0-9'-]/g, ""))) return undefined;
+  const name = [head];
+  for (const token of tokens.slice(1)) {
+    if (/'s$/i.test(token)) return undefined;
+    if (FIRST_PERSON_OBJECT_END.test(token) || !/^\p{Lu}/u.test(token)) break;
+    if (FIRST_PERSON_NON_PERSON_HEAD.test(token.toLowerCase().replace(/[^a-z0-9'-]/g, ""))) break;
+    name.push(token);
+  }
+  const next = tokens[name.length];
+  if (next && FIRST_PERSON_NON_PERSON_HEAD.test(next.toLowerCase().replace(/[^a-z0-9'-]/g, ""))) return undefined;
+  return name.join(" ");
 }
 const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
 const SAFETY_REQUEST_CONDITION = /\b(?:if|unless|whenever|suppose|assuming|hypothetically|in case|in the event)\b/i;

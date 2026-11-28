@@ -72,22 +72,57 @@ describe("first-person block requests", () => {
     "I'd like to block lunch with Sam on Friday",
     "I need to block an hour with Ana",
     "I'd like to report some feedback about Sam's plan",
+    "I need to block Sam's time on Friday",
+    "I need to block Sam's birthday on my calendar",
+    "I want to block next Friday for Sam",
+    "I need to block early Saturday for Sam",
+    "I'd like to block half an hour with Sam",
+    "I want to block next week for Ana",
+    "I want to block late Friday for drinks with Sam",
+    "I need to block spam texts",
+    "I want to block notifications",
+    "I need to block next weekend for Ana and me",
   ])("a non-person first-person object blocks and reports nobody: %s", async text => {
     const { w, opp } = await bookedGroup();
+    const from = w.mark();
     await w.say("m", text);
     expect(w.net.exportState().blocks).toEqual([]);
     expect(w.net.safetyReports()).toEqual([]);
     expect(opp()?.stage).toBe("scheduled");
+    const replies = w.to("m", from).map(s => s.body);
+    expect(replies).not.toContain(copy.blocked);
+    expect(replies).not.toContain(copy.blockUnmatched);
+    expect(replies).not.toContain(copy.reportUnmatched());
   });
 
   test.each([
     "I want to block Jordan, Sam is fine",
     "I'd like to block Jordan, not Sam",
+    "I want to block Jordan, but not Sam",
+    "I want to block Jordan instead of Sam",
+    "I'd like to block Jordan rather than Sam",
+    "I want to block Jordan though Sam is fine",
+    "I want to block Jordan (Sam is fine)",
+    "I need to block Jordan and keep Sam",
+    "I want to block Jordan—Sam is fine",
   ])("a name in a later clause is not the target: %s", async text => {
     const { w, opp } = await bookedGroup();
+    const from = w.mark();
     await w.say("m", text);
     expect(w.net.exportState().blocks).toEqual(["j|m"]);
     expect(w.net.safetyReports()).toEqual([]);
     expect(opp()?.stage).toBe("scheduled");
+    expect(w.to("m", from).map(s => s.body)).toEqual([copy.blockUnmatched]);
+  });
+
+  test.each([
+    "I want to block Sam for being rude",
+    "I'd like to block Sam Lee",
+  ])("a named counterpart with a reason or a full name blocks: %s", async text => {
+    const { w, opp } = await bookedGroup();
+    await w.say("m", text);
+    expect(w.net.exportState().blocks).toEqual(["m|s"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("closed");
   });
 });
