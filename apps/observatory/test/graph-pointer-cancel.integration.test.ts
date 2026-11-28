@@ -126,3 +126,44 @@ test("city changes fit the unselected graph without overriding a manual view or 
     restore();
   }
 });
+
+test("GraphView keeps the same world point at the center when the viewport changes", async () => {
+  const window = new Window({ url: "http://127.0.0.1/" });
+  let resized = () => {};
+  const restoreDom = installDom(window, {
+    window, document: window.document, navigator: window.navigator,
+    location: window.location, history: window.history,
+    localStorage: window.localStorage, sessionStorage: window.sessionStorage,
+    requestAnimationFrame: () => 1,
+    cancelAnimationFrame: () => {},
+    ResizeObserver: class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    },
+  });
+  installCanvasShim(window);
+  const canvas = window.document.createElement("canvas") as unknown as HTMLCanvasElement;
+  let width = 1200, height = 600;
+  canvas.getBoundingClientRect = () => ({ width, height, top: 0, left: 0, right: width, bottom: height, x: 0, y: 0, toJSON: () => ({}) });
+  const { GraphView } = await import("../web/graph.ts");
+  const graph = new GraphView(canvas);
+  try {
+    graph["view"] = { x: 535, y: 245, k: 2 };
+    const center = graph["toWorld"](600, 300);
+    width = 400; height = 360;
+    resized();
+    expect(graph["toWorld"](200, 180)).toEqual(center);
+    expect(graph["view"].k).toBe(2);
+
+    width = 0; height = 0;
+    resized();
+    width = 800; height = 540;
+    resized();
+    expect(graph["toWorld"](400, 270)).toEqual(center);
+  } finally {
+    graph.destroy();
+    await window.happyDOM.close();
+    restoreDom();
+  }
+});
