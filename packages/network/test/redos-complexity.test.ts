@@ -32,3 +32,20 @@ describe("inbound-text regexes on adversarial repeats", () => {
     expect(ms).toBeLessThan(3000);
   }, 30_000);
 });
+
+describe("probe conditional clause checks on clause-dense repeats", () => {
+  const options = [
+    { key: "a", start: Date.UTC(2026, 11, 4, 15), end: Date.UTC(2026, 11, 4, 16), label: "Friday 3pm" },
+    { key: "b", start: Date.UTC(2026, 11, 5, 15), end: Date.UTC(2026, 11, 5, 16), label: "Saturday 3pm" },
+  ];
+
+  test("repeated conditional clauses stay fast and read the same", () => {
+    const unit = "if it works, maybe 3pm or 4pm, ";
+    const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
+    const t0 = performance.now();
+    const r = parseProbeReply(unit.repeat(1200), options as never, false, ctx);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply(unit, options as never, false, ctx));
+    expect(ms).toBeLessThan(6200);
+  }, 60_000);
+});
