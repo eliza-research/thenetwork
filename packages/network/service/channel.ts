@@ -54,7 +54,7 @@ async function rescheduleAdmission(tx: SQL, row: QueueRow, runtimeId: string, no
 async function venueSwapNoticeAdmission(tx: SQL, row: QueueRow, runtimeId: string): Promise<RecipientCheck> {
   const refused = { ok: false, reason: "venue_swap_changed" } as const;
   if (row.kind !== "transactional" || !row.memberId || !row.oppId) return { ok: true };
-  const named = /^Quick tweak for .+: let's do (.+) instead\. Still works for you\?$/.exec(row.text);
+  const named = /^(?:.*?\s)?Quick tweak for .+: let's do (.+) instead\. Still works for you\?$/.exec(row.text);
   if (!named) return { ok: true };
   const [saved] = await tx<{ state: NetworkState }[]>`select state from network.network_state where app_id=${row.app} and id=${runtimeId}`;
   const opp = saved?.state.opps.find(o => o.id === row.oppId);

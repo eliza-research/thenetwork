@@ -10,7 +10,7 @@ import { Mini, type Spec } from "./mini.ts";
 
 // spec/outboundAdmission.md, "Recheck a queued message at send time": a queued venue-swap
 // notice goes out only while the recipient still holds a seat and the named venue is current.
-test.skipIf(!pgAvailable).each(["current", "peer dropped", "venue swapped again"] as const)(
+test.skipIf(!pgAvailable).each(["current", "peer dropped", "venue swapped again", "prefixed current", "prefixed peer dropped", "prefixed venue swapped again"] as const)(
   "a queued venue-swap notice rechecks the seat and the venue (%s)", async scenario => {
     const url = await migratedDb("venue_swap_notice_claim");
     const clock = new SimClock(Date.UTC(2026, 10, 16, 19));
@@ -67,7 +67,8 @@ test.skipIf(!pgAvailable).each(["current", "peer dropped", "venue swapped again"
       opp.venueArea = "Area B";
       opp.venueId = "venue-b";
       const noticeId = "venue-swap-notice-fixture";
-      const body = formatSilentPartnerVenueSwap("Saturday at 11am", "Venue B", { area: "Area B" });
+      const prefix = scenario === "prefixed peer dropped" ? "That plan didn't come together this time. " : scenario.startsWith("prefixed") ? "Got it, thanks. " : "";
+      const body = prefix + formatSilentPartnerVenueSwap("Saturday at 11am", "Venue B", { area: "Area B" });
       await adapter.queue.setLineSafety("review");
       await rt.unitOfWork(net => {
         net.importState({ ...net.exportState(), members: saved.members, opps: saved.opps });
@@ -79,10 +80,10 @@ test.skipIf(!pgAvailable).each(["current", "peer dropped", "venue swapped again"
       await rt.unitOfWork(net => {
         const current = net.exportState();
         const booked = current.opps.find(o => o.id === oppId)!;
-        if (scenario === "peer dropped") {
+        if (scenario.endsWith("peer dropped")) {
           booked.status = booked.status.map(([id, status]): [string, typeof status] => [id, id === peer ? "dropped" : status]);
         }
-        if (scenario === "venue swapped again") {
+        if (scenario.endsWith("venue swapped again")) {
           booked.venue = "Venue C";
           booked.venueArea = "Area C";
           booked.venueId = "venue-c";
@@ -93,7 +94,7 @@ test.skipIf(!pgAvailable).each(["current", "peer dropped", "venue swapped again"
       clock.advance(HOUR);
       await rt.deliver();
       await rt.deliver();
-      const sent = scenario === "current";
+      const sent = scenario.endsWith("current");
       expect(await adapter.queue.statusOf(noticeId)).toBe(sent ? "sent" : "suppressed_ineligible");
       expect(calls.filter(call => call.idempotencyKey === `tn:${noticeId}`)).toHaveLength(sent ? 1 : 0);
     } finally {
