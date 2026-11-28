@@ -767,7 +767,7 @@ class ObsStore {
   }
   setCity(city: City | "all") {
     this.selectedCity = city;
-    if (city !== "all" && this.ui.filters.borough !== "all" && !zonesForCity(city).includes(this.ui.filters.borough)) {
+    if (this.ui.filters.borough !== "all" && !this.zones().includes(this.ui.filters.borough)) {
       this.setFilters({ borough: "all" });
       return;
     }
