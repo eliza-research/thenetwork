@@ -13,13 +13,18 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { expect, test, vi } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
-import type { ClockInfo, ObsMember, ObsState, ObsStats } from "../src/types.ts";
+import type { ClockInfo, ObsMember, ObsOpportunity, ObsState, ObsStats } from "../src/types.ts";
 import { installDom } from "./dom.ts";
 
 const clock = (now: number): ClockInfo => ({ now, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false });
 const counters = () => ({ msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, accepted: 0, meetings: 0, enjoymentSum: 0, enjoymentN: 0 });
 const member = (id: string, name: string, area: string): ObsMember => ({
   id, name, city: "nyc", area, state: "normal", joined: true, joinedAt: 1, minor: false, age: 30, counters: counters(),
+});
+const opportunity = (id: string): ObsOpportunity => ({
+  id, kind: "intro", source: "network", origin: "request", generator: "probe", city: "nyc",
+  objective: "Meet someone", score: 1, explanations: {}, exploration: false, participants: ["m1", "m2"], alternates: [],
+  state: "SCHEDULED", status: { m1: "accepted", m2: "accepted" }, enjoyment: {}, createdAt: 1, updatedAt: 2,
 });
 const stats = (): ObsStats => ({
   members: 4, joined: 4, byCity: { nyc: 4 }, byState: { joined: 4 }, messages: 0, inbound: 0, outbound: 0,
@@ -39,6 +44,9 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
     edges: [], opportunities: [], feed: [], stats: stats(), engineRuns: [],
   };
+  // A snapshot need not send opportunities in ID order. The first three
+  // are valid prefix matches for the exact ID in the fourth slot.
+  state.opportunities = ["nw-42-10", "nw-42-11", "nw-42-12", "nw-42-1"].map(opportunity);
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
     async fetch(req, server) {
@@ -145,10 +153,21 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     await press("Enter");
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
     await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "NW-42-1");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => el.textContent?.includes("nw-42-10")), "opportunity ID hits");
+    const ids = [...window.document.querySelectorAll('[role="option"]')]
+      .map(el => el.textContent?.trim().split(" · ").at(-1))
+      .filter(id => id?.startsWith("nw-"));
+    expect(ids).toEqual(["nw-42-1", "nw-42-10", "nw-42-11"]);
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "opportunity", id: "nw-42-1" });
+    await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "maya");
       input.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
-    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => (el.textContent ?? "").includes("Maya")), "member hits");
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => (el.textContent ?? "").includes("Maya · Greenwich Village")), "member hits");
     const memberOptions = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
