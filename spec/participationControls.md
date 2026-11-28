@@ -17,7 +17,9 @@ pure def participationControlAllowed(signedDirect: bool, ownActiveMembership: bo
 
 ### Quiet hours use the member's local clock
 
-Save two explicitly specified whole hours. Ask for clarification when the text does not determine both endpoints. Accept overnight windows. A window with the same start and end hour is empty. Explicitly turning quiet hours off sets both endpoints to midnight. A signup or an update to a different setting keeps the saved hours.
+Save two explicitly specified whole hours. Ask for clarification when a quiet hours command does not determine both endpoints. Accept overnight windows. A window with the same start and end hour is empty. Explicitly turning quiet hours off sets both endpoints to midnight. A signup or an update to a different setting keeps the saved hours.
+
+A direct refusal bounded by a clock time, such as "don't text me after 10 pm" or "don't text me before 7 am", sets the named endpoint and keeps the saved value of the other endpoint. The reply confirms the saved window. The [quiet hours rules](quietHours.md) define the endpoint update.
 
 ```quint
 pure def controlQuietHoursValid(startHour: int, endHour: int): bool =
@@ -59,8 +61,15 @@ pure def lawNonDatingCategoryLeavesDatingPermission(priorOptIn: bool, category: 
 
 ### Pause and resume apply immediately to matching
 
-Set paused participation until the member changes it, or resume normal participation. Either explicit change replaces a temporary participation window. A member who opted out of carrier messages must use the separate START path. An idempotent repeat confirms the setting without creating another setting-change event.
+Set paused participation until the member changes it, or resume normal participation. Either explicit change replaces a temporary participation window. A pause that names a weekday ends at the start of the next such weekday in the member's local time, counting the same weekday as seven days ahead. A member who opted out of carrier messages must use the separate START path. An idempotent repeat confirms the setting without creating another setting-change event.
 
 ```quint
 pure def participationControlState(pause: bool): str = if (pause) "paused" else "normal"
+
+pure def pauseUntilWeekdayDaysAhead(todayWeekday: int, namedWeekday: int): int =
+  if ((namedWeekday - todayWeekday + 7) % 7 == 0) 7 else (namedWeekday - todayWeekday + 7) % 7
+
+pure def lawPauseUntilWeekdayEndsAhead(todayWeekday: int, namedWeekday: int): bool =
+  (0 <= todayWeekday and todayWeekday < 7 and 0 <= namedWeekday and namedWeekday < 7) implies
+    (pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) >= 1 and pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) <= 7)
 ```

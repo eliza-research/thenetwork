@@ -73,3 +73,37 @@ export function lawNonDatingCategoryLeavesDatingPermission(priorOptIn: boolean, 
 export function participationControlState(pause: boolean): string {
   return pause ? "paused" : "normal";
 }
+
+/** Story: Change when and about what Eliza can contact me / Pause and resume apply immediately to matching (spec/participationControls.md) */
+//@ pure
+export function pauseUntilWeekdayDaysAhead(todayWeekday: number, namedWeekday: number): number {
+  return remainder_participationControls(exact_participationControls(exact_participationControls(namedWeekday - todayWeekday) + 7), 7) === 0 ? 7 : remainder_participationControls(exact_participationControls(exact_participationControls(namedWeekday - todayWeekday) + 7), 7);
+}
+
+/** Story: Change when and about what Eliza can contact me / Pause and resume apply immediately to matching (spec/participationControls.md) */
+//@ pure
+export function lawPauseUntilWeekdayEndsAhead(todayWeekday: number, namedWeekday: number): boolean {
+  //@ ensures \result === true
+  return !(0 <= todayWeekday && todayWeekday < 7 && 0 <= namedWeekday && namedWeekday < 7) || (pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) >= 1 && pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) <= 7);
+}
+
+/** An integer result, which must be exact: past 2^53 a number is rounded, where Quint's and the proof's integers are not. */
+export function exact_participationControls(n: number): number {
+  if (!Number.isSafeInteger(n)) throw new RangeError(`an integer result is ${n}, beyond 2^53, where TypeScript cannot hold it exactly`);
+  return n;
+}
+
+/** Whole-number division as Quint does it: towards zero. */
+//@ pure
+export function quotient_participationControls(a: number, b: number): number {
+  //@ requires b !== 0
+  if (b === 0) throw new RangeError(`${a} cannot be divided by zero`);
+  return (a < 0 === b < 0 ? 1 : -1) * Math.floor(Math.abs(a) / Math.abs(b)) + 0;
+}
+
+/** The remainder of that division; it has the sign of the dividend. */
+//@ pure
+export function remainder_participationControls(a: number, b: number): number {
+  //@ requires b !== 0
+  return a - b * quotient_participationControls(a, b);
+}

@@ -1,6 +1,6 @@
 import { CITY_TZ, fromLocal, isCity, localParts, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
-  decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
+  decideTravelCancellation, decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
@@ -110,6 +110,28 @@ export function travelPresenceCommand(text: string, now?: number): TravelCommand
   return natural ? { city, dates: natural } : { city };
 }
 
+const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)";
+const CANCELLED_RX = "(?:cancelled|canceled)";
+const TRAVEL_CANCEL_RX = new RegExp(
+  `^(?:my trip to ${CITY_RX} (?:is|was|has been) ${CANCELLED_RX}`
+  + `|my ${CITY_RX} trip (?:is|was|has been) ${CANCELLED_RX}`
+  + `|i ${CANCELLED_RX} my trip to ${CITY_RX}`
+  + `|i ${CANCELLED_RX} my ${CITY_RX} trip`
+  + `|(?:please )?cancel my trip to ${CITY_RX}`
+  + `|(?:please )?cancel my ${CITY_RX} trip)$`,
+  "i",
+);
+
+export function travelCancellationCommand(text: string): { city: City } | undefined {
+  const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
+  const match = TRAVEL_CANCEL_RX.exec(line);
+  if (!match) return;
+  const named = match.slice(1).find(part => part !== undefined)!.toLowerCase();
+  const resolved = homeCityOf(named) ?? resolveCity(named);
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
+  return city ? { city } : undefined;
+}
+
 /** Same canonical and app-local guard on the write and on any later reply replay. */
 export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner): Promise<boolean> {
   const binding = await memberCommandOwner(tx, accounts, owner);
@@ -144,4 +166,32 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
     case "TravelAlreadySaved": break;
   }
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
+}
+
+export async function cancelTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, city: City, now: number): Promise<string | undefined> {
+  const authorized = await travelOwner(tx, accounts, owner);
+  const { app, memberId } = owner;
+  const current = authorized ? await tx`select member_id, city, type, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${city} and to_at > ${new Date(now)}
+    order by from_at asc` : [];
+  const trips = current.map(presenceOf).flatMap(p => {
+    const window = temporaryPresenceWindow(p);
+    return window ? [window] : [];
+  });
+  const name = CITY_NAME[city];
+  switch (decideTravelCancellation(authorized, trips.length)) {
+    case "TravelCancelUnavailable": return;
+    case "TravelCancelNone": return `No saved ${name} trip in ${app.domain}.`;
+    case "TravelCancelOne": break;
+  }
+  await tx`delete from network.presence
+    where ctid in (select ctid from network.presence
+      where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${city} and to_at > ${new Date(now)}
+      order by from_at asc limit 1)`;
+  const trip = trips[0]!;
+  const fromParts = localParts(trip.from, CITY_TZ[city]);
+  const toParts = localParts(trip.to, CITY_TZ[city]);
+  const from = isoDate(fromParts.year, fromParts.month, fromParts.day);
+  const to = isoDate(toParts.year, toParts.month, toParts.day);
+  return `Removed in ${app.domain}: ${name} trip from ${from} until ${to} (end date excluded).`;
 }

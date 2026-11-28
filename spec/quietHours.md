@@ -17,6 +17,22 @@ pure def withinQuietHours(localHour: int, startHour: int, endHour: int): bool =
   else localHour >= startHour or localHour < endHour
 ```
 
+### A texted clock bound updates the saved window
+
+A member can state a clock bound in a text, such as "don't text me after 10 pm" or "don't text me before 7 am". An after bound sets the window start. A before bound sets the window end. A stated window sets both. A bound the text does not state keeps its saved value. The text reader parses the stated bound. Later sends and notification planning read the saved window.
+
+```quint
+pure def quietStartAfterText(currentStart: int, statedStart: int, startStated: bool): int =
+  if (startStated) statedStart else currentStart
+
+pure def quietEndAfterText(currentEnd: int, statedEnd: int, endStated: bool): int =
+  if (endStated) statedEnd else currentEnd
+
+pure def lawUnstatedBoundKeepsSavedValue(currentStart: int, currentEnd: int, statedStart: int, statedEnd: int): bool =
+  quietStartAfterText(currentStart, statedStart, false) == currentStart and
+    quietEndAfterText(currentEnd, statedEnd, false) == currentEnd
+```
+
 ### The boundary remains the same for windows that span midnight
 
 When the start and end differ, the start is quiet and the end is open in both daytime and overnight windows.
