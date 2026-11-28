@@ -879,7 +879,6 @@ export class MeetupCoordinator {
     for (const m of this.meetups.values()) {
       if (meetupId !== undefined && m.meetupId !== meetupId && m.oppId !== meetupId) continue;
       m.confirmed = m.confirmed.filter(id => id !== memberId);
-    
       m.arrivedIds = m.arrivedIds.filter(id => id !== memberId);
       m.participants = m.participants.filter(id => id !== memberId);
       m.pendingDigest = m.pendingDigest.filter(u => u.memberId !== memberId);
