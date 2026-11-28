@@ -67,3 +67,12 @@
 {"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes, no problem!","expect":{"seeks":["man"]},"confirmed":true}
 {"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"yes 100%","expect":{"seeks":["man"]},"confirmed":true}
 {"confirmed":false,"correction":"both men and women","expect":{"seeks":["man","woman"]},"messages":["woman looking for men 28-38 within 5 mi of 11211"]}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"either men or women","expect":{"seeks":["man","woman"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"no, both women and men","expect":{"seeks":["man","woman"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"both women","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"both men and women?","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"wait, both men and women? no, just men","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"both men and women lol jk, just men","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"both men and women haha kidding, men only","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"either men or women lol no, men","expect":{"seeks":["man"]},"confirmed":false}
+{"messages":["woman looking for men 28-38 within 5 mi of 11211"],"correction":"both men and women. no wait, just men","expect":{"seeks":["man"]},"confirmed":false}
