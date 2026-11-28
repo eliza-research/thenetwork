@@ -140,6 +140,17 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     const memberOptions = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "member", id: "m3" });
+    const filterEscape = (consumed: boolean) => {
+      const e = new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+      if (consumed) e.preventDefault();
+      window.dispatchEvent(e);
+    };
+    await act(async () => { filterEscape(true); });
+    expect(store.ui.focus).toEqual({ kind: "member", id: "m3" });
+    await act(async () => { filterEscape(false); });
+    expect(store.ui.focus).toBeNull();
   } finally {
     await act(async () => { appRoot?.unmount(); });
     disconnectStore?.();

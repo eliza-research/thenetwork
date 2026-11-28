@@ -60,8 +60,11 @@ export function App() {
       else if (e.key === "n" && canStep) store.control({ type: "step", ms: HOUR });
       else if (e.key === "d" && canStep) store.control({ type: "step", ms: DAY });
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const onUnhandledKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || !e.defaultPrevented) onKey(e);
+    };
+    window.addEventListener("keydown", onUnhandledKey);
+    return () => window.removeEventListener("keydown", onUnhandledKey);
   }, []);
   const signIn = staffSignIn(s);
   if (signInView(signIn.phase) !== "ShowConsole") {
