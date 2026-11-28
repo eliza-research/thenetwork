@@ -478,3 +478,6 @@
 {"text":"I don't work Thursday, Saturday works","answer":"yes","keys":["b"]}
 {"text":"I love my work, Saturday works","answer":"yes","keys":["b"]}
 {"text":"I work on my car on Saturday","answer":"unclear","keys":[]}
+{"text":"I work Thursday morning, 7 works","answer":"unclear","keys":[]}
+{"text":"I have a meeting Thursday morning, 7 works","answer":"unclear","keys":[]}
+{"text":"I work Thursday, 7 works","answer":"unclear","keys":[]}
