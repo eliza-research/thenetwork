@@ -107,6 +107,14 @@ describe("first-person block requests", () => {
     "I want to block Jordan—Sam is fine",
     "I want to block Jordan Sam is fine",
     "I want to block Jordan Sam is my friend",
+    "I want to block Jordan Sam seems fine",
+    "I want to block Jordan Sam can stay",
+    "I want to block Jordan Sam has been great",
+    "I want to block Jordan Sam stays",
+    "I want to block Jordan Sam will stay",
+    "I need to block Jordan Sam isn't the problem",
+    "I want to block Jordan Sam and Ana are fine",
+    "I want to block Jordan Sam I like",
   ])("a name in a later clause is not the target: %s", async text => {
     const { w, opp } = await bookedGroup();
     const from = w.mark();
@@ -141,6 +149,8 @@ describe("first-person block requests", () => {
   test.each([
     "I want to block Sam for being rude",
     "I'd like to block Sam Lee",
+    "I want to block Sam Lee is rude",
+    "I want to block Sam is that possible",
   ])("a named counterpart with a reason or a full name blocks: %s", async text => {
     const { w, opp } = await bookedGroup();
     await w.say("m", text);

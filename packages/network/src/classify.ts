@@ -176,7 +176,7 @@ function firstPersonTarget(raw: string): string | undefined {
   }
   const next = tokens[name.length];
   if (next && FIRST_PERSON_NON_PERSON_HEAD.test(next.toLowerCase().replace(/[^a-z0-9'-]/g, ""))) return undefined;
-  if (name.length > 1 && next && /^(?:is|was|are|were)$/i.test(next)) name.pop();
+  if (name.length > 1 && next) name.length = 1;
   return name.join(" ");
 }
 const COUNTERPART_SAFETY_REQUEST = /^(?:please\s+)?(block|report)\s+(my\s+(?:date|match))\b(?:\s+please)?\s*(?:[.!?]*$|[,;:])/i;
