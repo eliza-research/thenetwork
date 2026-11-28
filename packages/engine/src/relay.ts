@@ -1146,7 +1146,7 @@ export function parseRelayRequest(text: string): RelayRequest {
     NEW_CAN_HAVE_GRANT.test(candidate[0])
     && (start !== 0 || start + spoken.length !== own.length);
   const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
-    && !reportsPrivateRequest(spoken, candidate);
+    && !reportsPrivateRequest(spoken, candidate)
     && !newCanHaveAtQuotedEdge(candidate);
   let contact = contacts.find(direct);
   const modal = RELAY_MODAL.exec(t);
