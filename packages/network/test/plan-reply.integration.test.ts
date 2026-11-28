@@ -99,6 +99,38 @@ describe("plan probe replies", () => {
     }
   });
 
+  test.each(["None of those work, sorry.", "Sorry, none of those work."])(
+    "a reviewed Friends invitation declines on %s", async reply => {
+    // spec/friendsPlanTimeChoice.md: a direct no or "none of those work" declines the invitation.
+    const ids = ["a", "b"];
+    const w = new Mini([...ids.map(id => ({ ...climber(id), area: "Astoria", interests: ["tennis"],
+      wants: [{ objective: "find a regular tennis partner", category: "hobby" as const }] })),
+      ...["c", "d", "e", "f"].map(id => ({ id, name: id, age: 30, area: "Astoria" }))],
+    { app: "friends", pack: friendsPack, plansConfig: FRIENDS_PLANS, inlineJudge: holdEveryItem.inline, plans: true, matchingEnabled: true });
+    for (const id of ids) w.facets.push({ id: `${id}:verified`, memberId: id, kind: "fact", value: "Verified",
+      tags: ["verify:liveness:pass", "verify:age:pass"], scope: "agent_private", provenance: "said", confidence: 1 });
+    await w.onboard(...ids);
+    const now = w.clock.now();
+    const windows = [Date.UTC(2026, 9, 8, 23), Date.UTC(2026, 9, 9, 23), Date.UTC(2026, 9, 10, 14)]
+      .map(start => ({ start, end: start + 2 * HOUR }));
+    const state = w.net.exportState();
+    state.interactions.push(...[["a", "c", "d"], ["b", "e", "f"]].map(participants => ({ id: `attended-${participants[0]}`, kind: "group" as const, category: "social" as const,
+      at: now - DAY, outcome: "completed" as const, participants })));
+    for (const member of state.members) member.stated = { windows, at: now, until: now + 7 * DAY };
+    w.net.importState(state);
+
+    await w.run(HOUR);
+    const item = w.net.reviewQueue().find(item => item.origin === "planner")!;
+    expect(w.net.review(item.oppId, "approve", { reviewer: "sim_staff" })).toBe(true);
+    const probe = (id: string) => w.sent.find(message => message.to === id && message.meta.plan?.planId === item.oppId);
+    expect(await w.runUntil(() => !!probe("a"), 20 * HOUR)).toBe(true);
+    await w.say("a", reply);
+    expect(w.sent.filter(message => message.to === "a" && message.body === copy.probeTimeClarify)).toEqual([]);
+    expect(w.net.exportState().opps.find(opp => opp.id === item.oppId)?.planRun?.answers["a"]).toBe("no");
+    expect(w.meetings).toEqual([]);
+    expect(probe("b")).toBeUndefined();
+  });
+
   test.each(["I'm free Sunday afternoon.", "Busy week, nothing free."])("a reviewed generic plan backfills a seat after %s", async reply => {
     const primary = ["a", "b", "c"];
     const ids = [...primary, "d"];
