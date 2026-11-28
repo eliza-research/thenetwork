@@ -145,7 +145,8 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     expect(status.res.status).toBe(200);
     expect(status.body!.result.structuredContent).toMatchObject({ app: "slop", status: "not_joined" });
     expect((await call(env, endpoint("slop"), "check_status", {}, { token: token.access_token })).res.status).toBe(401);
-    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(400);
+    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(201);
+    expect((await register(env, "slop.date", { redirect_uris: ["https://platform.openai.com/callback"] })).res.status).toBe(400);
   });
 
   test("the slop.date site has no OpenAI surface and the hub full Slop endpoint refuses a ChatGPT client, which must use /mcp/slop/openai: neither issues an authorization request", async () => {
@@ -163,13 +164,14 @@ describe("ChatGPT on the ntwrk.party endpoint", () => {
     expect(env.provider.sent).toHaveLength(0);
   });
 
-  test("the ntwrk.party Slop ChatGPT connector is open to every member at /mcp/slop/openai, with no allowlist, and slop.date refuses ChatGPT (owner decision 2026-11-23)", async () => {
+  test("the ntwrk.party Slop ChatGPT connector is open to every member at /mcp/slop/openai, with no allowlist, while slop.date allows ChatGPT on the full surface and refuses non-ChatGPT OpenAI clients", async () => {
     const env = setup({ env: { PLATFORM_ENV: "staging" } });
     for (const [id, phone] of [["first-member", PHONE_A], ["second-member", PHONE_B]] as const) {
       await env.people.createPerson({ id, e164: phone, method: "otp_sms", at: env.clock.t, lowestAge: 30, phoneHash: env.accounts.phoneHash(phone) });
       await env.people.putMembership({ app: "slop", personId: id, memberId: `slop_${id}`, state: "active", review: null, firstName: "Rae", profile: {}, joinedAt: env.clock.t, leftAt: null });
     }
-    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(400);
+    expect((await register(env, "slop.date", { redirect_uris: [CHATGPT] })).res.status).toBe(201);
+    expect((await register(env, "slop.date", { redirect_uris: ["https://platform.openai.com/callback"] })).res.status).toBe(400);
     const hub = await register(env, HUB, { redirect_uris: [CHATGPT] });
     const hubFlow = await browserFlow(env, HUB, hub.body.client_id, PHONE_A, { redirectUri: CHATGPT, resource: endpoint("slop") });
     expect(hubFlow.start.status).toBe(400);

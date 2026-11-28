@@ -104,7 +104,7 @@ test("committed reschedule moves the arrival pre-brief, arrival relay, and no-sh
   const w = new Mini(pair.map(id => ({
     id, name: `${id.toUpperCase()}nton Q`, age: 30, area: "Greenpoint", quietHours: [22, 8], interests: ["climbing", "hiking"],
     skills: ["belaying"], wants: [{ objective: "find climbing partners", category: "hobby" as const }],
-  })), { plans: false });
+  })), { plans: false, arrivalBriefs: true });
   await w.onboard(...pair);
   const id = w.propose(pair);
   await w.answerProbes(pair);
