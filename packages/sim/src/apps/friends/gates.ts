@@ -48,7 +48,7 @@ export function officialGates(p: FriendsMetrics[], r: FriendsMetrics[], o: Frien
     (p[0]?.weeks ?? 8) === 8
       ? { id: "repeat", gate: "Repeat-meetup rate >= 30% (8 weeks)", value: pct(M(p, m => m.repeatRate)), pass: M(p, m => m.repeatRate) >= 0.3 }
       : { id: "repeat", gate: "Repeat-meetup rate >= 30% (8 weeks)", value: `n/a at ${p[0]!.weeks} weeks (tracked below; ${pct(M(p, m => m.repeatRate))} without handoffs)`, pass: true },
-    { id: "v14", gate: "V14 >= 0.75x oracle and >= 1.75x random", value: `${pct(v)}: ${(v / vo).toFixed(2)}x oracle (${pct(vo)}), ${(v / vr).toFixed(2)}x random (${pct(vr)})`, pass: v >= 0.75 * vo && v >= 1.75 * vr },
+    { id: "v14", gate: "V14 >= 0.75x oracle and >= 1.75x random", value: `${pct(v)}: ${(v / vo).toFixed(2)}x oracle (${pct(vo)}), ${(v / vr).toFixed(2)}x random (${pct(vr)})`, pass: v > 0 && v >= 0.75 * vo && v >= 1.75 * vr },
     { id: "friendship", gate: "Members with a friendship forming >= 2x random", value: `${pct(fr)} vs ${pct(frr)} (${(fr / frr).toFixed(1)}x)`, pass: fr >= 2 * frr },
     { id: "travel", gate: "Median group max travel <= 35 min", value: `${M(p, m => m.travel.medianGroupMax).toFixed(1)} min`, pass: M(p, m => m.travel.medianGroupMax) <= 35 },
     { id: "borough30", gate: "No borough with >= 30 members below 0.7x V14", value: `${b30.min.toFixed(2)} (${b30.worst}; worst seed ${b30.worstSeed.toFixed(2)})`, pass: b30.min >= 0.7 },
