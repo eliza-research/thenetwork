@@ -23,7 +23,6 @@ import type { DesireLaneId } from "./desire-lanes.ts";
 import type {
   AgentAuthMode,
   BrandAppId,
-  OutreachChannel,
   PersonaId,
   SubscriptionProvider,
   SupportedCity,
@@ -610,7 +609,7 @@ export function buildSocialPlaybookBrief(
 }
 
 export function isSocialPlaybookChannel(
-  channel: OutreachChannel | "reddit" | string | null | undefined,
+  channel: string | null | undefined,
 ): channel is SocialPlaybookChannel {
   return (
     channel === "x" ||

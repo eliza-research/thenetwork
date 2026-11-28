@@ -70,11 +70,11 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
       llmClient,
     });
     const [chadwick] = await manager.ensureCanonicalRoster();
-    await store.updateAgent(chadwick!.id, { provider: "surplus", authMode: "api" });
+    await store.updateAgent(chadwick.id, { provider: "surplus", authMode: "api" });
 
     const basePrompt = "Draft a brief follow-up reply.";
 
-    const aliceTurn = await manager.dispatchTurn(chadwick!.id, basePrompt, {
+    const aliceTurn = await manager.dispatchTurn(chadwick.id, basePrompt, {
       campaignId: campaign.id,
       channel: "x",
       targetContact: { id: "h-alice", displayLabel: "Alice", lastMessageText: "Hey Alice here" },
@@ -88,7 +88,7 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
     expect(manager.getPromptCache().stats().size).toBe(1);
 
     // Same contact with reversed untrustedContext key order MUST hit cache
-    const aliceReordered = await manager.dispatchTurn(chadwick!.id, basePrompt, {
+    const aliceReordered = await manager.dispatchTurn(chadwick.id, basePrompt, {
       campaignId: campaign.id,
       channel: "x",
       targetContact: { id: "h-alice", displayLabel: "Alice", lastMessageText: "Hey Alice here" },
@@ -100,7 +100,7 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
     expect(calls).toBe(1);
 
     // Same base prompt with NO contact must NOT receive Alice's cached output
-    const genericTurn = await manager.dispatchTurn(chadwick!.id, basePrompt, {
+    const genericTurn = await manager.dispatchTurn(chadwick.id, basePrompt, {
       campaignId: campaign.id,
       channel: "x",
     });
@@ -110,7 +110,7 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
     expect(calls).toBe(2);
 
     // Same base prompt for Bob must NOT receive Alice's or generic cached output
-    const bobTurn = await manager.dispatchTurn(chadwick!.id, basePrompt, {
+    const bobTurn = await manager.dispatchTurn(chadwick.id, basePrompt, {
       campaignId: campaign.id,
       channel: "x",
       targetContact: { id: "h-bob", displayLabel: "Bob", lastMessageText: "Bob checking in" },
@@ -122,7 +122,7 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
     expect(calls).toBe(3);
 
     // Same prompt on LinkedIn vs X must NOT collide in cache
-    const linkedinTurn = await manager.dispatchTurn(chadwick!.id, basePrompt, {
+    const linkedinTurn = await manager.dispatchTurn(chadwick.id, basePrompt, {
       campaignId: campaign.id,
       channel: "linkedin",
     });
@@ -334,7 +334,8 @@ describe("Pass 3 Wave 1: marketing cache isolation, retry accounting, determinis
     );
     expect(autoScreen.ok).toBe(true);
     expect(autoScreen.deterministicRule).toBe("applicant_screen");
-    expect(JSON.parse(autoScreen.outputText ?? "{}").decision).toBe("rejected_underage");
+    const parsedScreen = JSON.parse(autoScreen.outputText ?? "{}") as { decision?: string };
+    expect(parsedScreen.decision).toBe("rejected_underage");
     expect(cliCalls).toBe(0);
 
     // Explicitly passing deterministicTaskHint: null opts out of auto-routing
