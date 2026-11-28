@@ -168,6 +168,7 @@ export const HIDDEN_ONLY_KEYS = [
   "trueAge", "adversarial", "honesty", "flakiness", "socialEnergy", "capacity", "responsiveness",
   "privateDisclosure", "openness", "verbosity", "archetype", "community", "relationships", "hidden",
   "richness", "observationTruth", "truth", "personaTexture", "knowledge",
+  "gender", "workplace", "personaPublic",
 ];
 
 export const readJsonl = async <T = any>(path: string): Promise<T[]> =>
