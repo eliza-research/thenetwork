@@ -453,3 +453,6 @@
 {"text":"Yes, I'm free after 2","answer":"unclear","keys":[]}
 {"text":"after 2 works","answer":"unclear","keys":[]}
 {"text":"Yes, Thursday works, I can stay around 2 hours","answer":"yes","keys":["a"]}
+{"text":"Yes, Sunday neither works","answer":"yes","keys":["a","b"]}
+{"text":"Yes, Saturday and Sunday neither works","answer":"yes","keys":["a"]}
+{"text":"Sunday neither works","answer":"yes","keys":[]}
