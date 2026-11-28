@@ -849,6 +849,7 @@ test.each([
   "Never forget to send it",
   "Don't you dare forget to send it",
   "Don't send them anything else",
+  "Don't send anything else, just my number",
   "Never send them the invoice",
   "Ari said “don't send it anymore.”",
   "Ana says, don't send it now",
