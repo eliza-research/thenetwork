@@ -229,8 +229,6 @@ export function parseRescheduleCommand(raw: string, tz: string = NY, ctx?: Resch
   return undefined;
 }
 
-
-
 const SIMPLE_VOTE_YES = /^(?:yes|yeah|yep|yup|ya|sure|sounds?\s+good|works?(?:\s+for\s+me)?|that\s+works|perfect|great|ok|okay|fine\s+by\s+me|all\s+good|👍)[.!\s]*$/i;
 const SIMPLE_VOTE_NO = /^(?:no|nope|nah|can'?t(?:\s+make\s+it)?|cannot|doesn'?t\s+work|won'?t\s+work|keep\s+(?:the\s+)?original|decline|pass)[.!\s]*$/i;
 const NATURAL_RESCHEDULE_CUE = /\b(?:reschedule|re-schedule|move\s+(?:it|our|the|this)|push\s+(?:it|back|our|the)|shift\s+(?:it|our|the)|bump\s+(?:it|our|the)|change\s+(?:the\s+)?(?:time|day)|can\s+we\s+do|could\s+we\s+do|how\s+about|different\s+(?:time|day))\b/i;
