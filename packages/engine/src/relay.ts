@@ -1133,9 +1133,9 @@ export function parseRelayRequest(text: string): RelayRequest {
   const start = own.length - own.trimStart().length;
   const contacts = [...spoken.matchAll(CONTACT_REQ)];
   const photos = [...spoken.matchAll(PHOTO_REQ)];
-  const NEW_CAN_HAVE_GRANT = /\b(?:they|she|he) can have my (?:email|cell|contact(?:\s+info)?|phone(?!\s+number))\b/i;
+  const NEW_CAN_HAVE_GRANT = /\b(?:they|she|he) can have my (?:email|cell|contact(?:\s+info)?|phone(?! number))\b/i;
   const newCanHaveHasQuotation = (candidate: RegExpMatchArray): boolean =>
-    NEW_CAN_HAVE_GRANT.test(candidate[0]) && t.replace(/[\u201C\u201D]/g, '"') !== own;
+    NEW_CAN_HAVE_GRANT.test(candidate[0]) && t !== own;
   const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
     && !reportsPrivateRequest(spoken, candidate)
     && !newCanHaveHasQuotation(candidate);
