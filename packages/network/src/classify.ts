@@ -1263,7 +1263,7 @@ const DAY_NAMES = [
 ] as const;
 const DAY_ABBR_CONTEXT = String.raw`(?=\.?(?:\s*(?:\d|@|at\b|after\b|around\b|before\b|from\b|or\b|and\b|too\b|&|\/|works?\b|`
   + String.raw`doesn'?t\b|does not\b|don'?t\b|do not\b|won'?t\b|will not\b|can'?t\b|cannot\b|wouldn'?t\b|would not\b|isn'?t\b|is not\b|aren'?t\b|are not\b|is bad\b|`
-  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b)|\s*[,;!?.]|\s*$))`;
+  + String.raw`is (?:good|fine|great|best|better)\b|morning|afternoon|evening|night|eve\b|lunch|after work)|\s*[,;!?.]|\s*$))`;
 const DAY_WORDS: [RegExp, string][] = DAY_NAMES.map(([label, abbreviation]) => [
   new RegExp(String.raw`\b${label.toLowerCase()}s?\b|(?<!')\b(?:${abbreviation})\b${DAY_ABBR_CONTEXT}`, "g"), label,
 ]);
@@ -2324,9 +2324,16 @@ export function availabilityTags(body: string, now?: number, tz: string = "Ameri
       refusedDayEnds.push(end);
     }
   };
+  const verbLikeDay = (m: RegExpMatchArray) => {
+    if (!["sun", "wed", "weds", "sat"].includes(m[0].toLowerCase())) return false;
+    if (!/^\s*(?:after work|lunch)\b/.test(t.slice(m.index! + m[0].length))) return false;
+    const prev = t.slice(0, m.index!).match(/([a-z']+)\s*$/)?.[1];
+    if (!prev || ["free", "available", "open", "on", "and", "or", "do", "my", "this", "next", "usually", "mostly", "generally"].includes(prev)) return false;
+    return !/\b(?:free|available|open|works|can|usually|mostly|generally)\b/.test(clauseAt(t, m.index!, m[0].length));
+  };
   DAY_WORDS.forEach(([re], i) => { for (const m of t.matchAll(re)) {
     if (negatedAt(t, m.index!, m[0].length)) recordNegatedDay(i, m.index! + m[0].length);
-    else toks.push({ at: m.index!, days: [i] });
+    else if (!verbLikeDay(m)) toks.push({ at: m.index!, days: [i] });
   } });
   if (now !== undefined) {
     const lp = localParts(now, tz);
