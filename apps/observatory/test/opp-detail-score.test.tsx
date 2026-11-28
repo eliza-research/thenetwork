@@ -125,7 +125,7 @@ test("detail Score shows the headline without zero bars for a plan opportunity, 
 const reviewOpp = (id: string, participants: string[], objective: string, score: number, components: ScoreComponents, deadline: number): ObsOpportunity => ({
   ...opp(id, participants, objective, score, components),
   state: "IN_REVIEW",
-  review: { queuedAt: NOW - 3_600_000, deadline },
+  review: { queuedAt: NOW - 3_600_000, deadline, exceptionReason: "other_concern" },
 });
 
 async function setupReview() {

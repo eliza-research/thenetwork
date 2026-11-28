@@ -252,7 +252,7 @@ function KpiGrid({ area }: { area?: string }) {
   const originOk = (o: Opp) => f.origin === "all" || originOf(o) === f.origin;
   const opps = [...s.opps.values()].filter(o => o.source !== "shadow" && o.participants.some(id => inScope(s.members.get(id))));
   const active = members.filter(isMemberActive).length;
-  const inReview = opps.filter(o => o.state === "IN_REVIEW" && originOk(o));
+  const inReview = opps.filter(o => o.state === "IN_REVIEW" && o.review?.exceptionReason && originOk(o));
   const dueSoon = inReview.some(o => o.review && o.review.deadline - now < 3_600_000);
   const reviewOff = s.network?.kind === "stub";
   const proposals = opps.filter(o => originOk(o) && s.inRange(o.createdAt)).length;

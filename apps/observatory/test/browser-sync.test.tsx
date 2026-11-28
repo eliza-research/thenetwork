@@ -18,7 +18,7 @@ test("the console keeps the current view, live feed, and review draft", async ()
   const opportunity = (id: string, deadline: number): Partial<ObsOpportunity> => ({
     id, state: "IN_REVIEW", participants: [id], explanations: { [id]: `${id} draft` }, alternates: [],
     objective: `${id} objective`, kind: "intro", score: 0, source: "player", createdAt: 0, updatedAt: 0,
-    review: { queuedAt: 0, deadline, rerolls: 0 },
+    review: { queuedAt: 0, deadline, rerolls: 0, exceptionReason: "other_concern" },
   });
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
@@ -183,7 +183,7 @@ test("real plan approval waits for the visible revision on click and keyboard", 
     id, kind: "group", source: "network", origin: "planner", generator: "plan", category: "social", city: "nyc",
     objective: "A hike", score: 0.5, explanations: {}, exploration: false, participants: ["a", "b", "c"], alternates: ["d", "e"],
     state: "IN_REVIEW", status: {}, enjoyment: {}, createdAt: now, updatedAt: now,
-    review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision },
+    review: { queuedAt: now, deadline: now + 10_000 + revision, rerolls: revision, exceptionReason: "other_concern" },
   });
   const times = [{ start: now + DAY, end: now + DAY + HOUR }, { start: now + 3 * DAY, end: now + 3 * DAY + HOUR }];
   const reply = (revision: number, name: string): StaffPlanPreview => ({

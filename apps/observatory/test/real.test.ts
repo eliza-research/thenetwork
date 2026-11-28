@@ -176,6 +176,20 @@ describe.skipIf(!pgAvailable)("RealSource (Postgres)", () => {
     expect(safety.minors.members).toEqual(["signal"]);
     expect(safety.minors.unknownAge.sort()).toEqual(["quiet", "unseen"]);
   }, T);
+  test("real review queued counts only judge-held items", async () => {
+    const now = new Date();
+    const opp = (id: string) => ({ id, kind: "intro", state: "IN_REVIEW", source: "engine", city: "nyc", objective: "a coffee", explanations: {}, exploration: false, created_at: now, updated_at: now });
+    const rows = {
+      members: [], channel_identities: [], facets: [], intents: [], presence: [], edges: [], messages: [], feedback: [], events: [], matching_runs: [], requests: [],
+      network_state: [{ id: "nyc", version: 1, saved_at: now, state: { matchingEnabled: true, deferred: [], members: [] } }],
+      opportunities: [opp("awaiting"), opp("held")], participations: [],
+      review_items: [{ opportunity_id: "held", queued_at: now, deadline: new Date(now.getTime() + 3_600_000), exception_reason: "other_concern" }],
+    };
+    await writeRows(sql, rows as unknown as Parameters<typeof writeRows>[1], { truncate: true });
+    const r = await open();
+    expect(r.state().network?.review.queued).toBe(1);
+    expect(r.state().opportunities.map(o => [o.id, o.review?.exceptionReason ?? null]).sort()).toEqual([["awaiting", null], ["held", "other_concern"]]);
+  }, T);
   test("a run summary stored before the search outcomes existed reads with an empty search tally and no outcomes", async () => {
     const now = new Date();
     const summary = {
