@@ -40,10 +40,10 @@ describe("probe conditional clause checks on clause-dense repeats", () => {
   ];
 
   test("many clocks in one long sentence stay fast and read the same", () => {
-    const clocks = "3pm or 4pm, ".repeat(600);
+    const clocks = "3pm or 4pm, ".repeat(1200);
     const ctx = { now: Date.UTC(2026, 11, 1), tz: "UTC" };
     const t0 = performance.now();
-    const r = parseProbeReply(clocks + "blah, ".repeat(12000), options as never, false, ctx);
+    const r = parseProbeReply(clocks + "blah, ".repeat(6000), options as never, false, ctx);
     const ms = performance.now() - t0;
     expect(r).toEqual(parseProbeReply(clocks, options as never, false, ctx));
     expect(ms).toBeLessThan(2000);
