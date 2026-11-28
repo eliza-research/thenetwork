@@ -431,6 +431,63 @@ describe("Pass 3 Wave 2: Natural-language scheduling, counter-proposal relay, 3-
     expect(m2.closed).toBe(false);
     expect(m2.confirmed).toEqual(["ana", "cy"]);
   });
+
+  test("removeMember drops the member from participants, their queued digest updates, and the group mode", async () => {
+    const venues = new VenueManager();
+    const sfList = venues.listVenues("sf");
+    const primary = sfList[0]!;
+    const backup = sfList[1]!;
+    const startMs = Date.UTC(2026, 9, 10, 20, 0);
+    const sent: Array<{ to: MemberId; body: string; kind: string }> = [];
+    const host: MeetupCoordHost = {
+      venues,
+      ratesPhotos: false,
+      party: (_meetupId, id) => ({
+        id,
+        firstName: id === "ana" ? "Ana" : id === "ben" ? "Ben" : "Cy",
+        age: 30,
+        confirmed: true,
+        optedOut: false,
+      }),
+      blocked: () => false,
+      privateFacts: () => ({ forbidden: [], canaries: [] }),
+      send: (to, body, meta) => sent.push({ to, body, kind: meta.kind }),
+    };
+
+    const coord = new MeetupCoordinator(host);
+    coord.registerMeetup({
+      meetupId: "m3",
+      oppId: "opp3",
+      app: "friends",
+      city: "sf",
+      startMs,
+      participants: ["ana", "ben", "cy"],
+      confirmed: ["ana", "ben", "cy"],
+      primaryVenueId: primary.id,
+      backupVenueId: backup.id,
+      venueName: primary.name,
+      venueAddress: primary.address,
+      arrivalLandmark: primary.arrivalLandmark,
+    });
+    expect(coord.exportState().meetups.find(m => m.meetupId === "m3")!.mode).toBe("group");
+
+    // Ana's late update queues into the group digest instead of relaying.
+    const late = coord.handleInbound("ana", "running 15 mins late", startMs - 50 * MINUTE, "m3");
+    expect(late.handled).toBe(true);
+    expect(late.state).toBe("late");
+    expect(late.queuedDigest).toBe(true);
+    const queued = coord.exportState().meetups.find(m => m.meetupId === "m3")!;
+    expect(queued.pendingDigest).toHaveLength(1);
+    expect(queued.pendingDigest[0]!.memberId).toBe("ana");
+
+    coord.removeMember("ana", "m3");
+    const after = coord.exportState().meetups.find(m => m.meetupId === "m3")!;
+    expect(after.participants).toEqual(["ben", "cy"]);
+    expect(after.pendingDigest).toEqual([]);
+    expect(after.mode).toBe("one_to_one");
+    expect(after.closed).toBe(false);
+    expect(after.confirmed).toEqual(["ben", "cy"]);
+  });
 });
 
 describe("Pass 3 Wave 2: MCP red-lines, anti-double-ping, reschedule, survey, and SMS commands", () => {
