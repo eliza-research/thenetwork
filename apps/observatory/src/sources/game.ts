@@ -668,7 +668,7 @@ export class GameSource implements DataSource {
     const before = this.world.clock.now();
     const run = (async () => {
       const totalDelta = target - before;
-      const chunked = totalDelta > 2 * HOUR;
+      const chunked = totalDelta > 2 * HOUR && this.listeners.size > 0;
       if (chunked) {
         this.store.clock.busy = "stepping";
         this.push();
@@ -676,11 +676,16 @@ export class GameSource implements DataSource {
       try {
         if (chunked) {
           let cursor = before;
+          let lastPush = performance.now();
           while (cursor < target && !this.draining) {
             cursor = Math.min(target, cursor + 2 * HOUR);
             await this.world.advanceTo(cursor);
             this.syncClock();
-            this.push();
+            const nowMs = performance.now();
+            if (nowMs - lastPush >= this.opts.pushMs) {
+              this.push();
+              lastPush = nowMs;
+            }
             if (cursor < target) await new Promise<void>(resolve => setImmediate(resolve));
           }
         } else {

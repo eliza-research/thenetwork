@@ -37,8 +37,6 @@ export const NON_DRINKER_TOKENS: ReadonlySet<string> = new Set([
   "drinking:never",
   "drinking:none",
   "alcohol:none",
-  "slop:dealbreaker:heavy_drinker",
-  "dealbreaker:heavy_drinker",
   ...STRICT_SOBER_TOKENS,
 ]);
 

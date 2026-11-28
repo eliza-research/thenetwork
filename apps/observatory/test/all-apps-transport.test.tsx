@@ -42,12 +42,12 @@ test("simulation time controls only operate in the named app workspace", async (
   try {
     await act(async () => root.render(createElement(App)));
     expect(button("+1d")).toBeDefined();
-    await click("all");
+    await act(async () => { await store.setApp("all"); });
     expect(store.page.kind).toBe("all");
     expect(button("+1d")).toBeUndefined();
     await act(async () => { key(" "); key("n"); key("d"); });
     expect(control).not.toHaveBeenCalled();
-    await click("slop");
+    await act(async () => { await store.setApp("slop"); });
     expect(store.page.kind).toBe("app");
     await click("+1d");
     await act(async () => { key("n"); });

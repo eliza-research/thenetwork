@@ -123,7 +123,7 @@ export function SimControlBar({
       {...props}
     >
       <div className="flex shrink-0 items-center gap-1">
-        <Button variant={running ? "secondary" : "primary"} size="sm" loading={busy} onClick={onToggleRun}>
+        <Button variant={running ? "secondary" : "primary"} size="sm" loading={busy} aria-label={running ? "Pause" : "Play"} onClick={onToggleRun}>
           {running ? "Pause" : "Play"}
         </Button>
         {steps.map((item) => (

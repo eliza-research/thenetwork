@@ -165,8 +165,10 @@ function OverviewTrends() {
   const game = metricsSectionShown("TruthSection", staff);
   const n = s.network;
   const learned = ["introduced", "met", "enjoyed", "would_interact_again", "avoid", "blocked"];
-  const scorecardBurden = st.scorecard?.find(m => m.key === "attention_burden")?.value;
-  const proactive = scorecardBurden !== undefined && scorecardBurden !== null ? scorecardBurden : st.proactive / Math.max(1, st.joined) / weeks;
+  const proactiveRate = st.scorecard?.find(m => m.key === "attention_burden")?.value;
+  const proactiveHundredths = proactiveRate != null && Number.isFinite(proactiveRate)
+    ? Math.ceil(Math.round(proactiveRate * 1000) / 10)
+    : null;
   const showDen = st.attended + st.noShows + st.cancelledWithNotice;
   const c = (k: string) => n?.counters[k] ?? 0;
   const inviteYes = n?.kind === "consent" ? (c("reveals") ? c("revealYes") / c("reveals") : 0) : st.invites ? st.accepts / st.invites : 0;
@@ -207,10 +209,10 @@ function OverviewTrends() {
         <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} sparkline={pointsOf("messages")} delta={deltaOf(pointsOf("messages"))} />
         <Kpi
           label="proactive / member / week"
-          value={proactive.toFixed(2)}
-          tone={proactiveWarns(Math.ceil(proactive * 100)) ? "warn" : undefined}
+          value={proactiveHundredths === null ? "–" : (proactiveHundredths / 100).toFixed(2)}
+          tone={proactiveHundredths !== null && proactiveWarns(proactiveHundredths) ? "warn" : undefined}
           target={maxProactiveHundredths / 100}
-          title={scorecardBurden !== undefined && scorecardBurden !== null ? "Observed membership time from PRD 28.2 scorecard" : `Budget: normal <= ${maxProactiveHundredths / 100} proactive messages per member per week`}
+          title={proactiveHundredths !== null ? "Observed membership time from PRD 28.2 scorecard" : `Budget: normal <= ${maxProactiveHundredths / 100} proactive messages per member per week`}
         />
         <Kpi label="invite yes rate" value={pct(inviteYes)} sparkline={pointsOf("proposals")} delta={deltaOf(pointsOf("proposals"))} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} sparkline={pointsOf("meetings")} delta={deltaOf(pointsOf("meetings"))} />

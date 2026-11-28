@@ -10,7 +10,7 @@ import type { ObsState } from "../src/types.ts";
 
 test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the registry row alone decides)", async () => {
   const dir = await mkdtemp(join(tmpdir(), "lab-matching-"));
-  const lab = new Lab({ dir: join(dir, "lab"), concurrency: 1 });
+  const lab = new Lab({ dir: join(dir, "lab"), concurrency: 2 });
   let server: ObservatoryServer | undefined;
   try {
     const token = "local-matching-lock-0000000000000000";
@@ -40,7 +40,7 @@ test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the re
       expect((await (await server.source("game", app)).config()).matchingEnabled).toBe(true);
       expect(s.stats.judge).toMatchObject({ invariants: 0, canaryLeaks: 0, minorContacts: 0 });
     }
-    for (const app of ["peon", "ntwrk"] as const) {
+    await Promise.all((["peon", "ntwrk"] as const).map(async app => {
       const run = await lab.start({ app, arms: [...LAB_ARMS], seeds: [1], days: 7 }, "regression");
       const deadline = Date.now() + 150_000;
       let done = (await lab.get(run.id))!;
@@ -55,7 +55,7 @@ test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the re
         expect(result.meetings).toBeGreaterThan(0);
       }
       expect(JSON.parse(await readFile(done.file, "utf8")).results).toEqual(done.results);
-    }
+    }));
   } finally {
     await server?.stop();
     lab.dispose();

@@ -392,8 +392,8 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       .map(f => {
         const x = f as FacetX;
         const at = typeof x.observedAt === "number" ? x.observedAt : f.validFrom;
-        const rawAge = at !== undefined ? dayAge((now - at) / DAY) : undefined;
-        const age = rawAge;
+        const rawAge = at !== undefined ? (now - at) / DAY : undefined;
+        const age = rawAge !== undefined ? dayAge(rawAge) : undefined;
         const val = scrub(f.value).trim().slice(0, 180);
         const src = typeof x.source === "string" && x.source.trim().length > 0 ? x.source : undefined;
         return {

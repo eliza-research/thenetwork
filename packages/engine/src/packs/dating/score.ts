@@ -36,7 +36,7 @@ function profileRedLinesOf(p: SlopProfile): SlopProfileRedLines {
   for (let i = 0; i < p.dealbreakers.length; i++) {
     const d = p.dealbreakers[i]!.trim().toLowerCase();
     if (!strictSober && STRICT_SOBER_TOKENS.has(d)) { strictSober = true; nonDrinker = true; }
-    if (!nonDrinker && (d === "heavy_drinker" || DRINKING_VALUE_NON_DRINKER_TOKENS.has(d))) nonDrinker = true;
+    if (!nonDrinker && DRINKING_VALUE_NON_DRINKER_TOKENS.has(d)) nonDrinker = true;
     if (!lowWalking && LOW_WALKING_TOKENS.has(d)) lowWalking = true;
     if (!lowNoise && (LOW_NOISE_TOKENS.has(d) || d === "sensory_quiet" || d === "no_loud_venues")) lowNoise = true;
     if (!daytimeOnly && DAYTIME_ONLY_TOKENS.has(d)) daytimeOnly = true;

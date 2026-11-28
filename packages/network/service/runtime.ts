@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { CITY_TZ, DAY, isBusinessDomain, isCity, isDatingDomain, LeakGuard, timeZoneOf } from "@thenetwork/core";
+import { CITY_TZ, DAY, HOUR, isBusinessDomain, isCity, isDatingDomain, LeakGuard, timeZoneOf } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -1141,7 +1141,10 @@ export class NetworkRuntime {
   private nextSnapshotBoundary(snapshot: WorldSnapshot, now: number): number {
     let until = now + 2_000;
     const nextUtcDay = (Math.floor(now / DAY) + 1) * DAY;
-    if (nextUtcDay < until) until = nextUtcDay;
+    const nextEarliestDay = (Math.floor((now - 12 * HOUR) / DAY) + 1) * DAY + 12 * HOUR;
+    const nextLatestDay = (Math.floor((now + 14 * HOUR) / DAY) + 1) * DAY - 14 * HOUR;
+    const nextDay = Math.min(nextUtcDay, nextEarliestDay, nextLatestDay);
+    if (nextDay < until) until = nextDay;
     for (let i = 0; i < snapshot.facets.length; i++) {
       const f = snapshot.facets[i]!;
       if (f.validFrom !== undefined && f.validFrom > now && f.validFrom < until) until = f.validFrom;

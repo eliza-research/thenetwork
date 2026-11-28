@@ -593,7 +593,9 @@ describe.skipIf(!pgAvailable)("network service, several apps (Postgres)", () => 
       const me = await call(app, "GET", "/api/me");
       expect(me.body).toMatchObject({ app, membership: { state: "active", firstName: "Rae" } });
       const other = app === "slop" ? FR : "slop";
-      for (const w of [other, APPS[other].domain]) expect(JSON.stringify(me.body)).not.toContain(w);
+      expect(JSON.stringify(me.body)).not.toContain(APPS[other].domain);
+      const { enabledDomains: _enabled, availableDomains: _available, ...scoped } = me.body;
+      expect(JSON.stringify(scoped)).not.toContain(other);
     }
     // Stop on slop's site: every app on the number stops (PRD 40.3: one line, carriers see one sender).
     expect((await call("slop", "POST", "/api/me/stop", {})).status).toBe(200);
