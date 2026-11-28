@@ -499,18 +499,91 @@ function readsTextRefusal(clause: string): boolean {
   return match !== null && textRefusalStops(match[1] !== undefined, match[2] !== undefined);
 }
 
-const TIME_BOUNDED_REFUSAL = /\b(?:don't|do not|dont|never|stop|quit|cease|no more|no)\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\s+(?:me|us))?(?:\s+(?:texts?|messages?|msgs?))?\s+(?:after|before)\s+\d{1,2}(?:\s*\d{2})?\s*(?:am|pm)\b/g;
+const BOUNDED_HEAD = "(?:don't|do not|dont|never|stop|quit|cease|no more|no)\\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\\s+(?:me|us))?(?:\\s+(?:texts?|messages?|msgs?))?";
+const BOUNDED_TIME = "(?:1[0-2]|[1-9])(?:\\s*[0-5]\\d)?\\s*(?:am|pm)";
+const TIME_BOUNDED_REFUSAL = new RegExp(`\\b${BOUNDED_HEAD}\\s+(?:after|before)\\s+${BOUNDED_TIME}\\b`, "g");
+const BARE_STOP_REMAINDER = /\b(?:stop|unsubscribe)\b(?!\s+(?:by|at|in|over|for)\b)/;
+
+function remainderRefuses(remainder: string, refuses: (value: string) => boolean): boolean {
+  return refuses(remainder) || BARE_STOP_REMAINDER.test(remainder);
+}
 
 function clauseRefusalStops(clause: string, refuses: (value: string) => boolean): boolean {
   const hasRefusal = refuses(clause);
   TIME_BOUNDED_REFUSAL.lastIndex = 0;
-  const timeBounded = hasRefusal && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+  const bounded = TIME_BOUNDED_REFUSAL.test(clause);
+  TIME_BOUNDED_REFUSAL.lastIndex = 0;
+  const timeBounded = hasRefusal && bounded && !remainderRefuses(clause.replace(TIME_BOUNDED_REFUSAL, " "), refuses);
   return refusalStopsLine(hasRefusal, timeBounded);
 }
 
 function onlyTimeBoundedRefusal(clause: string, refuses: (value: string) => boolean): boolean {
   TIME_BOUNDED_REFUSAL.lastIndex = 0;
-  return TIME_BOUNDED_REFUSAL.test(clause) && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+  if (!TIME_BOUNDED_REFUSAL.test(clause)) return false;
+  TIME_BOUNDED_REFUSAL.lastIndex = 0;
+  return !remainderRefuses(clause.replace(TIME_BOUNDED_REFUSAL, " "), refuses);
+}
+
+export type ClockBoundedRefusal = { kind: "save"; start?: number; end?: number } | { kind: "ask"; scoped: boolean };
+
+const BOUNDED_CLAUSE = new RegExp(`^(?:please |pls )?(?:i (?:already |just )?said )?${BOUNDED_HEAD}\\s+(after|before)\\s+(${BOUNDED_TIME})\\b(.*)$`);
+const SECOND_BOUND = new RegExp(`^\\s*(?:or|and)\\s+(after|before)\\s+(${BOUNDED_TIME})\\b(.*)$`);
+const BOUNDED_COURTESY = /^(?:please|pls|thanks|thank you|ok|okay)(?: (?:please|pls|thanks|thank you|ok|okay))*$/;
+const BOUNDED_SCOPED = /\b(?:tonight|today|tomorrow|weekends?|weekdays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b|\b(?:this|next) week\b|\bfor now\b/;
+const BOUNDED_CONDITIONAL = /\b(?:if|when|unless|maybe|sometimes|in case)\b/;
+
+function boundedHour(time: string): { hour: number; whole: boolean } {
+  const m = /^(1[0-2]|[1-9])(?:\s*([0-5]\d))?\s*(am|pm)$/.exec(time.trim())!;
+  return { hour: (Number(m[1]) % 12) + (m[3] === "pm" ? 12 : 0), whole: m[2] === undefined || m[2] === "00" };
+}
+
+function boundedClauseRefuses(clause: string): boolean {
+  if (!clause || NEGATED_OPT_OUT.test(clause)) return false;
+  return readsTextRefusal(clause) || LIKELY_EN.test(clause) || LIKELY_ES.test(clause)
+    || OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)) || BARE_STOP_REMAINDER.test(clause);
+}
+
+export function readClockBoundedRefusal(text: string): ClockBoundedRefusal | undefined {
+  const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+  const bounds: { start?: number; end?: number } = {};
+  let found = false;
+  let askWhole = false;
+  let askScoped = false;
+  for (const sentence of text.match(/[^.!?\n]+[.!?\n]?/g) ?? []) {
+    if (sentence.trimEnd().endsWith("?") || /["“”]/.test(sentence)) continue;
+    const clauses = sentence.split(/[,;]/).map(norm);
+    const first = clauses[0] ? BOUNDED_CLAUSE.exec(clauses[0]) : null;
+    if (!first) {
+      if (clauses.some(clause => boundedClauseRefuses(clause) && !/\b(?:said|says|told|asked)\b/.test(clause))) return undefined;
+      continue;
+    }
+    found = true;
+    const stated: [string, string][] = [[first[1]!, first[2]!]];
+    let tail = first[3]!.trim();
+    const second = SECOND_BOUND.exec(tail);
+    if (second) {
+      stated.push([second[1]!, second[2]!]);
+      tail = second[3]!.trim();
+    }
+    for (const [direction, time] of stated) {
+      const { hour, whole } = boundedHour(time);
+      if (!whole) askWhole = true;
+      const key = direction === "after" ? "start" : "end";
+      if (bounds[key] !== undefined && bounds[key] !== hour) askWhole = true;
+      bounds[key] = hour;
+    }
+    if (boundedClauseRefuses(tail)) return undefined;
+    if (BOUNDED_SCOPED.test(tail) || BOUNDED_CONDITIONAL.test(tail)) askScoped = true;
+    else if (tail && !BOUNDED_COURTESY.test(tail)) askWhole = true;
+    for (const clause of clauses.slice(1)) {
+      if (boundedClauseRefuses(clause)) return undefined;
+      if (BOUNDED_SCOPED.test(clause) || BOUNDED_CONDITIONAL.test(clause)) askScoped = true;
+    }
+  }
+  if (!found) return undefined;
+  if (askScoped) return { kind: "ask", scoped: true };
+  if (askWhole) return { kind: "ask", scoped: false };
+  return { kind: "save", ...bounds };
 }
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
