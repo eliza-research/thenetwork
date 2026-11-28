@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, SHARED_DOUBLE_NEGATIVE_RE, SPANISH_MONTHS, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, getCity, localParts, normalizeReplyText, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, seedVenuesForCity, unquotedOwnAgeEvidence, validAge, type Category, type City, type CityId } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, SHARED_DOUBLE_NEGATIVE_RE, SPANISH_MONTHS, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, getCity, localParts, normalizeReplyText, quoteOpenByLength, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, seedVenuesForCity, unquotedOwnAgeEvidence, validAge, type Category, type City, type CityId } from "@thenetwork/core";
 import { ageOnDay, birthKeyUsable, precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
@@ -1468,7 +1468,8 @@ function probeChoiceAuthored(prefix: string): boolean {
 }
 
 function authoredYes(text: string): boolean {
-  const unquoted = [...text].map((ch, i) => (quoteStillOpen(text.slice(0, i)) ? (/[.!?\n]/.test(ch) ? ch : " ") : ch)).join("");
+  const quoteOpen = quoteOpenByLength(text);
+  const unquoted = [...text].map((ch, i) => (quoteOpen[i] ? (/[.!?\n]/.test(ch) ? ch : " ") : ch)).join("");
   const segments = unquoted.split(/([.!?\n]|\b(?:but|though|however)\b)/g);
   let own = "";
   for (let i = 0; i < segments.length; i += 2) {
