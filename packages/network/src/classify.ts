@@ -1484,34 +1484,70 @@ const WHEN_CONDITIONAL = String.raw`(?:only\s+when(?:ever)?\b|when(?:ever)?(?=\s
 const CONDITIONAL_OPEN = new RegExp(`^(?:if|unless|provided(?:\\s+that)?|assuming(?:\\s+that)?|as\\s+long\\s+as|so\\s+long\\s+as|on\\s+(?:the\\s+)?condition(?:\\s+that)?|only\\s+if|${WHEN_CONDITIONAL})\\b`);
 const CONDITIONAL_CUE = new RegExp(`\\b(?:if|unless|provided(?:\\s+that)?|assuming(?:\\s+that)?|as\\s+long\\s+as|so\\s+long\\s+as|on\\s+(?:the\\s+)?condition(?:\\s+that)?|only\\s+if|${WHEN_CONDITIONAL}|but\\s+only\\s+(?:if|when))\\b`);
 
+type ConditionalSentence = {
+  clauses: string[];
+  starts: number[];
+  open: boolean[];
+};
+
+let conditionalCache: { text: string; marks: number[]; sentences: Map<number, ConditionalSentence> } | undefined;
+
+function conditionalData(text: string): { marks: number[]; sentences: Map<number, ConditionalSentence> } {
+  if (!conditionalCache || conditionalCache.text !== text) {
+    const marks: number[] = [];
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch === "." || ch === "!" || ch === "?" || ch === "\n") marks.push(i);
+    }
+    conditionalCache = { text, marks, sentences: new Map() };
+  }
+  return conditionalCache;
+}
+
+function conditionalSentence(text: string, start: number): ConditionalSentence {
+  const cache = conditionalData(text);
+  let sentence = cache.sentences.get(start);
+  if (!sentence) {
+    let lo = 0, hi = cache.marks.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (cache.marks[mid]! < start) lo = mid + 1; else hi = mid; }
+    const end = lo < cache.marks.length ? cache.marks[lo]! : text.length;
+    const clauses = text.slice(start, end).split(/[,;]/);
+    const starts: number[] = [];
+    const open: boolean[] = [];
+    let pos = 0;
+    for (const clause of clauses) {
+      starts.push(pos);
+      open.push(CONDITIONAL_OPEN.test(clause.replace(/^\s+/, "")));
+      pos += clause.length + 1;
+    }
+    sentence = { clauses, starts, open };
+    cache.sentences.set(start, sentence);
+  }
+  return sentence;
+}
+
 /** A day named only inside a condition is not a confirmed pick yet. */
 function inConditionalClause(text: string, at: number): boolean {
+  const marks = conditionalData(text).marks;
   let start = 0;
-  for (const mark of [".", "!", "?", "\n"]) start = Math.max(start, text.lastIndexOf(mark, at - 1) + 1);
-  let end = text.length;
-  for (const mark of [".", "!", "?", "\n"]) { const i = text.indexOf(mark, at); if (i >= 0) end = Math.min(end, i); }
-  const clauses = text.slice(start, end).split(/[,;]/);
-  const offset = at - start;
-  let pos = 0;
-  let clauseIndex = -1;
-  let clauseStart = 0;
-  let leadingConditional = false;
-  for (let i = 0; i < clauses.length; i++) {
-    const clause = clauses[i]!;
-    const trimmed = clause.replace(/^\s+/, "");
-    if (i === 0 && CONDITIONAL_OPEN.test(trimmed)) leadingConditional = true;
-    if (offset >= pos && offset < pos + clause.length) { clauseIndex = i; clauseStart = pos; }
-    pos += clause.length + 1;
+  if (at === 0) {
+    if (marks[0] === 0) start = 1;
+  } else {
+    let lo = 0, hi = marks.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (marks[mid]! < at) lo = mid + 1; else hi = mid; }
+    if (lo > 0) start = marks[lo - 1]! + 1;
   }
-  if (clauseIndex < 0) return false;
-  const clause = clauses[clauseIndex]!;
-  const trimmed = clause.replace(/^\s+/, "");
-  if (CONDITIONAL_OPEN.test(trimmed)) return true;
-  if (leadingConditional && clauseIndex > 0) return true;
-  if (CONDITIONAL_CUE.test(clause.slice(offset - clauseStart))) return true;
-  const next = clauses[clauseIndex + 1];
-  if (next !== undefined && CONDITIONAL_OPEN.test(next.replace(/^\s+/, ""))) return true;
-  return false;
+  const sentence = conditionalSentence(text, start);
+  const offset = at - start;
+  let lo = 0, hi = sentence.starts.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sentence.starts[mid]! <= offset) lo = mid + 1; else hi = mid; }
+  const clauseIndex = lo - 1;
+  if (clauseIndex < 0 || offset >= sentence.starts[clauseIndex]! + sentence.clauses[clauseIndex]!.length) return false;
+  if (sentence.open[clauseIndex]) return true;
+  if (sentence.open[0] && clauseIndex > 0) return true;
+  const clause = sentence.clauses[clauseIndex]!;
+  if (CONDITIONAL_CUE.test(clause.slice(offset - sentence.starts[clauseIndex]!))) return true;
+  return sentence.open[clauseIndex + 1] === true;
 }
 
 const RECURRING_PROBE_TIME = new RegExp(
