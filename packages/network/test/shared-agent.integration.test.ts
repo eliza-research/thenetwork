@@ -379,8 +379,17 @@ test("a quiet hours text updates the saved quiet hours", async () => {
   };
   expect(await quiet()).toEqual([21, 9]);
   const say = (id: string, text: string) => { clock.advance(MINUTE); return post(turn(id, phone, text, "friends")); };
+  const emptying = await say("quiet-after-9", "Don't text me after 9am.");
+  expect(((await emptying.json()).replies as string[]).join(" ")).toContain("turn quiet hours off");
+  expect(await quiet()).toEqual([21, 9]);
+  const hey = await say("quiet-hey-after-10", "Hey, don't text me after 10pm.");
+  expect(((await hey.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
   const later = await say("quiet-after-10", "Please don't text me after 10 pm");
   expect(((await later.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
+  const polite = await say("quiet-after-10-please", "Don't text me after 10pm please.");
+  expect(((await polite.json()).replies as string[]).join(" ")).toContain("22:00");
   expect(await quiet()).toEqual([22, 9]);
   const earlier = await say("quiet-before-7", "don't text me before 7 am");
   expect(((await earlier.json()).replies as string[]).join(" ")).toContain("07:00");
@@ -391,9 +400,18 @@ test("a quiet hours text updates the saved quiet hours", async () => {
   const keepHalfHour = await say("quiet-before-8", "don't text me before 8 am");
   expect(((await keepHalfHour.json()).replies as string[]).join(" ")).toContain("22:30 to 08:00");
   expect(await quiet()).toEqual([22.5, 8]);
+  const both = await say("quiet-both-bounds", "Don't text me after 11pm or before 8am.");
+  expect(((await both.json()).replies as string[]).join(" ")).toContain("23:00");
+  expect(await quiet()).toEqual([23, 8]);
+  const quarter = await say("quiet-quarter-hour", "Don't text me after 10:15pm.");
+  expect(((await quarter.json()).replies as string[]).join(" ")).toContain("whole local hours");
+  expect(await quiet()).toEqual([23, 8]);
   const quoted = await say("quiet-quoted", "my sister said \"don't text me after 8 pm\"");
   expect((((await quoted.json()).replies ?? []) as string[]).join(" ")).not.toContain("Quiet hours are");
-  expect(await quiet()).toEqual([22.5, 8]);
+  expect(await quiet()).toEqual([23, 8]);
+  const separate = await say("quiet-separate-stop", "Don't text me after 10pm, stop.");
+  expect(((await separate.json()).replies as string[]).join(" ")).toContain("unsubscribed");
+  expect(await quiet()).toEqual([23, 8]);
 }, 60_000);
 
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {

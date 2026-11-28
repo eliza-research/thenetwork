@@ -584,23 +584,112 @@ function readsTextRefusal(clause: string): boolean {
   return match !== null && textRefusalStops(match[1] !== undefined, match[2] !== undefined);
 }
 
-const TIME_BOUNDED_REFUSAL = /\b(?:don't|do not|dont|never|stop|quit|cease|no more|no)\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\s+(?:me|us))?(?:\s+(?:texts?|messages?|msgs?))?\s+(?:after|before)\s+(?:\d{1,2}(?:\s*\d{2})?\s*(?:am|pm)|(?:[01]?\d|2[0-3])\s+(?:00|30))\b/g;
+const BOUNDED_HEAD = "(?:don't|do not|dont|never|stop|quit|cease|no more|no)\\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\\s+(?:me|us))?(?:\\s+(?:texts?|messages?|msgs?))?";
+const BOUNDED_TIME = "(?:(?:1[0-2]|[1-9])(?:\\s*[0-5]\\d)?\\s*(?:am|pm)|(?:[01]?\\d|2[0-3])\\s+[0-5]\\d)";
+const BARE_STOP_REMAINDER = /\b(?:stop|unsubscribe)\b(?!\s+(?:by|at|in|over|for)\b)/;
 
-function clauseRefusalStops(clause: string, refuses: (value: string) => boolean): boolean {
+function clauseRefusalStops(clause: string, refuses: (value: string) => boolean, boundedText?: string): boolean {
   const hasRefusal = refuses(clause);
-  TIME_BOUNDED_REFUSAL.lastIndex = 0;
-  const timeBounded = hasRefusal && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+  const timeBounded = hasRefusal && (readClockBoundedRefusal(clause) !== undefined
+    || (boundedText !== undefined && readClockBoundedRefusal(boundedText) !== undefined));
   return refusalStopsLine(hasRefusal, timeBounded);
 }
 
-function onlyTimeBoundedRefusal(clause: string, refuses: (value: string) => boolean): boolean {
-  TIME_BOUNDED_REFUSAL.lastIndex = 0;
-  return TIME_BOUNDED_REFUSAL.test(clause) && !refuses(clause.replace(TIME_BOUNDED_REFUSAL, " "));
+function onlyTimeBoundedRefusal(clause: string, refuses: (value: string) => boolean, boundedText?: string): boolean {
+  return refuses(clause) && (readClockBoundedRefusal(clause) !== undefined
+    || (boundedText !== undefined && readClockBoundedRefusal(boundedText) !== undefined));
+}
+
+export type ClockBoundedRefusal = { kind: "save"; start?: number; end?: number } | { kind: "ask"; scoped: boolean };
+
+const BOUNDED_LEAD = "(?:(?:hey|hi|hello|please|pls|seriously|ok|okay|listen|look|lol|haha|lmao|jk) )*(?:just kidding )?(?:i (?:already |just )?(?:said|told you) )?";
+const BOUNDED_CLAUSE = new RegExp(`^${BOUNDED_LEAD}${BOUNDED_HEAD}\\s+(after|before)\\s+(${BOUNDED_TIME})\\b(.*)$`);
+const SECOND_BOUND = new RegExp(`^\\s*(?:(?:or|and)\\s+)?(?:${BOUNDED_LEAD}${BOUNDED_HEAD}\\s+)?(after|before)\\s+(${BOUNDED_TIME})\\b(.*)$`);
+const BOUNDED_DIRECT_REPORTER = /^i (?:already |just )?(?:said|told you)$/;
+const BOUNDED_JOKE = /\b(?:lol|haha|lmao|jk|just kidding)\b/;
+const BOUNDED_COURTESY = /^(?:please|pls|thanks|thank you|ok|okay)(?: (?:please|pls|thanks|thank you|ok|okay))*$/;
+const BOUNDED_SCOPED = /\b(?:tonight|today|tomorrow|weekends?|weekdays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?)\b|\b(?:this|next) week\b|\bfor now\b/;
+const BOUNDED_CONDITIONAL = /\b(?:if|when|unless|maybe|sometimes|in case)\b/;
+
+function boundedHour(time: string): { hour: number; whole: boolean } {
+  const meridiem = /^(1[0-2]|[1-9])(?:\s*([0-5]\d))?\s*(am|pm)$/.exec(time.trim());
+  if (meridiem) {
+    const mins = meridiem[2];
+    const hour = (Number(meridiem[1]) % 12) + (meridiem[3] === "pm" ? 12 : 0) + (mins === "30" ? 0.5 : 0);
+    return { hour, whole: mins === undefined || mins === "00" || mins === "30" };
+  }
+  const military = /^([01]?\d|2[0-3])\s+([0-5]\d)$/.exec(time.trim())!;
+  const mins = military[2]!;
+  return { hour: Number(military[1]) + (mins === "30" ? 0.5 : 0), whole: mins === "00" || mins === "30" };
+}
+
+function boundedClauseRefuses(clause: string): boolean {
+  if (!clause || NEGATED_OPT_OUT.test(clause)) return false;
+  return readsTextRefusal(clause) || LIKELY_EN.test(clause) || LIKELY_ES.test(clause)
+    || OPT_OUT_EN.some(r => r.test(clause)) || OPT_OUT_ES.some(r => r.test(clause)) || BARE_STOP_REMAINDER.test(clause);
+}
+
+export function readClockBoundedRefusal(text: string): ClockBoundedRefusal | undefined {
+  const norm = (s: string) => foldKeywordText(s).toLowerCase().replace(/[^\p{L}\p{N}' ]+/gu, " ").replace(/\s+/g, " ").trim();
+  const bounds: { start?: number; end?: number } = {};
+  let found = false;
+  let askWhole = false;
+  let askScoped = false;
+  for (const sentence of text.match(/[^.!?\n]+[.!?\n]?/g) ?? []) {
+    if (sentence.trimEnd().endsWith("?") || /["“”]/.test(sentence)) continue;
+    const clauses = sentence.split(/[,;]/).map(norm);
+    const boundedIndex = clauses.findIndex(clause => BOUNDED_CLAUSE.test(clause));
+    if (boundedIndex === -1) {
+      if (clauses.some(clause => boundedClauseRefuses(clause) && !/\b(?:said|says|told|asked)\b/.test(clause))) return undefined;
+      continue;
+    }
+    for (const clause of clauses.slice(0, boundedIndex)) {
+      if (!clause) continue;
+      if (/\b(?:said|says|told|asked)\b/.test(clause) && !BOUNDED_DIRECT_REPORTER.test(clause)) return undefined;
+      if (boundedClauseRefuses(clause)) return undefined;
+      if (BOUNDED_SCOPED.test(clause) || BOUNDED_CONDITIONAL.test(clause)) askScoped = true;
+      if (BOUNDED_JOKE.test(clause)) askWhole = true;
+    }
+    found = true;
+    for (const clause of clauses.slice(boundedIndex)) {
+      const match = BOUNDED_CLAUSE.exec(clause);
+      if (!match) {
+        if (boundedClauseRefuses(clause)) return undefined;
+        if (BOUNDED_SCOPED.test(clause) || BOUNDED_CONDITIONAL.test(clause)) askScoped = true;
+        if (BOUNDED_JOKE.test(clause)) askWhole = true;
+        continue;
+      }
+      if (BOUNDED_JOKE.test(clause)) askWhole = true;
+      const stated: [string, string][] = [[match[1]!, match[2]!]];
+      let tail = match[3]!.trim();
+      let second = SECOND_BOUND.exec(tail);
+      while (second) {
+        stated.push([second[1]!, second[2]!]);
+        tail = second[3]!.trim();
+        second = SECOND_BOUND.exec(tail);
+      }
+      for (const [direction, time] of stated) {
+        const { hour, whole } = boundedHour(time);
+        if (!whole) askWhole = true;
+        const key = direction === "after" ? "start" : "end";
+        if (bounds[key] !== undefined && bounds[key] !== hour) askWhole = true;
+        bounds[key] = hour;
+      }
+      if (boundedClauseRefuses(tail)) return undefined;
+      if (BOUNDED_SCOPED.test(tail) || BOUNDED_CONDITIONAL.test(tail)) askScoped = true;
+      else if (tail && !BOUNDED_COURTESY.test(tail)) askWhole = true;
+    }
+  }
+  if (!found) return undefined;
+  if (askScoped) return { kind: "ask", scoped: true };
+  if (askWhole) return { kind: "ask", scoped: false };
+  return { kind: "save", ...bounds };
 }
 
 // A negated STOP applies to its own clause. It must not suppress another explicit STOP.
 const NEGATED_OPT_OUT = /\b(?:(?:don't|dont|do not|never|won't|wont|can't|cant|cannot|not)\s+(?:want (?:you )?to\s+)?)\b(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt)\b|\bstop (?:by|at|in|over|for|on by)\b/;
 const REPORTED_OR_INSTRUCTIONAL_STOP = /\b(?:said|says|told|asked) (?:me )?(?:to )?["']?(?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b|\bhow (?:do|can) i (?:stop|quit|cease|unsubscribe|remove|delete|lose|opt out)\b/;
+const REPORTED_BOUNDED_REFUSAL = new RegExp(`\\b(?:said|says|told|asked)\\b[^.!?]*\\b${BOUNDED_HEAD}\\s+(?:after|before)\\s+${BOUNDED_TIME}\\b`);
 const OPT_OUT_CLAUSE = /[,;.!?]+|\b(?:but|however|though|so)\b/iy;
 const OPT_OUT_COORDINATION = /\band\b/i;
 const LEAVE_COURTESY = / (?:please|pls|thanks|thank you|now|right now|for now|asap|today|immediately)$/;
@@ -642,6 +731,10 @@ function readStopConjunct(clause: string, startsStop: (clause: string) => boolea
 
 function isDirectReportedStop(clause: string): boolean {
   return /^i (?:(?:already|just) )?said /.test(clause);
+}
+
+function isDirectReporter(clause: string): boolean {
+  return /^i (?:(?:already|just) )?(?:said|told you)\b/.test(clause);
 }
 
 function splitOptOutParts(text: string): string[] {
@@ -686,7 +779,8 @@ function optOutClauses(
 ): string[] {
   const t = norm(text);
   const hasNegated = NEGATED_OPT_OUT.test(t);
-  const hasReported = REPORTED_OR_INSTRUCTIONAL_STOP.test(t) && !isDirectReportedStop(t);
+  const hasReported = (REPORTED_OR_INSTRUCTIONAL_STOP.test(t) && !isDirectReportedStop(t))
+    || (REPORTED_BOUNDED_REFUSAL.test(t) && !isDirectReporter(t));
   if (!hasNegated && !hasReported) return [t];
   const parts = splitOptOutParts(text);
   return parts.flatMap((part, i) => {
@@ -697,7 +791,8 @@ function optOutClauses(
     }
     const clause = norm(part);
     if (!clause) return [];
-    if (REPORTED_OR_INSTRUCTIONAL_STOP.test(clause) && !isDirectReportedStop(clause)) return [];
+    if ((REPORTED_OR_INSTRUCTIONAL_STOP.test(clause) && !isDirectReportedStop(clause))
+      || (REPORTED_BOUNDED_REFUSAL.test(clause) && !isDirectReporter(clause))) return [];
     if (!NEGATED_OPT_OUT.test(clause)) return [clause];
     const [first, last, ...rest] = part.split(OPT_OUT_COORDINATION).map(norm);
     if (!first || !last || rest.length) return [];
@@ -733,9 +828,9 @@ export function parseOptOut(text: string, o: { apps?: readonly string[] } = {}):
   })) return { match: "likely", scope: "app", lang };
   const clauses = optOutClauses(raw, norm, clause => readsTextRefusal(clause)
     || LIKELY_EN.exec(clause)?.index === 0 || LIKELY_ES.exec(clause)?.index === 0);
-  if (clauses.some(clause => clauseRefusalStops(clause, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value)))) return { match: "likely", scope: "all", lang };
+  if (clauses.some(clause => clauseRefusalStops(clause, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value), raw))) return { match: "likely", scope: "all", lang };
   const boundedOnly = clauses.length === 1
-    && onlyTimeBoundedRefusal(clauses[0]!, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value));
+    && onlyTimeBoundedRefusal(clauses[0]!, value => readsTextRefusal(value) || LIKELY_EN.test(value) || LIKELY_ES.test(value), raw);
   if (!boundedOnly && clauses.length === 1 && clauses[0] === t && courtesyLang && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
   if (!boundedOnly && clauses.length === 1 && clauses[0] === t && (/^(?:stop|unsubscribe|para|basta)\b/.test(t) || /\b(?:stop|unsubscribe)$/.test(t)) && !/\?\s*$/.test(raw.trim())) return { match: "likely", scope: "all", lang };
   return { match: "none", scope: "all", lang };
@@ -868,6 +963,6 @@ export function optOutPhrase(text: string, isLeave: (text: string) => boolean = 
   const startsStop = (clause: string) => !isLeave(clause)
     && (readsTextRefusal(clause) || OPT_OUT_EN.some(r => r.exec(clause)?.index === 0) || OPT_OUT_ES.some(r => r.exec(clause)?.index === 0));
   return optOutClauses(text, norm, startsStop, isLeave).some(clause =>
-    clauseRefusalStops(clause, value => readsTextRefusal(value) || OPT_OUT_EN.some(r => r.test(value)) || OPT_OUT_ES.some(r => r.test(value))),
+    clauseRefusalStops(clause, value => readsTextRefusal(value) || OPT_OUT_EN.some(r => r.test(value)) || OPT_OUT_ES.some(r => r.test(value)), text),
   );
 }

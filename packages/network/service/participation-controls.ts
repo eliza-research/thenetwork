@@ -1,4 +1,4 @@
-import { cityTimezone, DAY, fromLocal, localParts, quietEndAfterText, quietStartAfterText, type Category } from "@thenetwork/core";
+import { cityTimezone, DAY, fromLocal, localParts, quietEndAfterText, quietStartAfterText, readClockBoundedRefusal, type Category } from "@thenetwork/core";
 import {
   changeParticipationCategory, controlRomanceOptIn, pauseUntilWeekdayDaysAhead,
   participationCategoryAllowed, participationControlAllowed, participationControlState,
@@ -10,7 +10,7 @@ import { canMatchInApp } from "../../platform/src/age.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 
 type ParticipationCommand = { kind: "mode"; pause: boolean; durationDays?: number; untilWeekday?: number; untilTomorrow?: boolean }
-  | { kind: "quiet"; hours?: [number, number]; start?: number; end?: number }
+  | { kind: "quiet"; hours?: [number, number]; start?: number; end?: number; ask?: "scoped" | "whole" }
   | { kind: "category"; category: Category; enable: boolean };
 
 const WEEKDAYS: Record<string, number> = { monday: 0, tuesday: 1, wednesday: 2, thursday: 3, friday: 4, saturday: 5, sunday: 6 };
@@ -69,12 +69,10 @@ export function participationCommand(text: string): ParticipationCommand | undef
     const end = range ? hourOf(range[2]!.trim()) : undefined;
     return { kind: "quiet", hours: quietHoursCommandComplete(start !== undefined, end !== undefined, start ?? 0, end ?? 0) ? [start!, end!] : undefined };
   }
-  const bounded = /^(?:don't|do not|dont|never|stop|quit|cease|no more|no) (?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?: (?:me|us))?(?: (?:texts?|messages?|msgs?))? (after|before) (.+)$/.exec(line);
+  const bounded = readClockBoundedRefusal(text);
   if (bounded) {
-    const hour = hourOf(bounded[2]!.trim());
-    if (hour !== undefined) {
-      return bounded[1] === "after" ? { kind: "quiet", start: hour } : { kind: "quiet", end: hour };
-    }
+    if (bounded.kind === "ask") return { kind: "quiet", ask: bounded.scoped ? "scoped" : "whole" };
+    return { kind: "quiet", ...(bounded.start !== undefined ? { start: bounded.start } : {}), ...(bounded.end !== undefined ? { end: bounded.end } : {}) };
   }
   const setting = /^(allow|enable|turn on|disable|turn off|no more|stop sending(?: me)?|skip|mute) (.+?)(?: (?:suggestions|offers|matches|introductions|intros|stuff|ones|plans))?$/.exec(line);
   const category = setting ? CATEGORY_NAMES.get(setting[2]!) : undefined;
@@ -124,6 +122,7 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   let patch: { quietHours: [number, number] } | { categoriesOptIn: string[]; romanceOptIn?: boolean };
   let reply: string;
   if (command.kind === "quiet") {
+    if (command.ask === "scoped") return "Quiet hours apply every night. Send whole local hours, like ‘quiet hours 10 pm to 8 am’, to set them.";
     const saved = Array.isArray(prefs.quietHours) && prefs.quietHours.length === 2
       && prefs.quietHours.every((h: unknown) => typeof h === "number" && Number.isFinite(h) && h >= 0 && h < 24 && Math.round(h * 2) === h * 2)
       ? prefs.quietHours as [number, number] : [21, 9] as [number, number];
@@ -132,6 +131,9 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
         quietEndAfterText(saved[1], command.end ?? saved[1], command.end !== undefined)] as [number, number]
       : undefined);
     if (!hours) return "Use whole local hours, like ‘quiet hours 10 pm to 8 am’ or ‘quiet hours 22:00 to 08:00’.";
+    if ((command.start !== undefined || command.end !== undefined) && quietHoursEmpty(...hours)) {
+      return "That would turn quiet hours off. Send both whole local hours, like ‘quiet hours 10 pm to 8 am’.";
+    }
     patch = { quietHours: hours };
     reply = quietHoursEmpty(...hours) ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;
   } else {
