@@ -260,8 +260,9 @@ function KpiGrid({ area }: { area?: string }) {
   const yesRate = revealed.length ? allYes / revealed.length : undefined;
   const met = opps.filter(o => originOk(o) && MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
   const upcoming = opps.filter(o => o.state === "SCHEDULED").length;
-  const requests = s.network && !area && f.borough === "all" && s.allDomainsSelected()
-    ? s.network.requests.waiting + s.network.requests.probing
+  const network = !area && f.borough === "all" && s.allDomainsSelected() ? s.network : undefined;
+  const requests = network
+    ? network.requests.waiting + network.requests.probing
     : s.requests.length
       ? s.requests.filter(r => (r.outcome === "probing" || r.outcome === "none" || r.outcome === "open") && s.matchRequestDomain(r) && inScope(s.members.get(r.memberId))).length
       : opps.filter(o => OPEN.has(o.state) && originOf(o) === "request").length;
