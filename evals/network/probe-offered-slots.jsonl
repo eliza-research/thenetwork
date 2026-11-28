@@ -456,3 +456,25 @@
 {"text":"Yes, Sunday neither works","answer":"yes","keys":["a","b"]}
 {"text":"Yes, Saturday and Sunday neither works","answer":"yes","keys":["a"]}
 {"text":"Sunday neither works","answer":"yes","keys":[]}
+{"text":"I work Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I work on Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I have work on Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I have a shift Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I have a meeting Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I have class Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I have an appointment Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I'm at work Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Saturday works, but I work Thursday","answer":"yes","keys":["b"]}
+{"text":"I have work Saturday, Thursday works","answer":"yes","keys":["a"]}
+{"text":"I work on Sunday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday works, I work on Saturday","answer":"yes","keys":["a"]}
+{"text":"I work late Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday works, I have a meeting on Saturday","answer":"yes","keys":["a"]}
+{"text":"Thursday I work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday I have work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday I have a shift, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Sunday I have work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"Thursday is my work day, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I don't work Thursday, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I love my work, Saturday works","answer":"yes","keys":["b"]}
+{"text":"I work on my car on Saturday","answer":"unclear","keys":[]}
