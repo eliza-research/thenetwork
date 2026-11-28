@@ -105,6 +105,8 @@ describe("first-person block requests", () => {
     "I want to block Jordan (Sam is fine)",
     "I need to block Jordan and keep Sam",
     "I want to block Jordan—Sam is fine",
+    "I want to block Jordan Sam is fine",
+    "I want to block Jordan Sam is my friend",
   ])("a name in a later clause is not the target: %s", async text => {
     const { w, opp } = await bookedGroup();
     const from = w.mark();
@@ -113,6 +115,27 @@ describe("first-person block requests", () => {
     expect(w.net.safetyReports()).toEqual([]);
     expect(opp()?.stage).toBe("scheduled");
     expect(w.to("m", from).map(s => s.body)).toEqual([copy.blockUnmatched]);
+  });
+
+  test("a possessive after a second name blocks nobody", async () => {
+    const { w, opp } = await bookedGroup();
+    const from = w.mark();
+    await w.say("m", "I want to block Jordan Sam's fine");
+    expect(w.net.exportState().blocks).toEqual([]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("scheduled");
+    const replies = w.to("m", from).map(s => s.body);
+    expect(replies).not.toContain(copy.blocked);
+    expect(replies).not.toContain(copy.blockUnmatched);
+    expect(replies).not.toContain(copy.reportUnmatched());
+  });
+
+  test("a quoted name blocks that counterpart", async () => {
+    const { w, opp } = await bookedGroup();
+    await w.say("m", "I need to block \"Sam\"");
+    expect(w.net.exportState().blocks).toEqual(["m|s"]);
+    expect(w.net.safetyReports()).toEqual([]);
+    expect(opp()?.stage).toBe("closed");
   });
 
   test.each([
