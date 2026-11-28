@@ -60,52 +60,97 @@ export const PRODUCTION_BUCKETS = [
   "ntwrk-backups",
 ] as const;
 
+export type StateBackendConfig =
+  | { readonly kind: "local" }
+  | { readonly kind: "cloudflare"; readonly accountId?: string }
+  | {
+      readonly kind: "r2";
+      readonly accountId: string;
+      readonly bucket: string;
+      readonly accessKeyId: string;
+      readonly secretAccessKey: string;
+      readonly prefix: string;
+    };
+
+function trimmedEnv(env: Readonly<Record<string, string | undefined>>, key: string): string | undefined {
+  const value = env[key]?.trim();
+  return value && value.length > 0 ? value : undefined;
+}
+
+export function resolveStateBackendConfig(
+  stageName: string,
+  defaultPrefix: string,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): StateBackendConfig {
+  const stageTarget = resolveStage({ stage: stageName, cwd: REPO_ROOT, env });
+  if (stageTarget.kind === "dev" || stageTarget.kind === "test") {
+    return { kind: "local" };
+  }
+  const accountId = trimmedEnv(env, "CLOUDFLARE_ACCOUNT_ID");
+  if (trimmedEnv(env, "ALCHEMY_STATE_STORE") === "cloudflare") {
+    return { kind: "cloudflare", ...(accountId ? { accountId } : {}) };
+  }
+  const bucket = trimmedEnv(env, "R2_STATE_BUCKET");
+  const accessKeyId = trimmedEnv(env, "R2_STATE_ACCESS_KEY_ID");
+  const secretAccessKey = trimmedEnv(env, "R2_STATE_SECRET_ACCESS_KEY");
+  if (bucket && accountId && accessKeyId && secretAccessKey) {
+    return {
+      kind: "r2",
+      accountId,
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+      prefix: trimmedEnv(env, "R2_STATE_PREFIX") ?? defaultPrefix,
+    };
+  }
+  return { kind: "local" };
+}
+
 export function resolveStateLayer(prefix: string) {
   return Layer.unwrap(
     Effect.gen(function* () {
       const stageName = yield* Alchemy.Stage;
-      const stageTarget = resolveStage({ stage: stageName, cwd: REPO_ROOT });
-      if (stageTarget.kind === "dev" || stageTarget.kind === "test") {
+      const config = resolveStateBackendConfig(stageName, prefix, process.env);
+      if (config.kind === "local") {
         return Alchemy.localState();
       }
-      if (process.env.ALCHEMY_STATE_STORE === "cloudflare") {
+      if (config.kind === "cloudflare") {
         return Cloudflare.state({
-          ...(process.env.CLOUDFLARE_ACCOUNT_ID ? { accountId: process.env.CLOUDFLARE_ACCOUNT_ID } : {}),
+          ...(config.accountId ? { accountId: config.accountId } : {}),
         });
       }
-      const bucket = process.env.R2_STATE_BUCKET;
-      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-      const accessKeyId = process.env.R2_STATE_ACCESS_KEY_ID;
-      const secretAccessKey = process.env.R2_STATE_SECRET_ACCESS_KEY;
-      if (bucket && accountId && accessKeyId && secretAccessKey) {
-        const objects = makeR2BucketObjects<StateStoreError>(
-          { kind: "s3", accountId, bucket, accessKeyId, secretAccessKey },
-          {
-            tryPromise: Effect.tryPromise,
-            makeError: ({ message, cause, status }) =>
-              new StateStoreError({
-                message,
-                ...(cause ? { cause } : {}),
-                ...(status !== undefined ? { http: { status } } : {}),
-              }),
-          },
-        );
-        return Layer.effect(
-          State,
-          Effect.gen(function* () {
-            const context = yield* Effect.context();
-            const scope = yield* Effect.scope;
-            const make = makeBucketState({
-              id: "r2",
-              label: "Cloudflare R2",
-              prefix: process.env.R2_STATE_PREFIX ?? prefix,
-              objects: Effect.succeed(objects),
-            }).pipe(Scope.provide(scope), Effect.provideContext(context));
-            return yield* Effect.cached(make);
-          }),
-        );
-      }
-      return Alchemy.localState();
+      const objects = makeR2BucketObjects<StateStoreError>(
+        {
+          kind: "s3",
+          accountId: config.accountId,
+          bucket: config.bucket,
+          accessKeyId: config.accessKeyId,
+          secretAccessKey: config.secretAccessKey,
+        },
+        {
+          tryPromise: Effect.tryPromise,
+          makeError: ({ message, cause, status }) =>
+            new StateStoreError({
+              message,
+              ...(cause ? { cause } : {}),
+              ...(status !== undefined ? { http: { status } } : {}),
+            }),
+        },
+      );
+      return Layer.effect(
+        State,
+        Effect.gen(function* () {
+          const context = yield* Effect.context();
+          const scope = yield* Effect.scope;
+          const make = makeBucketState({
+            id: "r2",
+            label: "Cloudflare R2",
+            prefix: config.prefix,
+            objects: Effect.succeed(objects),
+          }).pipe(Scope.provide(scope), Effect.provideContext(context));
+          return yield* Effect.cached(make);
+        }),
+      );
     }),
   );
 }
@@ -245,6 +290,7 @@ export const VerifyPagesSite = Alchemy.Action(
     readonly subdomain: string;
     readonly app: string;
     readonly assetHash: string;
+    readonly commitSha: string;
     readonly deployed: boolean;
     readonly backendLive: boolean;
   }) =>
@@ -266,6 +312,7 @@ export const VerifyPagesSite = Alchemy.Action(
         siteUrl,
         app: input.app,
         assetHash: input.assetHash,
+        commitSha: input.commitSha,
         checksPassed: checks.length,
       };
     }).pipe(
@@ -330,7 +377,7 @@ export function provisionPagesSites(options: {
         productionBranch: "main",
       }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain());
 
-      const deployment = yield* DeployPagesSite({
+      const deployment = yield* DeployPagesSite(`Deploy_${site.app}`, {
         projectName: project.name,
         dir: assets.directory,
         app: site.app,
@@ -339,10 +386,11 @@ export function provisionPagesSites(options: {
         branch: isProduction ? "main" : stageSlug,
       });
 
-      const verification = yield* VerifyPagesSite({
+      const verification = yield* VerifyPagesSite(`Verify_${site.app}`, {
         subdomain: project.subdomain,
         app: site.app,
         assetHash: deployment.assetHash,
+        commitSha: deployment.commitSha,
         deployed: deployment.deployed,
         backendLive,
       });

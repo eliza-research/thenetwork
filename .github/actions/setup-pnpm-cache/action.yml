@@ -5,10 +5,6 @@ inputs:
     description: Optional cache key isolation scope (e.g. production)
     required: false
     default: ci
-  lockfiles:
-    description: Lockfile glob(s) hashed into the cache key
-    required: false
-    default: pnpm-lock.yaml,tools/vibestack/pnpm-lock.yaml
 runs:
   using: composite
   steps:

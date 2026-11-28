@@ -12,7 +12,9 @@ import { hashAssetDirectory } from "../tools/vibestack/vibestack/alchemy.ts";
 import {
   dnsStageSlug,
   PAGES_SITES,
+  provisionPagesSites,
   resolveDeployPolicy,
+  resolveStateBackendConfig,
   validateBackendOrigin,
 } from "./alchemy-sites.ts";
 import { RUN_WORKER_FIRST } from "./router.ts";
@@ -234,5 +236,94 @@ test(
     const devPolicy = resolveDeployPolicy("dev_alice_work");
     expect(devPolicy.stageTarget.kind).toBe("dev");
     expect(devPolicy.stageSlug).toMatch(/^[a-z0-9-]+$/);
+
+    const r2Env = {
+      CLOUDFLARE_ACCOUNT_ID: " acc-123 ",
+      R2_STATE_BUCKET: " alchemy-state ",
+      R2_STATE_ACCESS_KEY_ID: " key-id ",
+      R2_STATE_SECRET_ACCESS_KEY: " secret-key ",
+      R2_STATE_PREFIX: "",
+    };
+    expect(resolveStateBackendConfig("dev_alice_work", "alchemy/thenetwork-sites/", r2Env)).toEqual({
+      kind: "local",
+    });
+    expect(resolveStateBackendConfig("test_alice_work", "alchemy/thenetwork-sites/", r2Env)).toEqual({
+      kind: "local",
+    });
+    expect(resolveStateBackendConfig("production", "alchemy/thenetwork-sites/", r2Env)).toEqual({
+      kind: "r2",
+      accountId: "acc-123",
+      bucket: "alchemy-state",
+      accessKeyId: "key-id",
+      secretAccessKey: "secret-key",
+      prefix: "alchemy/thenetwork-sites/",
+    });
+    expect(
+      resolveStateBackendConfig("production", "alchemy/thenetwork-sites/", {
+        ...r2Env,
+        R2_STATE_PREFIX: " custom/prefix/ ",
+      }),
+    ).toMatchObject({ kind: "r2", prefix: "custom/prefix/" });
+    expect(
+      resolveStateBackendConfig("production", "alchemy/thenetwork-sites/", {
+        ALCHEMY_STATE_STORE: " cloudflare ",
+        CLOUDFLARE_ACCOUNT_ID: " acc-123 ",
+      }),
+    ).toEqual({ kind: "cloudflare", accountId: "acc-123" });
+    expect(
+      resolveStateBackendConfig("production", "alchemy/thenetwork-sites/", {
+        CLOUDFLARE_ACCOUNT_ID: "acc-123",
+        R2_STATE_BUCKET: "",
+        R2_STATE_ACCESS_KEY_ID: "",
+        R2_STATE_SECRET_ACCESS_KEY: "",
+      }),
+    ).toEqual({ kind: "local" });
+  }),
+);
+
+const PagesGraphStack = Alchemy.Stack(
+  "TheNetworkPagesGraphTest",
+  {
+    providers: Cloudflare.providers(),
+    state: Alchemy.inMemoryState(),
+  },
+  Effect.gen(function* () {
+    const policy = resolveDeployPolicy("production");
+    return yield* provisionPagesSites({
+      stageTarget: policy.stageTarget,
+      stageSlug: policy.stageSlug,
+      commitSha: "a".repeat(40),
+    });
+  }),
+);
+
+test(
+  "registers four distinct Pages projects, deploy actions, and smoke verification actions without LogicalId collision",
+  Effect.gen(function* () {
+    const compiled = yield* PagesGraphStack.pipe(
+      Effect.provideService(Alchemy.Stage, "production"),
+    );
+    expect(Object.keys(compiled.resources).sort()).toEqual([
+      "Pages_friends",
+      "Pages_ntwrk",
+      "Pages_peon",
+      "Pages_slop",
+    ]);
+    expect(Object.keys(compiled.actions).sort()).toEqual([
+      "Deploy_friends",
+      "Deploy_ntwrk",
+      "Deploy_peon",
+      "Deploy_slop",
+      "Verify_friends",
+      "Verify_ntwrk",
+      "Verify_peon",
+      "Verify_slop",
+    ]);
+    for (const site of PAGES_SITES) {
+      const verifyAction = compiled.actions[`Verify_${site.app}`];
+      expect(verifyAction?.LogicalId).toBe(`Verify_${site.app}`);
+      expect(verifyAction?.Input).toMatchObject({ app: site.app });
+      expect("commitSha" in (verifyAction?.Input as Record<string, unknown>)).toBe(true);
+    }
   }),
 );
