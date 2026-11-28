@@ -1,4 +1,4 @@
-import { DAY, type Category } from "@thenetwork/core";
+import { DAY, quietEndAfterText, quietStartAfterText, type Category } from "@thenetwork/core";
 import {
   changeParticipationCategory, controlRomanceOptIn,
   participationCategoryAllowed, participationControlAllowed, participationControlState,
@@ -10,7 +10,7 @@ import { canMatchInApp } from "../../platform/src/age.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 
 type ParticipationCommand = { kind: "mode"; pause: boolean; durationDays?: number }
-  | { kind: "quiet"; hours?: [number, number] }
+  | { kind: "quiet"; hours?: [number, number]; start?: number; end?: number }
   | { kind: "category"; category: Category; enable: boolean };
 
 const CATEGORY_NAMES = new Map<string, Category>([
@@ -63,6 +63,13 @@ export function participationCommand(text: string): ParticipationCommand | undef
     const end = range ? hourOf(range[2]!.trim()) : undefined;
     return { kind: "quiet", hours: quietHoursCommandComplete(start !== undefined, end !== undefined, start ?? 0, end ?? 0) ? [start!, end!] : undefined };
   }
+  const bounded = /^(?:don't|do not|dont|never|stop|quit|cease|no more|no) (?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?: (?:me|us))?(?: (?:texts?|messages?|msgs?))? (after|before) (.+)$/.exec(line);
+  if (bounded) {
+    const hour = hourOf(bounded[2]!.trim());
+    if (hour !== undefined && Number.isInteger(hour)) {
+      return bounded[1] === "after" ? { kind: "quiet", start: hour } : { kind: "quiet", end: hour };
+    }
+  }
   const setting = /^(allow|enable|turn on|disable|turn off|no more|stop sending(?: me)?|skip|mute) (.+?)(?: (?:suggestions|offers|matches|introductions|intros|stuff|ones|plans))?$/.exec(line);
   const category = setting ? CATEGORY_NAMES.get(setting[2]!) : undefined;
   if (category && setting) return { kind: "category", category, enable: ["allow", "enable", "turn on"].includes(setting[1]!) };
@@ -100,7 +107,12 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   let patch: { quietHours: [number, number] } | { categoriesOptIn: string[]; romanceOptIn?: boolean };
   let reply: string;
   if (command.kind === "quiet") {
-    const hours = command.hours;
+    const saved = Array.isArray(prefs.quietHours) && prefs.quietHours.length === 2
+      && prefs.quietHours.every(h => Number.isInteger(h) && h >= 0 && h < 24) ? prefs.quietHours as [number, number] : [21, 9] as [number, number];
+    const hours = command.hours ?? (command.start !== undefined || command.end !== undefined
+      ? [quietStartAfterText(saved[0], command.start ?? saved[0], command.start !== undefined),
+        quietEndAfterText(saved[1], command.end ?? saved[1], command.end !== undefined)] as [number, number]
+      : undefined);
     if (!hours) return "Use whole local hours, like ‘quiet hours 10 pm to 8 am’ or ‘quiet hours 22:00 to 08:00’.";
     patch = { quietHours: hours };
     reply = quietHoursEmpty(...hours) ? "Quiet hours are off for this app." : `Quiet hours are ${displayHour(hours[0])} to ${displayHour(hours[1])} local time for this app.`;

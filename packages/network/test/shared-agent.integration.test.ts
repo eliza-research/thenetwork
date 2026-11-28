@@ -327,7 +327,7 @@ test("signed travel stores one coarse trip in the routed app and never guesses m
 
 // spec/travelPresence.md, "Tell the Network my travel dates"; spec/product/stories.md F26
 test("a trip cancellation text removes the saved trip", async () => {
-  const phone = "+12125550211", otherPhone = "+12125550212", app = APPS.friends;
+  const phone = "+12125550211", otherPhone = "+12125550212", strangerPhone = "+12125550213", app = APPS.friends;
   const join = async (e164: string) => {
     await service.accounts.invite(app, e164);
     const person = (await service.accounts.personFor(e164))!;
@@ -349,6 +349,10 @@ test("a trip cancellation text removes the saved trip", async () => {
   expect((await (await declare("travel-cancel-sf", `I will be in San Francisco from ${day(30)} until ${day(32)}.`)).json()).replies[0]).toContain("Saved in friends.help");
   expect((await (await declare("travel-cancel-chicago-again", `I will be in Chicago from ${day(40)} until ${day(42)}.`)).json()).replies[0]).toContain("Saved in friends.help");
   expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "chicago" }, { city: "sf" }]);
+  const strangerCancel = await post(turn("travel-cancel-stranger", strangerPhone, "my trip to Chicago is cancelled", "friends"));
+  expect(strangerCancel.status).toBe(200);
+  expect(await strangerCancel.json()).toMatchObject({ outcome: "handled", reason: "travel_presence", replies: [] });
+  expect(await service.accounts.personFor(strangerPhone)).toBeUndefined();
   const cancelled = await declare("travel-cancel-text", "my trip to Chicago is cancelled");
   expect(cancelled.status).toBe(200);
   expect(await tripsOf(memberId)).toEqual([{ city: "chicago" }, { city: "sf" }]);
@@ -361,6 +365,35 @@ test("a trip cancellation text removes the saved trip", async () => {
   expect(await tripsOf(memberId)).toEqual([{ city: "sf" }]);
   expect((await cancelledAgain.json()).replies[0]).toContain(day(40));
   expect(await tripsOf(otherId)).toEqual([{ city: "chicago" }]);
+}, 60_000);
+
+// spec/product/stories.md F20, "Text controls change permission before later sends"
+test("a quiet hours text updates the saved quiet hours", async () => {
+  const phone = "+12125550199", app = APPS.friends;
+  await joinFriendsByText(phone, "quiet-hours");
+  const quiet = async () => {
+    const [row] = await sql`select m.prefs from network.members m
+      join platform.phone_identities ph on ph.person_id=m.person_id
+      where ph.e164=${phone} and m.app_id=${app.id}`;
+    return row.prefs.quietHours;
+  };
+  expect(await quiet()).toEqual([21, 9]);
+  const say = (id: string, text: string) => { clock.advance(MINUTE); return post(turn(id, phone, text, "friends")); };
+  const later = await say("quiet-after-10", "Please don't text me after 10 pm");
+  expect(((await later.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
+  const earlier = await say("quiet-before-7", "don't text me before 7 am");
+  expect(((await earlier.json()).replies as string[]).join(" ")).toContain("07:00");
+  expect(await quiet()).toEqual([22, 7]);
+  const halfHour = await say("quiet-after-1030", "don't text me after 10:30 pm");
+  expect(((await halfHour.json()).replies as string[]).join(" ")).toContain("22:30 to 07:00");
+  expect(await quiet()).toEqual([22.5, 7]);
+  const keepHalfHour = await say("quiet-before-8", "don't text me before 8 am");
+  expect(((await keepHalfHour.json()).replies as string[]).join(" ")).toContain("22:30 to 08:00");
+  expect(await quiet()).toEqual([22.5, 8]);
+  const quoted = await say("quiet-quoted", "my sister said \"don't text me after 8 pm\"");
+  expect((((await quoted.json()).replies ?? []) as string[]).join(" ")).not.toContain("Quiet hours are");
+  expect(await quiet()).toEqual([22.5, 8]);
 }, 60_000);
 
 test("a saved travel window keeps its exact signed reply after the runtime stops", async () => {
