@@ -545,3 +545,9 @@
 {"text": "Tell him only after Ari agrees. Ari agreed? Send him my number.", "want": "text"}
 {"text": "Tell him only after Ari agrees. Ari agreed. Send him my number.", "want": "contact_share"}
 {"text": "Tell him “If it rains, bring a jacket.” Send him my number.", "want": "contact_share"}
+{"text": "\"My phone is in my bag.\" She can have my phone.", "want": "none"}
+{"text": "She can have my email \"if she asks\", "want": "none"}
+{"text": "She can have my phone \"charger\"", "want": "none"}
+{"text": "\"no\" she can have my email", "want": "none"}
+{"text": "She can have my email \"jk\"", "want": "none"}
+{"text": "She can have my email \"lol\"", "want": "none"}
