@@ -1,7 +1,7 @@
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import { DAY, isBusinessDomain, isDatingDomain, isFriendshipDomain, type MemberId, type TimeOption, type WorkIntroState } from "@thenetwork/core";
+import { DAY, isBusinessDomain, isCity, isDatingDomain, isFriendshipDomain, type City, type MemberId, type Presence, type TimeOption, type WorkIntroState } from "@thenetwork/core";
 import { plans } from "@thenetwork/engine";
-import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
+import { blooioRecipientPolicy, bookedReminderKey, bookedReminderKind, bookedReminderWindow, forbiddenProvider, gatheringRepeatOppPrefix, meetingFeedbackKey, presentFor, replacementProbeKey, replacementProbePrefix, reviewApproved, storedInterruptionSurveyCurrent, type BookedReminderKind, type NetworkState, type StoredReview } from "../src/network.ts";
 import { interruptionFeedbackPrefix } from "../src/interruption-feedback.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { RESCHEDULE_QUEUE_PREFIX, rescheduleNoticeCurrent, rescheduleUpdateKey, rescheduleUpdatePrefix } from "../src/rescheduling.ts";
@@ -21,9 +21,10 @@ import { engineQuestionDeliveryPrefix, queuedEngineQuestionAllowed } from "../..
 import { friendPlanProbeDeliveryPrefix } from "../../core/src/generated/friendsPlanTimeChoice.ts";
 import { queuedPlanProbeAllowed } from "../../core/src/generated/planDispatch.ts";
 import { queuedProbeRosterAdmission } from "./probe-roster-admission.ts";
+import { probeAvailability } from "../../core/src/generated/probeDispatch.ts";
 import { reengagementDeliveryPrefix, reengagementMayDispatch } from "../../core/src/generated/outreachPolicy.ts";
 import { recoveryPlanCanProceed } from "../../core/src/generated/bookedGroupReplacement.ts";
-import { effectiveParticipation } from "./snapshot.ts";
+import { effectiveParticipation, presenceOf } from "./snapshot.ts";
 import { lockGatheringAdmission, monthlyGatheringInvitePrefix } from "./monthly-gathering-delivery.ts";
 import { lockGatheringNoticeAdmission, monthlyGatheringNoticePrefix } from "./monthly-gathering-notices.ts";
 import { lockPublicEventContact, publicEventContactAdmission } from "./public-event-admission.ts";
@@ -311,8 +312,27 @@ type StoredPlanProbe = {
 const sameTimeOption = (left: TimeOption, right: TimeOption): boolean =>
   left.key === right.key && left.start === right.start && left.end === right.end && left.label === right.label;
 
+type ClaimPresence = Map<MemberId, { homeCity: City; rows: Presence[] }>;
+
+async function claimPresence(tx: SQL, app: string, memberIds: readonly MemberId[]): Promise<ClaimPresence> {
+  const ids = [...new Set(memberIds)];
+  const [members, presence] = await Promise.all([
+    tx<{ id: string; home_city: string }[]>`select id, home_city from network.members where app_id=${app} and id in ${tx(ids)}`,
+    tx`select member_id, city, type, areas, from_at, to_at from network.presence where app_id=${app} and member_id in ${tx(ids)}`,
+  ]);
+  const out: ClaimPresence = new Map();
+  for (const member of members) if (isCity(member.home_city)) out.set(member.id, { homeCity: member.home_city, rows: [] });
+  for (const row of presence) out.get(row.member_id)?.rows.push(presenceOf(row));
+  return out;
+}
+
+function claimPresent(presence: ClaimPresence, id: MemberId, from: number, to: number, city: City): boolean {
+  const member = presence.get(id);
+  return presentFor(member, member?.rows ?? [], from, to, city);
+}
+
 /** A previously rendered offer can only go out with the exact, still-permitted choices. */
-function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactMessage: boolean, now: number): RecipientCheck {
+function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactMessage: boolean, now: number, slotPresent: (slot: { end: number }) => boolean): RecipientCheck {
   const refused = { ok: false, reason: "plan_probe_changed" } as const;
   const invited = Array.isArray(current.invited) ? current.invited : [];
   const [first, second] = invited;
@@ -329,7 +349,8 @@ function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactM
     : (Array.isArray(current.first_offered) ? current.first_offered : []).filter(option => selected.includes(option.start));
   const allowed = friendsPlanOfferedWindows(reviewed, picks, slot => slot.start > now
     && plans.planWindowMatchesStated(current.stated ?? undefined, slot, now)
-    && plans.planWindowMatchesStated(current.peer_stated ?? undefined, slot, now));
+    && plans.planWindowMatchesStated(current.peer_stated ?? undefined, slot, now)
+    && slotPresent(slot));
   const currentOptions = friendsPlanTimeOptions(reviewed, allowed, NY);
   let reviewedIndex = -1;
   for (const option of offered) {
@@ -385,7 +406,15 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
   const categoryAllowed = probe.category !== null && Array.isArray(categories) && categories.includes(probe.category)
     && (probe.category !== "romance" || probe.prefs?.romanceOptIn === true);
   if (queuedProbePolicy(true, paused, categoryAllowed) !== "Proceed") return { ok: false, reason: "matching_settings_changed" };
-  if (probe.type !== "plan_probe") return queuedProbeRosterAdmission(tx, row, rt.pg.id);
+  const city = isCity(rt.city) ? rt.city : "nyc";
+  // spec/travelPresence.md, "Use my travel dates for matching"; spec/probeDispatch.md, "Wait for the member's send window and current availability"
+  if (probe.type !== "plan_probe") {
+    const presence = await claimPresence(tx, row.app, [row.memberId]);
+    if (probeAvailability(claimPresent(presence, row.memberId, now, now + 6 * DAY, city), false) === "ParticipantAway") {
+      return { ok: false, reason: "participant_away" };
+    }
+    return queuedProbeRosterAdmission(tx, row, rt.pg.id);
+  }
 
   // lockPeerOpportunityContact already shares the exact runtime row against
   // updates to either the plan or the recipient's check-in state.
@@ -410,7 +439,15 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
     return refused;
   }
   if (current.reviewed_offer || reviewedKey) {
-    return reviewedKey && current.reviewed_offer ? reviewedFriendPlanProbe(current, row, probe.exact_message === true, now) : refused;
+    if (!reviewedKey || !current.reviewed_offer) return refused;
+    const presence = await claimPresence(tx, row.app, [row.memberId, ...(current.peer_id ? [current.peer_id] : [])]);
+    return reviewedFriendPlanProbe(current, row, probe.exact_message === true, now,
+      slot => claimPresent(presence, row.memberId!, now, slot.end, city)
+        && (!current.peer_id || claimPresent(presence, current.peer_id, now, slot.end, city)));
+  }
+  const presence = await claimPresence(tx, row.app, [row.memberId]);
+  if (!claimPresent(presence, row.memberId, now, current.activity_window.end, city)) {
+    return { ok: false, reason: "plan_availability_changed" };
   }
   return plans.planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
     ? { ok: true } : { ok: false, reason: "plan_availability_changed" };
