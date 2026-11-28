@@ -385,4 +385,30 @@ describe("OutboundQueue unit coverage (network scoping + safety kind)", () => {
     expect(state.rows.get("saf-cap-2")?.status).toBe("retry_scheduled");
     expect(state.rows.get("saf-cap-2")?.note).toBe("per-recipient hourly cap");
   });
+
+  test("a saved half-hour quiet window defers a proactive send inside it", async () => {
+    const state: MockState = { rows: new Map(), convs: new Map(), lineSafety: new Map(), members: new Map(), queries: [] };
+    const sql = makeMockSql(state);
+    // 00:45 UTC = 20:45 in New York: inside a saved 20:30-10:30 window, outside the 21:00-09:00 default.
+    const clock = new SimClock(Date.UTC(2026, 9, 11, 0, 45));
+    const sent: SendRequest[] = [];
+    const provider: ChannelAdapter = {
+      kind: "sim",
+      async send(req) { sent.push(req); return { providerMessageId: `sim:${req.idempotencyKey}`, status: "sent" }; },
+    };
+    state.members.set("friends|m1", {
+      id: "m1", app_id: "friends", person_id: "p1", account_status: "active", safety_held: false,
+      opted_out: false, quiet_hours: [20.5, 10.5], time_zone: NY,
+    });
+    const q = new OutboundQueue({
+      sql, clock, provider, line: LINE, app: "friends",
+      recipientWindowKey: recipientWindowHasher("synthetic-unit-secret"),
+      newChatsPerLinePerDay: 1000, perLinePerDay: 1000,
+      checks: { live: () => true },
+    });
+    await q.enqueue(sql, [{ id: "half-hour-quiet", memberId: "m1", to: "+12125550111", kind: "proactive", text: "A new introduction.", timeZone: NY }]);
+    await q.drain();
+    expect(sent).toHaveLength(0);
+    expect(state.rows.get("half-hour-quiet")?.status).toBe("deferred_quiet_hours");
+  });
 });
