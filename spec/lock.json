@@ -244,29 +244,30 @@
     },
     "spec/authorizationPages.md": {
       "@document": [
-        "3e71fbb5648d"
+        "f5f63257a415"
       ],
       "## Story: See one clear page at each step of connecting my assistant": [
         "1a074d765e91"
       ],
       "Story: See one clear page at each step of connecting my assistant / The server reply selects the page view": [
         "6900347f2a1a",
-        "1a8cc32db107"
+        "862411835746",
+        "fcd690fd1e72"
       ],
       "Story: See one clear page at each step of connecting my assistant / Opening the connection link shows sign-in, consent, Cloud sign-in or a message": [
         "6de0283872eb",
         "d1d4f06b51cc",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: See one clear page at each step of connecting my assistant / The return from Cloud sign-in and the retry link resume the same request": [
         "0a4a9942fbed",
         "767ae3fb2b94",
-        "3d0e8f277f49"
+        "81cdfc951063"
       ],
       "Story: See one clear page at each step of connecting my assistant / A posted form names the page that sent it": [
         "fd08e157396e",
         "1cc39cd4a598",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "## Story: Prove my phone on this page": [
         "f291e0821d2d"
@@ -274,17 +275,17 @@
       "Story: Prove my phone on this page / The phone page shows a security check only when the site has one": [
         "ac39119d15db",
         "f982f2c2c3b6",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Prove my phone on this page / The phone page sends a code or tells why it did not": [
         "670321e12267",
-        "c98a5d4161ea",
-        "7a82a517ea12"
+        "01cc090c123a",
+        "87535adae1d3"
       ],
       "Story: Prove my phone on this page / The code page appears only after this request sent a code": [
-        "1ed8ec23090e",
-        "ef9035450ec2",
-        "7a82a517ea12"
+        "cd1d500137af",
+        "c8fc901a7aaa",
+        "3822d35284ac"
       ],
       "## Story: Decide what my assistant can do": [
         "9c8d4efe6b1a"
@@ -292,29 +293,29 @@
       "Story: Decide what my assistant can do / The consent page names the client as its claim and lists every scope": [
         "f0421c6a68d5",
         "3ab7691781b2",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Decide what my assistant can do / A verified person can choose a separate signup step during connector authorization": [
         "94a7953e6a58",
         "6305315b4fb7",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Decide what my assistant can do / The signup page is a step of the same request": [
         "eb58c459436e",
         "05e268426727",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Decide what my assistant can do / A new person sees Finish signup as the main action on the consent page": [
         "bbd95641423c",
         "45fd1394ad5a",
-        "4853c9737541"
+        "d113e64da77d"
       ],
       "Story: Decide what my assistant can do / The signup form shows the draft that the person approved in the agent": [
         "d9766d6181d0",
         "56b0a63fa84d"
       ],
       "Story: Decide what my assistant can do / The signup form takes the birthday and counts the age on the Clock date": [
-        "9a2acb3fbbcf",
+        "3ee3114bf708",
         "eb1f67c7cd2d"
       ],
       "Story: Decide what my assistant can do / Each scope shows as one short sentence, never as its scope name": [
@@ -324,12 +325,12 @@
       "Story: Decide what my assistant can do / Only Allow on a consent page returns a code to the assistant": [
         "589b549013ef",
         "646b79acaf0a",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Decide what my assistant can do / Cancel or Don't allow returns to the assistant with a refusal": [
         "c6d5f02b1fda",
         "dd65369f20c7",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "## Story: Understand a page that stops the connection": [
         "1d2cfa70120e"
@@ -337,17 +338,17 @@
       "Story: Understand a page that stops the connection / A message page shows no credential field and at most a retry link": [
         "04b594a895a4",
         "03b07d3c2929",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Understand a page that stops the connection / Every page shows the brand mark and the legal links": [
         "9031aecc0232",
         "f6fd873174d0",
-        "7a82a517ea12"
+        "87535adae1d3"
       ],
       "Story: Understand a page that stops the connection / Each page and each outcome can occur": [
         "e150b64e8739",
-        "a5c3ae15137e",
-        "7a82a517ea12"
+        "bee5745f4793",
+        "87535adae1d3"
       ]
     },
     "spec/automatedReview.md": {
@@ -943,6 +944,10 @@
         "a8462c562c14",
         "f71f429c3c02"
       ],
+      "Story: Stop texts across apps and resume an app / A refusal bounded by a clock time does not stop the shared line": [
+        "d639e18ad836",
+        "bab0243eb2f0"
+      ],
       "Story: Stop texts across apps and resume an app / Direct repeated and permanent refusals stop the shared line": [
         "16d34ba0fa7e",
         "0b871c66da9f"
@@ -1306,72 +1311,82 @@
       ],
       "Story: Use my app's connector from my agent / Each surface serves every app, and only the slop.date endpoint of the OpenAI surface names slop.date": [
         "d12e9c3d3d7c",
-        "efdfabc7e229"
+        "5a32e647358b"
       ],
       "Story: Use my app's connector from my agent / The ntwrk.party host serves every app at its own path, and a grant covers only its own app": [
         "c64e578fc7e7",
         "e875d7a5d26b",
-        "4262fdb437d4"
+        "62d82c924b78"
       ],
       "Story: Use my app's connector from my agent / The member tools name the site where the person signs in": [
         "734846e1213a",
         "20a34eb2d232",
-        "2c3522601923"
+        "9e5b99178adb"
       ],
       "Story: Use my app's connector from my agent / Public tools need no sign-in, and member tools need the person's own grant": [
-        "5d6b3dfe72df",
-        "879f08714d4a",
-        "4262fdb437d4"
+        "e1d0b320d4e0",
+        "104a735d6a9d",
+        "62d82c924b78"
       ],
       "Story: Use my app's connector from my agent / The member status decides which member tool can act": [
-        "5f9b429dfafc",
-        "a46939a34d29",
-        "4262fdb437d4"
+        "85672c0c6a6b",
+        "97b2a8aa73f2",
+        "62d82c924b78"
       ],
       "Story: Use my app's connector from my agent / A connection binds to one host on one surface, and the person connects it in the browser": [
         "5eb9c25a1be9",
-        "824d907dbb47",
-        "0336cb018225"
+        "14672a812e32",
+        "8de8ed0206cf"
       ],
       "Story: Use my app's connector from my agent / A grant that no longer belongs to the phone's person ends the connection": [
         "b0801439f632",
-        "278dd2d4a53d",
-        "d31da5c22e20"
+        "4854cee2fca2",
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / Check status shows only the person's own status in this one app": [
         "346f6e3e4be6",
         "8b6958cb81ad",
-        "d31da5c22e20"
+        "055f2f4ac46a"
+      ],
+      "Story: Use my app's connector from my agent / Get context returns status and updates without bypassing profile read consent": [
+        "d067154ae01c",
+        "553a0da20c09",
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / Read saved profile fields only for this app's active member": [
         "b1425c6d69a5",
         "52c67877037d",
-        "d31da5c22e20"
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / The agent can list the person's standing things and pause or resume one, but never close one": [
         "8220525b39c8",
         "f5ca59762cd5",
-        "d31da5c22e20"
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / The agent sees the person's photo list and asks to send a photo, but never sees a photo and never confirms a send": [
         "40f7dab87d84",
         "e72df23e0736",
-        "d31da5c22e20"
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / The agent sends an approved profile once, only for a live member, within the daily limit": [
         "5a88fac9832c",
-        "f1799557bec3",
-        "d31da5c22e20"
+        "6c5261c9cd99",
+        "055f2f4ac46a"
+      ],
+      "Story: Use my app's connector from my agent / Structured availability and red-line tools save preferences for a live member within the daily limit": [
+        "150170c9fad4",
+        "f848f93fc4a6",
+        "f632b1b194e4"
       ],
       "Story: Use my app's connector from my agent / A Join draft holds only an approved first name and home city, once per grant": [
-        "f499ab1f2233",
+        "0214d804a202",
         "bcd4a9015444",
-        "3226bedae55e"
+        "f632b1b194e4"
       ],
       "Story: Use my app's connector from my agent / Reading updates shows the person's own new updates and marks them seen": [
         "42f7341cd93f",
         "7328a8618cb3",
-        "d31da5c22e20"
+        "055f2f4ac46a"
       ],
       "Story: Use my app's connector from my agent / A reader who cannot be matched never reads an update about another member": [
         "3c9cbd726ed7",
@@ -1388,8 +1403,8 @@
       ],
       "Story: Use my app's connector from my agent / A connection can reach every tool result": [
         "8747849d6943",
-        "9499a2b38dad",
-        "d31da5c22e20"
+        "a64b05cdbc74",
+        "055f2f4ac46a"
       ]
     },
     "spec/consoleMemberView.md": {
@@ -2561,8 +2576,8 @@
         "8b53b57cf87d"
       ],
       "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Gate every external contact on adult age, recorded review, transparency, consent, kill-switch health, and TTL": [
-        "bf4b52a07e28",
-        "6e2adc54af7f",
+        "d128c2c1cbcb",
+        "e6e345733dd4",
         "2655b434f30e"
       ],
       "Story: Enforce outreach safety, privacy retention, quality-gated onboarding, and app isolation / Reconsider a cached prospect only with explicit future opt-in, 30-day cooldown, and review approval": [
@@ -2608,8 +2623,8 @@
         "e3dc6d7198e1"
       ],
       "Story: Choose a time privately with my activity partner / Only explicit picks from the delivered invitation count": [
-        "4b5048ad54f7",
-        "37e78ce08cba"
+        "d2362901ccb6",
+        "e252ee6cd128"
       ],
       "Story: Choose a time privately with my activity partner / Book the earliest current window both chose": [
         "1a2adf3c700a",
@@ -3227,7 +3242,39 @@
       ],
       "Story: Enforce agent subscription caps and the global STOP fence / Agent turns and direct outreach stop immediately on STOP, ban, lockdown, or cap exhaustion": [
         "72872d969dea",
-        "6cc00aadaefe"
+        "136dd44d2f8d"
+      ],
+      "## Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene": [
+        "32d372482019"
+      ],
+      "Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene / Daily LLM calls stay within token and cost ceilings": [
+        "cb27924085eb",
+        "c26d1c6345e3"
+      ],
+      "Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene / Paid acquisition pauses when platform queues or messaging lines are under pressure": [
+        "07057346fd17",
+        "10c4b42ae201"
+      ],
+      "Story: Enforce daily LLM budgets, queue backpressure, and cross-surface contact hygiene / Cross-surface contact safety and cooldowns block minors, opt-outs, bans, quiet hours, and spam streaks": [
+        "512aa05eb4e8",
+        "4556c8ebfde2"
+      ],
+      "## Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake": [
+        "4122974fa43e"
+      ],
+      "Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety": [
+        "29da32cd3205",
+        "0f6a405fad82"
+      ],
+      "Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Platform outreach fails closed on suspended channels, high report risk, or unsolicited links on link-free platforms": [
+        "14c01e590bc2",
+        "6af3d95dcf85",
+        "429cf73d39ab"
+      ],
+      "Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake / Out-of-network quality intake invites verified high-signal adults at most once after delivering value": [
+        "91bc7bdfd03a",
+        "2bbcc7f96dba",
+        "9028f20c8740"
       ]
     },
     "spec/matchingBudgets.md": {
@@ -3293,7 +3340,7 @@
     },
     "spec/mcpSignupDraft.md": {
       "@document": [
-        "bbdab5025dee"
+        "4ad4ef06b2be"
       ],
       "## Story: Prepare an editable Join form after authorization": [
         "bd0bc1ae0721"
@@ -3310,12 +3357,12 @@
         "a8ae21d65c77"
       ],
       "Story: Drop the draft when I can no longer use it / The Finish signup step keeps the draft only for a person who can still join": [
-        "ff1e4212d261",
+        "a83fc75b94a3",
         "146932699b57",
         "a69ca184a377"
       ],
       "Story: Drop the draft when I can no longer use it / A draft is written only under the grant that saves it, and only the signup prefill reads it": [
-        "09f9a4d75fd7",
+        "ce09c0a554fd",
         "3080ef7ecc68"
       ],
       "Story: Drop the draft when I can no longer use it / The signup result settles the draft": [
@@ -3336,7 +3383,7 @@
         "81fd4bb8dafe"
       ],
       "Story: Change the time only when everyone agrees / A request selects one future booking and one viable slot": [
-        "634c8e117dae",
+        "033ee2711411",
         "5a8c95d57a36"
       ],
       "Story: Change the time only when everyone agrees / Only independent answers to the current offer can change the booking": [
@@ -3522,8 +3569,8 @@
         "f076c2431346"
       ],
       "Story: Protect anchor failover, quorum cutoffs, and follow-up limits / Schedule follow-ups outside quiet hours and enforce opt-out and daily caps": [
-        "be5c1e45be33",
-        "e2d1da3a12b1"
+        "bf1baf6147de",
+        "82d11452a76a"
       ]
     },
     "spec/memberRequest.md": {
@@ -3923,8 +3970,8 @@
         "ff382065f581"
       ],
       "Story: See my own updates on the surface I am using / A delivered text can appear only once and its opportunity must still be current": [
-        "d48285095b90",
-        "3e81441563ca"
+        "42c9cd8df1aa",
+        "fe80e6a3cda3"
       ],
       "Story: See my own updates on the surface I am using / Only a live update token of this member can resolve items": [
         "c04ed5abd95e",
@@ -4021,8 +4068,8 @@
         "240ebec60726"
       ],
       "Story: Approve access in the browser after proving my phone / The stored page determines what a form can do": [
-        "625fe8d36b29",
-        "e680fe483e0e",
+        "71bbe5c6ac9e",
+        "6d86a41b8504",
         "240ebec60726"
       ],
       "Story: Approve access in the browser after proving my phone / Only a successful challenge advances phone verification": [
@@ -4033,7 +4080,7 @@
       "Story: Approve access in the browser after proving my phone / Optional signup stays inside the verified authorization request": [
         "e5453e4bd78a",
         "a2a78801222d",
-        "17666d1eb4aa"
+        "2d298259374d"
       ],
       "Story: Approve access in the browser after proving my phone / Explicit approval rechecks the owner and the app's required Cloud authority": [
         "80cc4292adf3",
@@ -4545,7 +4592,7 @@
         "077de897071e"
       ],
       "Story: Change when and about what Eliza can contact me / Quiet hours use the member's local clock": [
-        "3419d4d0c71b",
+        "712a17b2136f",
         "d7a73cfd7b3c"
       ],
       "Story: Change when and about what Eliza can contact me / A category changes only on an explicit request": [
@@ -4553,8 +4600,8 @@
         "0c2a5d06febb"
       ],
       "Story: Change when and about what Eliza can contact me / Pause and resume apply immediately to matching": [
-        "3d27f8aa9c1a",
-        "46c6fdfa6bc2"
+        "f826fa392172",
+        "2eccbeec5d9e"
       ]
     },
     "spec/participationWindow.md": {
@@ -5542,6 +5589,52 @@
         "a3aeb0c732a7"
       ]
     },
+    "spec/qualityAndLeague.md": {
+      "@document": [
+        "363a77158cd6"
+      ],
+      "## Story: Curate member signal quality without penalizing terse high-status members": [
+        "a9dbab4e0ff4"
+      ],
+      "Story: Curate member signal quality without penalizing terse high-status members / Signal quality depends on provenance, specificity, hygiene, and completion rather than word count": [
+        "1997b867cbe7",
+        "5b2eb6e1df03"
+      ],
+      "Story: Curate member signal quality without penalizing terse high-status members / Quarantined and probationary profiles do not receive reserved exposure-floor slots": [
+        "591390c5ea75",
+        "9e63064dd6d7",
+        "e1e2c757cf60"
+      ],
+      "## Story: Escalate repeat no-shows and late cancellations fairly across all apps": [
+        "9aa7fa369a5d"
+      ],
+      "Story: Escalate repeat no-shows and late cancellations fairly across all apps / Weighted strikes preserve first-no-show grace and decay after two clean attendances": [
+        "5a4f8977f2d7",
+        "5c5e8f56de49"
+      ],
+      "## Story: Throttle extractive network vampires and pitch-slappers without harming newcomers": [
+        "8fee78d0a3be"
+      ],
+      "Story: Throttle extractive network vampires and pitch-slappers without harming newcomers / Vampire tiers use rolling 90-day reciprocity, pitch signals, and distinct self-promotion reports": [
+        "430fe963b704",
+        "0c6ccdefccec"
+      ],
+      "## Story: Guard retaliatory reports while isolating confirmed boundary violators": [
+        "27ffcd6993d4"
+      ],
+      "Story: Guard retaliatory reports while isolating confirmed boundary violators / A reporter already on hold cannot unilaterally restrict matching on another member": [
+        "b8b41079de75",
+        "a15556ea242f"
+      ],
+      "## Story: Block wide adult league gaps unless verified bilateral value compensates": [
+        "e6fc6d3f3f8c"
+      ],
+      "Story: Block wide adult league gaps unless verified bilateral value compensates / Lane firewalls zero protected attributes before any gap or discretion check": [
+        "eff8c4070aaf",
+        "6c3aec8cce37",
+        "e1e2c757cf60"
+      ]
+    },
     "spec/quietHours.md": {
       "@document": [
         "11d4789fd0db"
@@ -5552,6 +5645,10 @@
       "Story: Avoid unsolicited messages during quiet hours / A quiet window includes its start and excludes its end": [
         "31ee75730476",
         "d26c64b97a8c"
+      ],
+      "Story: Avoid unsolicited messages during quiet hours / A texted clock bound updates the saved window": [
+        "9518b7634ae1",
+        "08067daa2346"
       ],
       "Story: Avoid unsolicited messages during quiet hours / The boundary remains the same for windows that span midnight": [
         "bc73725fd1cc",
@@ -6406,14 +6503,14 @@
         "75fae02f4d82"
       ],
       "Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs": [
-        "eefe8d8521bd",
-        "140b571735ab",
+        "283b4e9ebce5",
+        "4b926d737f18",
         "c113bc100b65"
       ],
       "Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person": [
         "a923e4c907e8",
         "08d53c7f0236",
-        "d4657ad3a28b"
+        "ced7fac3f148"
       ]
     },
     "spec/staffReview.md": {
@@ -6514,12 +6611,12 @@
       "Story: Route an agent signal to an accountable decision / An agent signal goes to the decision that owns it": [
         "764982940ea4",
         "f3bce34909d4",
-        "dd8d1315ab32"
+        "7cc04a67b4c3"
       ],
       "Story: Route an agent signal to an accountable decision / An applied agent pause gives the member one confirmation": [
         "0e2d9bc25739",
         "4b099a051cea",
-        "9e1d1a1a20df"
+        "d32d2513c0bb"
       ],
       "Story: Route an agent signal to an accountable decision / Safety staff decide a waiting agent signal once": [
         "ab002f71b5a9",
@@ -6671,9 +6768,9 @@
         "47de6ef70765",
         "c406e2f1b7b4"
       ],
-      "Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, and after-dark date activities when red lines apply": [
-        "044c1438f2af",
-        "dfa30e1f4517"
+      "Story: Route local supply by density and enforce date activity red lines / Exclude alcohol, high-walking, loud, and after-dark date activities when red lines apply": [
+        "d51bbd49641d",
+        "4ffe35b8e58c"
       ],
       "## Story: Score venues with mode-specific weights": [
         "1fab2a3d9588"
@@ -6857,6 +6954,10 @@
         "77e51c11f4b4",
         "d13970c30a76",
         "9613eec85181"
+      ],
+      "Story: Tell the Network my travel dates / A signed travel cancellation removes one saved trip": [
+        "1816fb8c6792",
+        "bf904c655838"
       ]
     },
     "spec/travelPresenceJourney.md": {
@@ -6992,8 +7093,8 @@
         "9761e3c74ae0"
       ],
       "Story: Enforce hard venue eligibility and attendee red lines / Require public active open venues that honor age, all-ages teen rules, diet, mobility, budget, and group walk-in rules": [
-        "d373a110b63a",
-        "a0c97b0650a7",
+        "6242b85adfeb",
+        "23c74b19fc65",
         "36b82adbc17a"
       ],
       "Story: Enforce hard venue eligibility and attendee red lines / Enforce strict sobriety, allergens, religious diets, sensory limits, after-dark floors, and concurrent capacity": [
