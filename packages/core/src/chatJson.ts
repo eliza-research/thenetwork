@@ -47,7 +47,8 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
   const attempts = o.attempts ?? 2;
   const clock = o.clock ?? new RealClock();
   const deadlineMs = o.deadlineMs ?? 0;
-  const deadlineAt = hasDeadline(o.deadlineMs !== undefined, deadlineMs) ? clock.now() + deadlineMs : undefined;
+  const deadlineEnabled = hasDeadline(o.deadlineMs !== undefined, deadlineMs);
+  let deadlineAt = deadlineEnabled && o.beforeAttempt ? clock.now() + deadlineMs : undefined;
   const after = (attempt: number, ok: boolean) => { try { o.afterAttempt?.(attempt, ok); } catch { /* observer errors never discard a result */ } };
   let maxTokens = o.maxTokens;
   let error: unknown;
@@ -65,7 +66,12 @@ export async function tryChatJson<T>(llm: LLMSource, messages: ChatMessage[], pa
     }
     // spec/chatRetry.md, "Caller cancellation wins over a deadline"
     const cancelled = o.signal?.aborted === true;
-    const left = cancelled || deadlineAt === undefined ? undefined : deadlineAt - clock.now();
+    let left: number | undefined;
+    if (!cancelled && deadlineEnabled) {
+      const now = clock.now();
+      if (deadlineAt === undefined) deadlineAt = now + deadlineMs;
+      left = deadlineAt - now;
+    }
     run = step(run, { type: "preflight", cancelled, expired: deadlineExpired(left !== undefined, left ?? 0) });
     if (run.phase === "Aborted") {
       error = new LLMError("aborted", "chatJson aborted by caller");
