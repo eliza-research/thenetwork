@@ -26,7 +26,7 @@ export function officialGates(p: PeonMetrics[], k: PeonMetrics[], o?: PeonMetric
   if (o) { const x = M(p, m => m.hires) / M(o, m => m.hires); out.push({ id: "hires_vs_oracle", gate: "Hires >= 0.8x oracle", value: `${x.toFixed(2)}x`, pass: x >= 0.8 }); }
   out.push(
     { id: "interviews_per_hire", gate: "Interviews per hire <= 0.75x keyword", value: `${ivX.toFixed(2)}x`, pass: ivX <= 0.75 },
-    { id: "retention_90d", gate: "90-day retention within 2 points of keyword (or better)", value: `${(retD * 100).toFixed(1)} pt`, pass: retD >= -0.02 },
+    { id: "retention_90d", gate: "90-day retention within 2 points of keyword (or better)", value: `${(retD * 100).toFixed(1)} pt`, pass: M(p, m => m.hires) > 0 && retD >= -0.02 },
     { id: "under_applied", gate: "Under-applied hires >= 0.9x keyword, and Gini of applications per job below keyword's", value: `${uaX.toFixed(2)}x; Gini ${gP.toFixed(2)} vs ${gK.toFixed(2)}`, pass: uaX >= 0.9 && gP < gK },
     { id: "impact_ratio", gate: "Impact ratio >= 0.8 for every sealed group at the automated stage (pooled; worst seed shown)", value: `${pooled.minAutomated.toFixed(2)} (worst seed ${minimumObservedRatio(p.map(m => m.impact.minAutomated)).toFixed(2)})`, pass: pooled.minAutomated >= 0.8 },
     { id: "scam_reach", gate: "Median reach per scam employer that got an intro <= 1 (max shown)", value: reach.length ? `${median(reach)} (n=${reach.length}, max ${Math.max(...reach)})` : "0 (no scam got an intro)", pass: median(reach) <= 1 },
