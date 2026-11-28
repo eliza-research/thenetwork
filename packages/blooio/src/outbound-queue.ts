@@ -512,7 +512,7 @@ export class OutboundQueue {
     const zone = isValidTimeZone(member?.time_zone) ? member.time_zone : row.timeZone;
     const validZone = isValidTimeZone(zone);
     const saved = member?.quiet_hours;
-    const quiet = Array.isArray(saved) && saved.length === 2 && saved.every(Number.isInteger) && controlQuietHoursValid(saved[0], saved[1])
+    const quiet = Array.isArray(saved) && saved.length === 2 && saved.every((h: unknown) => typeof h === "number" && Number.isFinite(h) && Math.round(h * 2) === h * 2) && controlQuietHoursValid(saved[0], saved[1])
       ? { startHour: saved[0], endHour: saved[1] } : this.o.quiet ?? DEFAULT_QUIET;
     const decision = quietPolicy(true, validZone, validZone && isQuietAt(now, zone, quiet));
     if (decision === "InvalidZone") return { kind: "invalid_zone" } as const;
