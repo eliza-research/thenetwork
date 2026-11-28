@@ -53,7 +53,7 @@ export function participationCommand(text: string): ParticipationCommand | undef
   const mode = /^(pause|resume) (?:my )?(?:matching|introductions|matches)$/.exec(line);
   if (mode) return { kind: "mode", pause: mode[1] === "pause" };
   const naturalPause = /^(?:(?:pause(?: me| my matching| matching| my matches| matches| my introductions| introductions)?|put me on pause)(?: (?:(for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?))|until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)))?|pause(?: my texts| texts| my messages| messages) until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)|(?:i need to |let me )?take a break(?: (?:(for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?))|until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)))?)$/.exec(line);
-  if (naturalPause && line !== "pause") {
+  if (naturalPause) {
     const durationDays = durationDaysOf(naturalPause[1] ?? naturalPause[4]);
     const untilWord = naturalPause[2] ?? naturalPause[3] ?? naturalPause[5];
     return { kind: "mode", pause: true,
