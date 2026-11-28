@@ -7,7 +7,7 @@
 //
 // The rules were rebuilt against hand-written corpora (test/fixtures), not the simulator's own
 // sentences (audit 2026-10-08, network-consent-1, -2, -8, -9, -10, matching-e2e-1, -M1).
-import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, SHARED_DOUBLE_NEGATIVE_RE, SPANISH_MONTHS, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, getCity, localParts, normalizeReplyText, quoteStillOpen, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, seedVenuesForCity, unquotedOwnAgeEvidence, validAge, type Category, type City, type CityId } from "@thenetwork/core";
+import { AGE_AND_CLAUSE, AGE_BIRTHDAY_AFTER_AGE, AGE_BIRTHDAY_END, AGE_CURRENT_ADVERB, AGE_DISTANT_BIRTHDAY_AFTER_AGE, AGE_LOOSE_TAIL, AGE_PART, AGE_STATED_BIRTHDAY, ARTICLE_AGE_END, CITIES, CITY_IDS, NOT_DISTANT_BIRTHDAY, SHARED_DOUBLE_NEGATIVE_RE, SPANISH_MONTHS, ageBeforeConjunction, agePartEvidenceOf, findNeighborhood, getCity, localParts, normalizeReplyText, quoteStillOpen, quoteOpenByLength, canJoin, directAgreementIdiom, isMinor, birthKeyOfParts, normalizeAgeInitialism, ownYouthCue, parseReply, readParticipationWithdrawal, relayMinorAge, seedVenuesForCity, unquotedOwnAgeEvidence, validAge, type Category, type City, type CityId } from "@thenetwork/core";
 import { ageOnDay, birthKeyUsable, precedingBirthdayAge } from "../../core/src/generated/memberAge.ts";
 import { attendanceAbsences, otherAgeStated } from "./reports.ts";
 import { hasOrElseThreat } from "../../core/src/abuse.ts";
@@ -1381,24 +1381,99 @@ const CLAUSE_START = /[.,;!?]|\b(but|though|however|although|so)\b/g;
 /** Words that make a named time a pick ("Saturday works", "free Sunday"), not just a mention ("Saturday I'm at a wedding"). */
 const POSITIVE_PICK = /\b(works|work for (?:me|us)|does|good|fine|great|perfect|best|better|free|open|i can|let'?s|is ok|okay|please|for me|yes|yeah|sure)\b/;
 /** True when the words at `i` (of length `len`) are refused: a negation cue earlier in their clause, or a refusal right after them. */
+type BoundaryIndex = { starts: number[]; ends: number[] };
+let boundaryCache: { text: string; clause: BoundaryIndex; clauseStart: BoundaryIndex } | undefined;
+
+function boundaryIndex(text: string, rx: RegExp): BoundaryIndex {
+  const starts: number[] = [], ends: number[] = [];
+  for (const m of text.matchAll(rx)) { starts.push(m.index); ends.push(m.index + m[0].length); }
+  return { starts, ends };
+}
+
+function textBoundaries(text: string): { clause: BoundaryIndex; clauseStart: BoundaryIndex } {
+  if (boundaryCache?.text !== text) {
+    boundaryCache = {
+      text,
+      clause: boundaryIndex(text, /[.,;!?\n]|\bbut\b/g),
+      clauseStart: boundaryIndex(text, CLAUSE_START),
+    };
+  }
+  return boundaryCache;
+}
+
+function lastBoundaryEnd(idx: BoundaryIndex, i: number): number {
+  let lo = 0, hi = idx.ends.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (idx.ends[mid]! <= i) lo = mid + 1; else hi = mid; }
+  return lo ? idx.ends[lo - 1]! : 0;
+}
+
+function firstBoundaryStart(idx: BoundaryIndex, from: number): number {
+  let lo = 0, hi = idx.starts.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (idx.starts[mid]! < from) lo = mid + 1; else hi = mid; }
+  return lo < idx.starts.length ? idx.starts[lo]! : -1;
+}
+
+let clauseConditionalCache: { text: string; byClause: Map<string, boolean> } | undefined;
+
+function clauseIsConditional(t: string, clause: string): boolean {
+  if (clauseConditionalCache?.text !== t) clauseConditionalCache = { text: t, byClause: new Map() };
+  let value = clauseConditionalCache.byClause.get(clause);
+  if (value === undefined) {
+    value = /\bif\b/.test(clause) || COND_RX.test(clause);
+    clauseConditionalCache.byClause.set(clause, value);
+  }
+  return value;
+}
+
+let clausePositiveCache: { text: string; byClause: Map<string, boolean> } | undefined;
+
+function clausePositivePick(t: string, clause: string): boolean {
+  if (clausePositiveCache?.text !== t) clausePositiveCache = { text: t, byClause: new Map() };
+  let value = clausePositiveCache.byClause.get(clause);
+  if (value === undefined) {
+    value = POSITIVE_PICK.test(clause);
+    clausePositiveCache.byClause.set(clause, value);
+  }
+  return value;
+}
+
+type Span = { start: number; end: number };
+let negCueCache: { text: string; spans: Span[] } | undefined;
+
+function negCueSpans(text: string): Span[] {
+  if (negCueCache?.text !== text) {
+    const spans: Span[] = [];
+    for (const m of text.matchAll(new RegExp(NEG_CUE.source, "g"))) spans.push({ start: m.index, end: m.index + m[0].length });
+    negCueCache = { text, spans };
+  }
+  return negCueCache.spans;
+}
+
+function negCueBetween(text: string, from: number, i: number): boolean {
+  const spans = negCueSpans(text);
+  let lo = 0, hi = spans.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (spans[mid]!.start < i) lo = mid + 1; else hi = mid; }
+  for (let k = lo - 1; k >= 0 && k >= lo - 2; k--) {
+    if (spans[k]!.start >= from && spans[k]!.end <= i) return true;
+  }
+  return false;
+}
+
 function negatedAt(t: string, i: number, len: number): boolean {
-  let from = 0;
-  for (const m of t.slice(0, i).matchAll(CLAUSE_START)) from = m.index! + m[0].length;
-  return NEG_CUE.test(t.slice(from, i)) || refusalAfter(t, i, i + len);
+  const from = lastBoundaryEnd(textBoundaries(t).clauseStart, i);
+  return negCueBetween(t, from, i) || refusalAfter(t, i, i + len);
 }
 /** The clause (between punctuation) around position i. */
 function clauseAt(t: string, i: number, len: number): string {
-  let from = 0;
-  for (const m of t.slice(0, i).matchAll(/[.,;!?\n]|\bbut\b/g)) from = m.index! + m[0].length;
-  const rest = t.slice(i + len);
-  const end = rest.search(/[.,;!?\n]|\bbut\b/);
-  return t.slice(from, end < 0 ? t.length : i + len + end);
+  const idx = textBoundaries(t).clause;
+  const from = lastBoundaryEnd(idx, i);
+  const end = firstBoundaryStart(idx, i + len);
+  return t.slice(from, end < 0 ? t.length : end);
 }
 
 function neitherFramed(t: string, at: number): boolean {
-  if (!probeChoiceAuthored(t.slice(0, at))) return true;
-  const clause = clauseAt(t, at, 0);
-  return /\bif\b/.test(clause) || COND_RX.test(clause);
+  if (!authoredAt(t, at)) return true;
+  return clauseIsConditional(t, clauseAt(t, at, 0));
 }
 
 function refusalAfter(t: string, at: number, end: number): boolean {
@@ -1450,7 +1525,7 @@ function directProbeDayLists(text: string): ProbeSpan[] {
   return [...text.matchAll(DIRECT_PROBE_DAY_LIST)].flatMap(match => {
     const [at, end] = match.indices!.groups!.days!;
     // A short form in a complete choice can be a weekday. The verb in “I sat Sunday” cannot.
-    return probeChoiceAuthored(text.slice(0, at)) ? [{ at, end }] : [];
+    return authoredAt(text, at) ? [{ at, end }] : [];
   });
 }
 
@@ -1463,8 +1538,36 @@ function partOf(minute: number): TimeMention["part"] {
   return minute >= 5 * 60 && minute < 12 * 60 ? "morning" : minute >= 12 * 60 && minute < 17 * 60 ? "afternoon" : "evening";
 }
 
-function probeChoiceAuthored(prefix: string): boolean {
-  return !quoteStillOpen(prefix) && reportStart(prefix.split(/[.!?\n]|\b(?:but|though|however)\b/).at(-1)!) < 0;
+type AuthoredTables = { quoteOpen: boolean[]; reportFree: boolean[] };
+let authoredTablesCache: { text: string; tables: AuthoredTables } | undefined;
+
+function authoredTables(text: string): AuthoredTables {
+  if (authoredTablesCache?.text === text) return authoredTablesCache.tables;
+  const quoteOpen = quoteOpenByLength(text);
+  const reportFree = new Array<boolean>(text.length + 1).fill(true);
+  const clauseStarts: number[] = [0];
+  for (const m of text.matchAll(/[.!?\n]|\b(?:but|though|however)\b/g)) clauseStarts.push(m.index + m[0].length);
+  clauseStarts.push(text.length + 1);
+  for (let c = 0; c + 1 < clauseStarts.length; c++) {
+    const start = clauseStarts[c]!;
+    const end = Math.min(clauseStarts[c + 1]!, text.length);
+    if (end <= start) continue;
+    const clause = text.slice(start, end);
+    const m = DISCLOSURE.exec(clause);
+    const valid = !!m && !NOT_A_PERSON.test(m[1]!)
+      && !/\b(?:i|we)(?:'?ve)?\s+$|\b(?:i|we)'$/i.test(clause.slice(0, m.index));
+    const matchEnd = valid ? m!.index + m![0].length : Number.POSITIVE_INFINITY;
+    const last = c + 2 === clauseStarts.length ? end : end - 1;
+    for (let at = start + 1; at <= last; at++) reportFree[at] = at - start < matchEnd;
+  }
+  const tables = { quoteOpen, reportFree };
+  authoredTablesCache = { text, tables };
+  return tables;
+}
+
+function authoredAt(text: string, at: number): boolean {
+  const tables = authoredTables(text);
+  return !tables.quoteOpen[at]! && tables.reportFree[at]!;
 }
 
 function authoredYes(text: string): boolean {
@@ -1531,7 +1634,7 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
   const days: TimeMention[] = DAY_WORDS.flatMap(([rx, day]) => [...text.matchAll(rx)].map(m => ({ at: m.index!, end: m.index! + m[0].length, day })));
   if (recoverTrailingPair) {
     for (const trailingPair of [TRAILING_BOTH_DAY_PAIR, TRAILING_EITHER_DAY_PAIR]) for (const pair of text.matchAll(trailingPair)) {
-      if (!probeChoiceAuthored(text.slice(0, pair.index + 1))) continue;
+      if (!authoredAt(text, pair.index + 1)) continue;
       const tail = text.slice(pair.index + pair[0].length);
       if (!BOTH_TIME_QUALIFIER.test(tail) && !BOTH_TIME_TAIL.test(tail.split(BOTH_TIME_BOUNDARY, 1)[0]!)) continue;
       const [at, end] = pair.indices!.groups!.last!;
@@ -1666,7 +1769,7 @@ function completeProbeTimeMentions(text: string, recoverTrailingPair: boolean, m
   // Recover a short day only at the start of a direct refusal or after a named time and a bare join.
   const byStart = new Set(mentions.map(mention => mention.at));
   const recover = (at: number, end: number) => {
-    if (byStart.has(at) || !memberChoiceAt(at) || !probeChoiceAuthored(text.slice(0, at))) return;
+    if (byStart.has(at) || !memberChoiceAt(at) || !authoredAt(text, at)) return;
     const token = text.slice(at, end);
     const day = DAY_WORDS.find(([word]) => token.search(word) === 0)?.[1];
     if (day) { mentions.push({ at, end, day }); byStart.add(at); }
@@ -1788,7 +1891,7 @@ function hasDetachedProbeRefusal(text: string): boolean {
   return sentencesOf(text).some(({ text: sentence, at }) => {
     const direct = sentence.trim().replace(/[.!;]+$/, "").trim();
     if (/^["']/.test(direct) || /\bif\b|\?/.test(direct) || COND_RX.test(direct)
-      || !probeChoiceAuthored(text.slice(0, at)) || describesAnotherPerson(direct)) return false;
+      || !authoredAt(text, at) || describesAnotherPerson(direct)) return false;
     return CURRENT_PROBE_REFUSAL.test(direct) || isCompleteParticipationRefusal(direct) || DIRECT_MEETING_REFUSAL.test(direct);
   });
 }
@@ -2024,24 +2127,25 @@ export function parseProbeReply(
   const refusedTails = new Map<number, [number, string[]]>();
   let conditionalTimeRefusal = false;
   const memberChoiceAt = (at: number) => {
+    if (!authoredAt(t, at)) return false;
+    if (!clarifiedTimes) return true;
     const prefix = t.slice(0, at);
-    if (!clarifiedTimes) return probeChoiceAuthored(prefix);
     const subject = [...prefix.split(/[.!?\n]/).at(-1)!.matchAll(PROBE_AVAILABILITY_SUBJECT)].at(-1)?.[1];
-    return probeChoiceAuthored(prefix) && (subject === undefined || /^(?:i|we|it|this|that)$/.test(subject));
+    return subject === undefined || /^(?:i|we|it|this|that)$/.test(subject);
   };
   const refuse = (keys: readonly string[], clause?: string) => {
     for (const key of keys) neg.add(key);
     if (clause !== undefined) refusedClauses.add(clause);
   };
   const rememberQualifiedTimeRefusal = (at: number, end: number, keys: readonly string[]) => {
-    if (!probeChoiceAuthored(t.slice(0, at))) return;
+    if (!authoredAt(t, at)) return;
     const tail = t.slice(end);
     const refusal = REFUSES_OFFERED_TIME.exec(tail)?.[0];
     if (!refusal) {
       const leadAt = leadingTimeRefusalAt(t, at, end);
       if (leadAt < 0) return;
       const clause = clauseAt(t, at, end - at);
-      if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
+      if (clauseIsConditional(t, clause)) conditionalTimeRefusal = true;
       else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(leadAt, [at, keys, false]);
       return;
     }
@@ -2051,7 +2155,7 @@ export function parseProbeReply(
       && (!/[a-z0-9]/i.test(rest)
         || /\b(?:nothing|none|no\s+other\s+(?:day|option|slot|one)s?)\b/.test(rest))) return;
     const clause = clauseAt(t, at, end - at);
-    if (/\bif\b/.test(clause) || COND_RX.test(clause)) conditionalTimeRefusal = true;
+    if (clauseIsConditional(t, clause)) conditionalTimeRefusal = true;
     else if (c.why === "refusal" || c.why === "mixed") qualifiedTimeRefusals.set(end, [end + refusal.length, keys, qualified]);
   };
   const onlyPick = (i: number, len: number) => /^[\s\W]*(?:the\s+)?$/.test(t.slice(0, i)) && /^[\s\W]*(?:one|option|works?|please|pls|lol)?[\s\W]*$/.test(t.slice(i + len));
@@ -2066,7 +2170,7 @@ export function parseProbeReply(
     for (const k of keys) {
       pos.add(k);
       (group ? grouped : individual).add(k);
-      if ((!unbound || !calendar) && onlyPick(i, len) || (POSITIVE_PICK.test(cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
+      if ((!unbound || !calendar) && onlyPick(i, len) || (clausePositivePick(t, cl) && !/\?/.test(t.slice(i + len, i + len + 2)))) strong.add(k);
     }
   };
   // Option letters only where they cannot be the article "a": "a or b", "(b)", "option c", or alone.
@@ -2318,12 +2422,12 @@ export function parseProbeReply(
       || weakNegated) return { ...unclear, why: "slot" };
     const bothCues = weakCues.filter(cue => {
       if (cue.index! >= weakLimit || !cue[0].startsWith("both")) return false;
-      return probeChoiceAuthored(t.slice(0, cue.index!));
+      return authoredAt(t, cue.index!);
     });
     if (bothCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const eitherCues = weakCues.filter(cue => {
       if (cue.index! >= weakLimit || !cue[0].startsWith("either")) return false;
-      return probeChoiceAuthored(t.slice(0, cue.index!));
+      return authoredAt(t, cue.index!);
     });
     if (eitherCues.some(cue => BOTH_TIME_QUALIFIER.test(t.slice(cue.index! + cue[0].length)))) return { ...unclear, why: "slot" };
     const namesPair = bothCues.some(cue => {
@@ -2366,7 +2470,7 @@ export function parseProbeReply(
   if (rejectedTimes || bareGroupRejection || !namedExclusion && OTHER_TIMES.test(t)) return { answer: "yes", keys: [], why: c.why };
   // "Any of them" (not refused, not a request for other days): every option the member did not rule out.
   const allAt = strongAll ?? weakAt;
-  if (allAt && probeChoiceAuthored(t.slice(0, allAt.index)) && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
+  if (allAt && authoredAt(t, allAt.index) && !probeTimeIsRefused(t, allAt.index, allAt.index + allAt[0].length)
     && !unresolved.some(m => clauseAt(t, m.at, m.end - m.at) === clauseAt(t, allAt.index, allAt[0].length))) {
     if (clarifiedTimes && !clarifiedBroadTimeChoiceAllowed(strongAll !== null,
       /\b(?:both|either)\b/.test(strongAll?.[0] ?? ""), open.length)) {
