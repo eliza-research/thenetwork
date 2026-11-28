@@ -5,7 +5,8 @@
 //             against every NC lever off); gaming: each strategy's mean net gain <= 25% of a regular's NC.
 //   tracked:  (b) the absolute bottom/top ratio >= 0.80 (a network-health target).
 //   The vouch-period gate (vouchPeriodGate) runs in the default network block, not here.
-import { CapitalLedger, vouchCapacity } from "../../packages/capital/src/index.ts";
+import { CapitalLedger, vouchCapacity, type CapitalEvent } from "../../packages/capital/src/index.ts";
+import { contributionEventReplayPriority } from "../../packages/core/src/generated/contributionHistory.ts";
 import { GATE_MIN_SEEDS, launchGates, runArm } from "../../packages/capital/experiments/run.ts";
 import { DAY } from "../../packages/core/src/clock.ts";
 import { Block, expect } from "./gate.ts";
@@ -110,6 +111,69 @@ export async function feedbackAfterFraudGate(b: Block): Promise<void> {
     expect(M.isReversed(feedbackD.id)).toBe(true);
     expect(M.all().filter(e => e.category === "clawback" && e.provenance.reverses === feedbackD.id).length).toBe(1);
     expect(M.balance("d")).toBe(-10);
+  });
+}
+
+export async function vouchCreditEligibilityGate(b: Block): Promise<void> {
+  await b.run("ledger: a vouch credit does not back-fill ineligible time", () => {
+    const T0 = Date.UTC(2026, 0, 1);
+    const at = (d: number, n = 0) => T0 + d * DAY + n;
+    const joined = (activate = true) => {
+      const L = new CapitalLedger();
+      for (const [i, who] of ["v", "x"].entries()) L.record({ id: `join-${who}`, t: at(0, i), type: "member_joined", member: who, age: 30 });
+      L.record({ id: "join-i", t: at(1), type: "member_joined", member: "i", age: 30, vouchedBy: "v" });
+      if (activate) L.record({ id: "act-i", t: at(2), type: "member_activated", member: "i" });
+      return L;
+    };
+    const vouchTimes = (L: CapitalLedger) => L.all().filter(e => e.category === "vouch" && e.member === "v").map(e => e.t);
+
+    const voucherReturns = joined();
+    voucherReturns.record({ id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 });
+    voucherReturns.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    voucherReturns.record({ id: "age-v-adult", t: at(5), type: "age_updated", member: "v", age: 30 });
+    expect(vouchTimes(voucherReturns)).toEqual([]);
+    expect(voucherReturns.balance("v")).toBe(0);
+
+    const inviteeReturns = joined();
+    inviteeReturns.record({ id: "age-i-minor", t: at(3), type: "age_updated", member: "i", age: 16 });
+    inviteeReturns.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    inviteeReturns.record({ id: "age-i-adult", t: at(5), type: "age_updated", member: "i", age: 30 });
+    expect(vouchTimes(inviteeReturns)).toEqual([]);
+    expect(inviteeReturns.balance("v")).toBe(0);
+
+    const activationAfterReturn = joined(false);
+    activationAfterReturn.record({ id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 });
+    activationAfterReturn.record({ id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    activationAfterReturn.record({ id: "age-v-adult", t: at(5), type: "age_updated", member: "v", age: 30 });
+    activationAfterReturn.record({ id: "act-i", t: at(6), type: "member_activated", member: "i" });
+    expect(vouchTimes(activationAfterReturn)).toEqual([]);
+
+    const valueWhileEligible = joined(false);
+    valueWhileEligible.record({ id: "value-i", t: at(3), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    valueWhileEligible.record({ id: "age-v-minor", t: at(4), type: "age_updated", member: "v", age: 16 });
+    valueWhileEligible.record({ id: "age-v-adult", t: at(5), type: "age_updated", member: "v", age: 30 });
+    valueWhileEligible.record({ id: "act-i", t: at(6), type: "member_activated", member: "i" });
+    expect(vouchTimes(valueWhileEligible)).toEqual([at(6)]);
+    expect(valueWhileEligible.balance("v")).toBe(10);
+
+    const afterWindow = joined(false);
+    afterWindow.record({ id: "value-i", t: at(3), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] });
+    afterWindow.record({ id: "act-i", t: at(40), type: "member_activated", member: "i" });
+    expect(vouchTimes(afterWindow)).toEqual([]);
+
+    const safetyEvents: CapitalEvent[] = [
+      { id: "join-v", t: at(0), type: "member_joined", member: "v", age: 30 },
+      { id: "join-x", t: at(0, 1), type: "member_joined", member: "x", age: 30 },
+      { id: "join-i", t: at(1), type: "member_joined", member: "i", age: 30, vouchedBy: "v" },
+      { id: "act-i", t: at(2), type: "member_activated", member: "i" },
+      { id: "age-v-minor", t: at(3), type: "age_updated", member: "v", age: 16 },
+      { id: "value-i", t: at(4), type: "value_received", member: "i", with: ["x"], confirmedBy: ["x"] },
+      { id: "safety-i", t: at(5), type: "safety_flag", member: "i", serious: true },
+      { id: "age-v-adult", t: at(5), type: "age_updated", member: "v", age: 30 },
+    ];
+    const historyEvents = [...safetyEvents].sort((a, c) => a.t - c.t || contributionEventReplayPriority(a.type) - contributionEventReplayPriority(c.type));
+    expect(vouchTimes(CapitalLedger.replay(safetyEvents))).toEqual([]);
+    expect(vouchTimes(CapitalLedger.replay(historyEvents))).toEqual([]);
   });
 }
 

@@ -190,6 +190,32 @@ export function lawCapitalPeriodRoomIsNonnegative(remaining: number): boolean {
   return capitalPeriodRoom(remaining) >= 0;
 }
 
+/** Story: Count what I contributed once and preserve its history / A vouch credit does not back-fill ineligible time (spec/capitalLedger.md) */
+//@ pure
+export function vouchValueCounts(inviteeEligible: boolean, voucherEligible: boolean, inviteeRemoved: boolean, voucherRemoved: boolean): boolean {
+  return inviteeEligible && voucherEligible && !inviteeRemoved && !voucherRemoved;
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch credit does not back-fill ineligible time (spec/capitalLedger.md) */
+//@ pure
+export function vouchCreditMayEarn(activated: boolean, valueCounted: boolean, safetyFlagged: boolean, removed: boolean, credited: boolean, stakeTaken: boolean, withinWindow: boolean, inviteeEligible: boolean, voucherEligible: boolean, voucherRemoved: boolean): boolean {
+  return activated && valueCounted && !safetyFlagged && !removed && !credited && !stakeTaken && withinWindow && inviteeEligible && voucherEligible && !voucherRemoved;
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch credit does not back-fill ineligible time (spec/capitalLedger.md) */
+//@ pure
+export function lawVouchCreditAtMostOnce(activated: boolean, valueCounted: boolean, safetyFlagged: boolean, removed: boolean, stakeTaken: boolean, withinWindow: boolean, inviteeEligible: boolean, voucherEligible: boolean, voucherRemoved: boolean): boolean {
+  //@ ensures \result === true
+  return !vouchCreditMayEarn(activated, valueCounted, safetyFlagged, removed, true, stakeTaken, withinWindow, inviteeEligible, voucherEligible, voucherRemoved);
+}
+
+/** Story: Count what I contributed once and preserve its history / A vouch credit does not back-fill ineligible time (spec/capitalLedger.md) */
+//@ pure
+export function lawVouchValueWhileIneligibleDoesNotCount(inviteeRemoved: boolean, voucherRemoved: boolean): boolean {
+  //@ ensures \result === true
+  return !vouchValueCounts(false, true, inviteeRemoved, voucherRemoved) && !vouchValueCounts(true, false, inviteeRemoved, voucherRemoved);
+}
+
 /** Story: Count what I contributed once and preserve its history / A vouch stake waits when the voucher is ineligible at removal (spec/capitalLedger.md) */
 //@ pure
 export function vouchStakeMayDefer(seriousAbuse: boolean, vouched: boolean, stakeTaken: boolean, withinWindow: boolean, voucherEligible: boolean): boolean {

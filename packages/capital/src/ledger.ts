@@ -16,7 +16,7 @@ import {
   capitalAttendanceEvidence, capitalEntryUsesPeriodCap, capitalFraudReverses, capitalHelpWasUseful,
   capitalPeriodRoom, initial as capitalEventInitial, isCapitalFraudCandidate, mayEarnCapital,
   mayReverseCapitalEntry, needCapitalSourceOpen, organizingCapitalQuorum, organizingCapitalSourceOpen,
-  step as stepCapitalEvent, vouchStakeMayDefer, vouchStakeMayTake,
+  step as stepCapitalEvent, vouchCreditMayEarn, vouchStakeMayDefer, vouchStakeMayTake, vouchValueCounts,
 } from "../../core/src/generated/capitalLedger.ts";
 import { isMinor } from "../../core/src/policy.ts";
 import { resolveCapital, type CapitalConfig, type CapitalConfigInput } from "./config.ts";
@@ -196,6 +196,7 @@ export class CapitalLedger {
         const confirmed = others.filter(w => (ev.confirmedBy ?? []).includes(w));
         const verified = (ev.verifiedBy ?? []).some(v => v !== "counterpart");
         if (!others.length || (!confirmed.length && !verified)) break;
+        if (!vouchValueCounts(m.eligible, this.isEligible(m.vouchedBy), m.removed, this.members.get(m.vouchedBy)?.removed ?? false)) break;
         m.valueInWindow = true;
         m.valueProviders = confirmed;
         this.tryVouchCredit(ev, ev.member, out);
@@ -375,11 +376,11 @@ export class CapitalLedger {
 
   private tryVouchCredit(ev: CapitalEvent, invitee: MemberId, out: LedgerEntry[]) {
     const m = this.members.get(invitee)!;
-    if (!m.vouchedBy || m.vouchCreditId || m.stakeTaken) return;
-    // Recruiting a minor, or someone whose age is unknown, earns nothing (capital-9).
-    if (!m.eligible || !m.activated || !m.valueInWindow || m.safetyFlagged || m.removed) return;
-    if (ev.t - m.joinedAt > this.cfg.vouch.valueWindowDays * DAY) return;
-    const e = this.credit(m.vouchedBy, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
+    const voucher = m.vouchedBy;
+    if (!voucher) return;
+    const withinWindow = ev.t - m.joinedAt <= this.cfg.vouch.valueWindowDays * DAY;
+    if (!vouchCreditMayEarn(m.activated, m.valueInWindow, m.safetyFlagged, m.removed, !!m.vouchCreditId, m.stakeTaken, withinWindow, m.eligible, this.isEligible(voucher), this.members.get(voucher)?.removed ?? false)) return;
+    const e = this.credit(voucher, "vouch", this.cfg.credit.vouch, ev, [invitee], m.valueProviders, "vouch: invitee active and got value", out);
     if (e) m.vouchCreditId = e.id;
   }
 
