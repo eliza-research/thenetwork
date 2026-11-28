@@ -1415,9 +1415,57 @@ const RELATIVE_DAY_GROUP = /\b(?:next|last|following)\s+weekends?\b/;
 const DAYPART_MENTION = /\b(mornings?|afternoons?|lunch|evenings?|nights?|after work)\b/g;
 const NAMED_EXCLUSION_RANGE = "(?:any(?: other)? (?:day(?: of the week)?|time)|anytime|(?:any|every)thing(?: else)?|(?:all|every|each) (?:days?|times?)|all|whichever|whatever)";
 const DAYPART_EXCLUSION = /\b(?:any|every|each)\s+(morning|afternoon|evening|night)s?\s+but\s+(?:(?:on|this|that)\s+)*/;
-const NAMED_EXCLUSION = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that|the)\s+)*$`);
-const NAMED_EXCLUSION_VERB_FIRST = new RegExp(String.raw`\b${NAMED_EXCLUSION_RANGE}\s+(?:works?|will work)\s+(?:but|${NAMED_TIME_EXCLUSION})\s+(?:(?:on|this|that|the)\s+)*$`);
+const NAMED_EXCLUSION_HEAD = new RegExp(String.raw`\b(?:${NAMED_EXCLUSION_RANGE} but|${NAMED_TIME_EXCLUSION})$`);
+const NAMED_EXCLUSION_VERB_HEAD = new RegExp(String.raw`\b${NAMED_EXCLUSION_RANGE}\s+(?:works?|will work)\s+(?:but|${NAMED_TIME_EXCLUSION})$`);
+const EXCLUSION_FILLER: ReadonlySet<string> = new Set(["on", "this", "that", "the"]);
 const INCIDENTAL_CLOCK = /\b(?:after|before|until|till|by|around)\s*$|\b(?:work|shift)\s+(?:at\s+|(?:starts?|ends?)\s+at\s+)$/;
+
+function isSpace(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  if (code <= 32) return code === 32 || (code >= 9 && code <= 13);
+  return code === 160 || code === 65279 || /\s/.test(ch);
+}
+
+function suffixWindowStart(text: string, end: number, nonSpaceLimit: number): number {
+  let count = 0;
+  const floor = Math.max(0, end - 8192);
+  for (let i = end - 1; i >= floor; i--) {
+    if (!isSpace(text[i]!)) {
+      count++;
+      if (count > nonSpaceLimit) return i;
+    }
+  }
+  return 0;
+}
+
+function incidentalClockBefore(text: string, at: number): boolean {
+  return INCIDENTAL_CLOCK.test(text.slice(suffixWindowStart(text, at, 13), at));
+}
+
+function exclusionHeadEnd(text: string, at: number): number {
+  let end = at;
+  while (end > 0 && isSpace(text[end - 1]!)) end--;
+  if (end === at) return -1;
+  let j = end;
+  for (;;) {
+    let w = j;
+    while (w > 0 && !isSpace(text[w - 1]!)) w--;
+    if (w === 0 || !EXCLUSION_FILLER.has(text.slice(w, j))) return j;
+    let r = w;
+    while (r > 0 && isSpace(text[r - 1]!)) r--;
+    j = r;
+  }
+}
+
+function namedExclusionAt(text: string, at: number): boolean {
+  const j = exclusionHeadEnd(text, at);
+  return j > 0 && NAMED_EXCLUSION_HEAD.test(text.slice(suffixWindowStart(text, j, 23), j));
+}
+
+function namedExclusionVerbFirstAt(text: string, at: number): boolean {
+  const j = exclusionHeadEnd(text, at);
+  return j > 0 && NAMED_EXCLUSION_VERB_HEAD.test(text.slice(suffixWindowStart(text, j, 37), j));
+}
 const CONNECTS_TIME = /^\s*(?:(?:at|on|in the)\s+)?$/;
 type ProbeSpan = { at: number; end: number };
 type TimeMention = ProbeSpan & {
@@ -1586,7 +1634,7 @@ function timeMentions(text: string, recoverTrailingPair = false): TimeMention[] 
     const tail = /^\s+(?:ones|days|times|slots|options)\b/.exec(text.slice(m.end));
     if (tail) m.end += tail[0].length;
   }
-  return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !INCIDENTAL_CLOCK.test(text.slice(0, t.at)))];
+  return [...days, ...times.filter(t => t.day || t.group || t.minute === undefined || !incidentalClockBefore(text, t.at))];
 }
 
 /** Recognize a complete time expression without treating it as acceptance. */
@@ -2165,8 +2213,8 @@ export function parseProbeReply(
     if (unresolvedLists.some(list => spanContains(list, m))) { unresolved.push(m); continue; }
     if (partExclusion && m.at >= partExclusion.index && m.at < partExclusionEnd) continue;
     const prefix = t.slice(0, m.at);
-    const exclusion = m.at === partExclusionEnd || NAMED_EXCLUSION.test(prefix)
-      || NAMED_EXCLUSION_VERB_FIRST.test(prefix) && (!/[a-z0-9]/i.test(t.slice(m.end)) || refusalAfter(t, m.at, m.end));
+    const exclusion = m.at === partExclusionEnd || namedExclusionAt(t, m.at)
+      || namedExclusionVerbFirstAt(t, m.at) && (!/[a-z0-9]/i.test(t.slice(m.end)) || refusalAfter(t, m.at, m.end));
     const currentAlternative = clarifiedTimes && exclusion && CLARIFIED_ALTERNATIVE_RANGE.test(prefix)
       && CURRENT_PROBE_CHOICE.test(t.slice(m.end).replace(/[.!]\s*$/, ""));
     if (clarifiedTimes && !currentAlternative && probeTimeIsRecurring(t, m.at, m.end)) continue;
