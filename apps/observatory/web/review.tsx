@@ -307,7 +307,8 @@ export function ReviewQueue() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if ((e.target as Element | null)?.closest?.("input, textarea, select")) return;
+      const target = e.target as Element | null;
+      if (target?.closest?.("input, textarea, select")) return;
       const { pending, sel, ctl, view, select, afterDecision, preview } = live.current;
       if (view !== "pending") return;
       const handled = () => { e.preventDefault(); e.stopImmediatePropagation(); };
@@ -339,7 +340,9 @@ export function ReviewQueue() {
       }
       else if (e.key === "n") { handled(); ctl.noteRef.current?.focus(); }
       else if (e.key === "x") { handled(); setScoreOpen(v => !v); }
-      else if (e.key === "Enter") { handled(); store.focus({ kind: "opportunity", id: sel.id }); }
+      else if (e.key === "Enter" && !target?.closest?.("button, a[href], summary, [role=button], [role=link], [role=tab]")) {
+        handled(); store.focus({ kind: "opportunity", id: sel.id });
+      }
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
