@@ -1,9 +1,6 @@
 import { expect, test } from "vitest";
 import { Mini } from "./mini.ts";
 
-// spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting":
-// a date-only cancellation selects a unique booking on the named local day, and a natural-language
-// activity name that does not bind an exact start asks for the full start before changing a booking.
 async function confirmedPairOn(meetingAt: number) {
   const ids = ["a", "b"];
   const w = new Mini(ids.map(id => ({
@@ -24,7 +21,6 @@ async function confirmedPairOn(meetingAt: number) {
 }
 
 test("an activity cancellation naming another day leaves the confirmed booking and asks for the start", async () => {
-  // Friday 2026-10-09 19:00 New York; the member names Wednesday.
   const { w, booked } = await confirmedPairOn(Date.UTC(2026, 9, 9, 23));
   const marker = w.mark();
   await w.say("a", "I can't make it to coffee on Wednesday anymore, sorry");
@@ -35,7 +31,6 @@ test("an activity cancellation naming another day leaves the confirmed booking a
 });
 
 test("an activity cancellation naming the booked day still cancels the unique booking", async () => {
-  // Wednesday 2026-10-07 19:00 New York.
   const { w, booked } = await confirmedPairOn(Date.UTC(2026, 9, 7, 23));
   await w.say("a", "I can't make it to coffee on Wednesday anymore, sorry");
   expect(w.net.opps.get(booked.id)?.stage).toBe("closed");
