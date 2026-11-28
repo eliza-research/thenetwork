@@ -391,7 +391,8 @@ function readSeeks(t0: string, asked?: OnboardField): SeekReading {
   function scanOpening(s: Sentence) {
     const lead = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*/.exec(s.text)![0].length;
     const L = genderList(s.text, lead);
-    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:only|just)\s+)?(?:(?:trans|transgender|cis|cisgender)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text);
+    const bothLead = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:both|either)\b/.test(s.text);
+    const plural = /^\s*(?:(?:actually|no|nah|nope|oh|and|also|plus|oops|wait|sorry|ok|okay|hmm|um|well|so|but|i mean)[\s,!]+)*(?:(?:both|either)\s+)?(?:(?:only|just)\s+)?(?:(?:trans|transgender|cis|cisgender)\s+)?(?:women|womxn|girls|grls|gals|ladies|females|men|guys|dudes|boys|males|non-?binary (?:people|folks|ppl)|enbies|nbs|anyone|any1|anybody|everyone|everybody|whoever|all genders|any gender)\b/.test(s.text) && (!bothLead || L.genders.size >= 2);
     const singularAsked = asked === "seeks" && /^\s*(?:(?:actually|no|oh|um|well|so)[\s,!]+)*(?:a\s+|an\s+)?(?:woman|man|guy|girl|gal|lady|dude|nonbinary person|nb person)\b/.test(s.text);
     if (asked !== "gender" && (plural || singularAsked) && (L.genders.size || L.neg.size) && !/^\s*(?:i'?m|im|i am)\b/.test(s.text)) {
       const negLead = /\b(?:no|not|nope|nah)\s+$/.test(s.text.slice(0, lead)), negAfter = /^\s*(?:are|is)\s+(?:a\s+)?(?:hard\s+)?(?:no|not|never|out|off the table|a pass|pass)\b/.test(s.text.slice(L.end));
