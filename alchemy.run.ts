@@ -20,6 +20,7 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const stageName = yield* Alchemy.Stage;
+    const isDev = yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orElseSucceed(() => false));
     const { stageTarget, stageSlug, backendOrigin, commitSha } = resolveDeployPolicy(stageName);
     const isProduction = stageTarget.kind === "production";
     const isStaging = stageTarget.kind === "staging";
@@ -49,7 +50,13 @@ export default Alchemy.Stack(
       productionDomains: PRODUCTION_DOMAINS,
     });
 
-    const sites = yield* provisionPagesSites({ stageTarget, stageSlug, commitSha });
+    const sites = yield* provisionPagesSites({
+      stageTarget,
+      stageSlug,
+      commitSha,
+      backendOrigin,
+      isDev,
+    });
 
     const photosBucket = yield* Cloudflare.R2.Bucket("PhotosBucket", {
       name: photosBucketName,
@@ -74,29 +81,32 @@ export default Alchemy.Stack(
       ],
     }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain());
 
-    const observatory = yield* Cloudflare.Worker("Observatory", {
-      name: observatoryWorkerName,
-      main: "./apps/observatory/deploy/worker.ts",
-      compatibility: {
-        date: "2026-09-28",
-        flags: ["nodejs_compat"],
-      },
-      workersDev: false,
-      observability: { enabled: true },
-      ...(observatoryDomain ? { domain: observatoryDomain } : {}),
-      env: {
-        CONSOLE: Cloudflare.Container("ObservatoryConsole", {
-          className: "ObservatoryConsole",
-          context: ".",
-          dockerfile: "deploy/backend/Dockerfile",
-          instanceType: "standard-1",
-          maxInstances: 1,
-        }),
-        PLATFORM_ENV: isProduction ? "production" : "staging",
-        OBSERVATORY_ENABLED: observatoryEnabled ? "true" : "false",
-        BUILD_ID: commitSha,
-      },
-    }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain());
+    const includeObservatory = !isDev || process.env.OBSERVATORY_DEV === "true";
+    const observatory = includeObservatory
+      ? yield* Cloudflare.Worker("Observatory", {
+          name: observatoryWorkerName,
+          main: "./apps/observatory/deploy/worker.ts",
+          compatibility: {
+            date: "2026-09-28",
+            flags: ["nodejs_compat"],
+          },
+          workersDev: { enabled: false, previewsEnabled: false },
+          observability: { enabled: true },
+          ...(observatoryDomain ? { domain: observatoryDomain } : {}),
+          env: {
+            CONSOLE: Cloudflare.Container("ObservatoryConsole", {
+              className: "ObservatoryConsole",
+              context: ".",
+              dockerfile: "deploy/backend/Dockerfile",
+              instanceType: "standard-1",
+              maxInstances: 1,
+            }),
+            PLATFORM_ENV: isProduction ? "production" : "staging",
+            OBSERVATORY_ENABLED: observatoryEnabled ? "true" : "false",
+            BUILD_ID: commitSha,
+          },
+        }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain())
+      : undefined;
 
     return {
       stage: stageTarget.stage,
@@ -107,11 +117,15 @@ export default Alchemy.Stack(
         photos: photosBucket.bucketName,
         backups: backupsBucket.bucketName,
       },
-      observatory: {
-        workerName: observatory.workerName,
-        enabled: observatoryEnabled,
-        ...(observatoryDomain ? { domain: observatoryDomain } : {}),
-      },
+      ...(observatory
+        ? {
+            observatory: {
+              workerName: observatory.workerName,
+              enabled: observatoryEnabled,
+              ...(observatoryDomain ? { domain: observatoryDomain } : {}),
+            },
+          }
+        : {}),
     };
   }),
 );

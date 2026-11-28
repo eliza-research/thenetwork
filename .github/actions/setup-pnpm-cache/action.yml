@@ -21,7 +21,7 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
       with:
         path: ${{ env.PNPM_STORE_DIR }}
-        key: pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tools/vibestack/pnpm-lock.yaml') }}
+        key: pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc') }}-${{ hashFiles('pnpm-lock.yaml', 'tools/vibestack/pnpm-lock.yaml') }}
         restore-keys: |
           pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc') }}-
           pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-

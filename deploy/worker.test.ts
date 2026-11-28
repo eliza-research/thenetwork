@@ -1,3 +1,5 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -10,12 +12,15 @@ import * as HttpClient from "effect/http/HttpClient";
 import { verifyProxyHeaders } from "../packages/platform/src/proxy.ts";
 import { hashAssetDirectory } from "../tools/vibestack/vibestack/alchemy.ts";
 import {
+  createWranglerWarmup,
   dnsStageSlug,
   PAGES_SITES,
   provisionPagesSites,
   resolveDeployPolicy,
+  resolvePagesTarget,
   resolveStateBackendConfig,
   validateBackendOrigin,
+  WRANGLER_VERSION,
 } from "./alchemy-sites.ts";
 import { RUN_WORKER_FIRST } from "./router.ts";
 
@@ -325,5 +330,174 @@ test(
       expect(verifyAction?.Input).toMatchObject({ app: site.app });
       expect("commitSha" in (verifyAction?.Input as Record<string, unknown>)).toBe(true);
     }
+  }),
+);
+
+const StagingPagesGraphStack = Alchemy.Stack(
+  "TheNetworkStagingPagesGraphTest",
+  {
+    providers: Cloudflare.providers(),
+    state: Alchemy.inMemoryState(),
+  },
+  Effect.gen(function* () {
+    const policy = resolveDeployPolicy("staging");
+    return yield* provisionPagesSites({
+      stageTarget: policy.stageTarget,
+      stageSlug: policy.stageSlug,
+      commitSha: "b".repeat(40),
+      isDev: false,
+    });
+  }),
+);
+
+const DevPagesGraphStack = Alchemy.Stack(
+  "TheNetworkDevPagesGraphTest",
+  {
+    providers: Cloudflare.providers(),
+    state: Alchemy.inMemoryState(),
+  },
+  Effect.gen(function* () {
+    const policy = resolveDeployPolicy("dev_alice_work");
+    return yield* provisionPagesSites({
+      stageTarget: policy.stageTarget,
+      stageSlug: policy.stageSlug,
+      commitSha: "c".repeat(40),
+      backendOrigin: policy.backendOrigin,
+      isDev: true,
+    });
+  }),
+);
+
+test(
+  "aligns non-production Pages productionBranch with deploy branch so project.subdomain serves staging deployments",
+  Effect.gen(function* () {
+    const prodPolicy = resolveDeployPolicy("production");
+    expect("allowDeploy" in prodPolicy).toBe(false);
+    expect(resolvePagesTarget(PAGES_SITES[0], prodPolicy.stageTarget, prodPolicy.stageSlug)).toEqual({
+      projectName: "ntwrk-party",
+      productionBranch: "main",
+      branch: "main",
+    });
+
+    const stagingPolicy = resolveDeployPolicy("staging");
+    expect(resolvePagesTarget(PAGES_SITES[0], stagingPolicy.stageTarget, stagingPolicy.stageSlug)).toEqual({
+      projectName: "ntwrk-party-staging",
+      productionBranch: "staging",
+      branch: "staging",
+    });
+
+    const compiled = yield* StagingPagesGraphStack.pipe(
+      Effect.provideService(Alchemy.Stage, "staging"),
+    );
+    for (const site of PAGES_SITES) {
+      const project = compiled.resources[`Pages_${site.app}`];
+      const deployAction = compiled.actions[`Deploy_${site.app}`];
+      expect(project?.Props).toMatchObject({
+        name: `${site.project}-staging`,
+        productionBranch: "staging",
+      });
+      expect(deployAction?.Input).toMatchObject({
+        branch: "staging",
+      });
+    }
+  }),
+);
+
+test(
+  "skips remote Pages projects and deploy/verify actions under local Alchemy dev mode",
+  Effect.gen(function* () {
+    const compiled = yield* DevPagesGraphStack.pipe(
+      Effect.provideService(Alchemy.Stage, "dev_alice_work"),
+    );
+    expect(Object.keys(compiled.actions)).toEqual([]);
+    for (const id of Object.keys(compiled.resources)) {
+      expect(id.startsWith("Site_")).toBe(true);
+    }
+    expect(Object.keys(compiled.resources)).toContain("Site_ntwrk");
+  }),
+);
+
+test(
+  "pre-warms Wrangler CLI once across concurrent Pages deploys and recovers after failure",
+  Effect.promise(async () => {
+    let calls = 0;
+    const seenArgs: (readonly string[])[] = [];
+    const warmup = createWranglerWarmup(async (_command, args) => {
+      calls += 1;
+      seenArgs.push(args);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    });
+
+    await Promise.all([warmup(), warmup(), warmup(), warmup()]);
+    expect(calls).toBe(1);
+    expect(seenArgs[0]).toEqual(["dlx", `wrangler@${WRANGLER_VERSION}`, "--version"]);
+
+    let attempts = 0;
+    const flakyWarmup = createWranglerWarmup(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new Error("transient");
+      }
+    });
+    await expect(flakyWarmup()).rejects.toThrow("transient");
+    await expect(flakyWarmup()).resolves.toBeUndefined();
+    expect(attempts).toBe(2);
+  }),
+);
+
+test(
+  "scripts/alchemy.sh refuses mutating commands without NTWRK_ALLOW_DEPLOY=1 and allows read-only commands",
+  Effect.sync(() => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const script = path.join(repoRoot, "scripts/alchemy.sh");
+    const env = { ...process.env };
+    delete env.NTWRK_ALLOW_DEPLOY;
+
+    const refusedCases: readonly (readonly string[])[] = [
+      ["deploy"],
+      ["destroy"],
+      ["state", "list"],
+      ["provider", "cloudflare", "token"],
+      ["--unknown-flag", "deploy", "plan"],
+      ["--help=false", "deploy"],
+      ["--help", "false", "deploy"],
+      ["--", "deploy"],
+    ];
+    for (const args of refusedCases) {
+      const result = spawnSync("bash", [script, ...args], {
+        cwd: repoRoot,
+        env,
+        encoding: "utf8",
+      });
+      expect(result.status, `expected exit 3 for: ${args.join(" ")}`).toBe(3);
+      expect(result.stderr).toContain("NTWRK_ALLOW_DEPLOY=1");
+    }
+
+    const version = spawnSync("bash", [script, "--version"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+    });
+    expect(version.status).toBe(0);
+
+    const planHelp = spawnSync("bash", [script, "plan", "--help"], {
+      cwd: repoRoot,
+      env,
+      encoding: "utf8",
+    });
+    expect(planHelp.status).toBe(0);
+  }),
+);
+
+test(
+  "keeps WRANGLER_VERSION identical across scripts/wrangler.sh, deploy/alchemy-sites.ts, and deploy-sites.yml",
+  Effect.sync(() => {
+    const repoRoot = path.resolve(import.meta.dirname, "..");
+    const wranglerSh = readFileSync(path.join(repoRoot, "scripts/wrangler.sh"), "utf8");
+    const workflow = readFileSync(path.join(repoRoot, ".github/workflows/deploy-sites.yml"), "utf8");
+    const shMatch = wranglerSh.match(/^WRANGLER_VERSION="([^"]+)"$/m);
+    const wfMatch = workflow.match(/^\s+WRANGLER_VERSION:\s*"([^"]+)"$/m);
+    expect(shMatch?.[1]).toBe(WRANGLER_VERSION);
+    expect(wfMatch?.[1]).toBe(WRANGLER_VERSION);
   }),
 );

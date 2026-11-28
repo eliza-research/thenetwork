@@ -17,6 +17,7 @@ import {
   resolveStage,
   type StageTarget,
 } from "../tools/vibestack/vibestack/alchemy.ts";
+import { RUN_WORKER_FIRST } from "./router.ts";
 import { smoke } from "./smoke.ts";
 
 export interface PagesSiteSpec {
@@ -192,7 +193,6 @@ export function resolveDeployPolicy(stageName: string): {
   readonly stageSlug: string;
   readonly backendOrigin: string;
   readonly commitSha: string;
-  readonly allowDeploy: boolean;
 } {
   const stageTarget = resolveStage({ stage: stageName, cwd: REPO_ROOT });
   if (stageTarget.kind === "preview") {
@@ -203,11 +203,30 @@ export function resolveDeployPolicy(stageName: string): {
   const backendOrigin = validateBackendOrigin(
     process.env.BACKEND_ORIGIN?.trim() || DEFAULT_BACKEND_ORIGIN,
   );
-  const allowDeploy = process.env.NTWRK_ALLOW_DEPLOY === "1";
   const commitSha = resolveCommitSha();
   const stageSlug = dnsStageSlug(stageTarget.stage);
-  return { stageTarget, stageSlug, backendOrigin, commitSha, allowDeploy };
+  return { stageTarget, stageSlug, backendOrigin, commitSha };
 }
+
+export function resolvePagesTarget(
+  site: PagesSiteSpec,
+  stageTarget: StageTarget,
+  stageSlug: string,
+): {
+  readonly projectName: string;
+  readonly productionBranch: string;
+  readonly branch: string;
+} {
+  const isProduction = stageTarget.kind === "production";
+  const branch = isProduction ? "main" : stageSlug;
+  return {
+    projectName: isProduction ? site.project : `${site.project}-${stageSlug}`,
+    productionBranch: branch,
+    branch,
+  };
+}
+
+type CommandRunner = (command: string, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<void>;
 
 function runCommand(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -234,6 +253,21 @@ function runCommand(command: string, args: readonly string[], env: NodeJS.Proces
   });
 }
 
+export function createWranglerWarmup(runner: CommandRunner = runCommand) {
+  let pending: Promise<void> | undefined;
+  return (env: NodeJS.ProcessEnv = process.env): Promise<void> => {
+    if (!pending) {
+      pending = runner("pnpm", ["dlx", `wrangler@${WRANGLER_VERSION}`, "--version"], env).catch((err) => {
+        pending = undefined;
+        throw err;
+      });
+    }
+    return pending;
+  };
+}
+
+const ensureWranglerReady = createWranglerWarmup();
+
 export const DeployPagesSite = Alchemy.Action(
   "DeployPagesSite",
   (input: {
@@ -258,6 +292,7 @@ export const DeployPagesSite = Alchemy.Action(
       if (!existsSync(workerFile) || !existsSync(routesFile)) {
         throw new Error(`Missing _worker.js or _routes.json in ${input.dir}; run pnpm run sites:build first`);
       }
+      await ensureWranglerReady(process.env);
       const args = [
         "dlx",
         `wrangler@${WRANGLER_VERSION}`,
@@ -327,17 +362,22 @@ export function provisionPagesSites(options: {
   readonly stageTarget: StageTarget;
   readonly stageSlug: string;
   readonly commitSha: string;
+  readonly backendOrigin?: string;
+  readonly isDev?: boolean;
 }) {
   return Effect.gen(function* () {
     const { stageTarget, stageSlug, commitSha } = options;
     const isProduction = stageTarget.kind === "production";
+    const isDev = options.isDev ?? (yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orElseSucceed(() => false)));
+    const backendOrigin = options.backendOrigin ?? DEFAULT_BACKEND_ORIGIN;
     const backendLive = process.env.BACKEND_LIVE === "true";
+    const proxySecret = trimmedEnv(process.env, "PLATFORM_PROXY_SECRET");
     const siteIds: Record<string, string> = {};
     const siteDomains: string[] = [];
 
     for (const site of PAGES_SITES) {
-      const projectName = isProduction ? site.project : `${site.project}-${stageSlug}`;
-      siteIds[site.app] = projectName;
+      const target = resolvePagesTarget(site, stageTarget, stageSlug);
+      siteIds[site.app] = target.projectName;
       if (isProduction) {
         siteDomains.push(site.domain);
       }
@@ -362,9 +402,48 @@ export function provisionPagesSites(options: {
     > = {};
 
     for (const site of PAGES_SITES) {
-      const projectName = siteIds[site.app];
+      const target = resolvePagesTarget(site, stageTarget, stageSlug);
       const distDir = path.resolve(REPO_ROOT, "sites", site.domain, "dist");
+      const workerFile = path.join(distDir, "_worker.js");
       const hasBuiltDist = existsSync(distDir);
+      if (isDev) {
+        if (existsSync(workerFile)) {
+          const assets = hashAssetDirectory(distDir);
+          const localSite = yield* Cloudflare.Worker(`Site_${site.app}`, {
+            main: workerFile,
+            bundle: false,
+            workersDev: true,
+            assets: {
+              directory: assets.directory,
+              hash: assets.hash,
+              runWorkerFirst: [...RUN_WORKER_FIRST],
+            },
+            env: {
+              APP_ID: site.app,
+              SITE_HOST: site.domain,
+              BACKEND_ORIGIN: backendOrigin,
+              ...(proxySecret ? { PLATFORM_PROXY_SECRET: proxySecret } : {}),
+            },
+          });
+          outputs[site.app] = {
+            projectName: target.projectName,
+            subdomain: localSite.url,
+            assetHash: assets.hash,
+            deployed: false,
+            verified: false,
+          };
+        } else {
+          outputs[site.app] = {
+            projectName: target.projectName,
+            subdomain: undefined,
+            assetHash: "unbuilt",
+            deployed: false,
+            verified: false,
+          };
+        }
+        continue;
+      }
+
       if (!hasBuiltDist && process.env.NTWRK_ALLOW_DEPLOY === "1") {
         throw new Error(`Built site directory missing: ${distDir}. Run pnpm run sites:build first.`);
       }
@@ -373,8 +452,8 @@ export function provisionPagesSites(options: {
         : { directory: distDir, path: distDir, hash: "unbuilt", fileCount: 0, totalBytes: 0 };
 
       const project = yield* Cloudflare.Pages.Project(`Pages_${site.app}`, {
-        name: projectName,
-        productionBranch: "main",
+        name: target.projectName,
+        productionBranch: target.productionBranch,
       }).pipe(Alchemy.AdoptPolicy.adopt(true), Alchemy.RemovalPolicy.retain());
 
       const deployment = yield* DeployPagesSite(`Deploy_${site.app}`, {
@@ -383,7 +462,7 @@ export function provisionPagesSites(options: {
         app: site.app,
         assetHash: assets.hash,
         commitSha,
-        branch: isProduction ? "main" : stageSlug,
+        branch: target.branch,
       });
 
       const verification = yield* VerifyPagesSite(`Verify_${site.app}`, {
@@ -396,7 +475,7 @@ export function provisionPagesSites(options: {
       });
 
       outputs[site.app] = {
-        projectName,
+        projectName: target.projectName,
         subdomain: project.subdomain,
         assetHash: assets.hash,
         deployed: deployment.deployed,

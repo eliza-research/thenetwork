@@ -16,7 +16,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const stageName = yield* Alchemy.Stage;
     const { stageTarget, stageSlug, backendOrigin, commitSha } = resolveDeployPolicy(stageName);
-    const sites = yield* provisionPagesSites({ stageTarget, stageSlug, commitSha });
+    const sites = yield* provisionPagesSites({ stageTarget, stageSlug, commitSha, backendOrigin });
     return {
       stage: stageTarget.stage,
       backendOrigin,

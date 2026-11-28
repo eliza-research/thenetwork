@@ -27,6 +27,7 @@ on:
       - '.nvmrc'
       - '.github/workflows/vibespec.yml'
       - '.github/actions/setup-dafny/**'
+      - '.github/actions/setup-pnpm-cache/**'
       - '.github/actions/setup-quint/**'
   pull_request:
   schedule:

@@ -179,7 +179,7 @@ pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
 - Never set `NETWORK_CHANNEL` locally. It alone makes sends real, for every app; without it every send is dry-run.
 - The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
 - `apps/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
-- Cloudflare deploys and local `workerd` runtime use [Alchemy v2](.agents/skills/alchemy/SKILL.md) (`alchemy.run.ts`, `pnpm run dev:cf`, `pnpm run deploy:plan`, `pnpm run deploy`, `pnpm run test:deploy`). Direct Wrangler invocations go through `scripts/wrangler.sh`. Both refuse mutating Cloudflare changes unless `NTWRK_ALLOW_DEPLOY=1` is set with founder approval.
+- Cloudflare deploys and local `workerd` runtime use [Alchemy v2](.agents/skills/alchemy/SKILL.md) (`alchemy.run.ts`, `scripts/alchemy.sh`, `pnpm run dev:cf`, `pnpm run deploy:plan`, `pnpm run deploy`, `pnpm run test:deploy`). Direct Wrangler invocations go through `scripts/wrangler.sh`. Both refuse mutating Cloudflare changes unless `NTWRK_ALLOW_DEPLOY=1` is set with founder approval.
 
 ## Results
 
