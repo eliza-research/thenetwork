@@ -159,6 +159,12 @@ export class MapView {
       if (!f && pts.length > 1) this.map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: 0.6 });
     }
     let pinsMoved = false;
+    for (const [id, marker] of this.members) {
+      if (store.members.has(id)) continue;
+      marker.remove();
+      this.members.delete(id);
+      pinsMoved = true;
+    }
     for (const m of store.members.values()) {
       let mk = this.members.get(m.id);
       const shown = store.inBorough(m) || !!bright?.has(m.id);
@@ -197,8 +203,8 @@ export class MapView {
       for (const e of store.edges.values()) {
         if (!ui.edgeTypes[e.type]) continue;
         const a = store.members.get(e.from), b = store.members.get(e.to);
-        if (!a || !b || !store.inBorough(a) || !store.inBorough(b)) continue;
-        if (sel && e.from !== sel && e.to !== sel) continue;
+        if (!a || !b) continue;
+        if (sel ? e.from !== sel && e.to !== sel : !store.inBorough(a) || !store.inBorough(b)) continue;
         if (area && (a.area !== area || b.area !== area)) continue;
         const st = EDGE_STYLE[e.type as keyof typeof EDGE_STYLE];
         if (!st) continue;

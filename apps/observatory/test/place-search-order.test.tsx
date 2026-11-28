@@ -10,10 +10,10 @@
 // East Harlem instead of Harlem.
 import { serveHttp } from "../../../packages/core/src/runtime/http.ts";
 import { setTimeout as sleep } from "node:timers/promises";
-import { expect, test } from "vitest";
+import { expect, test, vi } from "vitest";
 import { Window, type HTMLInputElement as TestInput } from "happy-dom";
 import { act, createElement } from "react";
-import type { ClockInfo, ObsMember, ObsState, ObsStats } from "../src/types.ts";
+import type { ClockInfo, ObsMember, ObsOpportunity, ObsState, ObsStats } from "../src/types.ts";
 import { installDom } from "./dom.ts";
 
 const clock = (now: number): ClockInfo => ({ now, start: 0, day: 1, playing: false, speed: 0, waitingForPlayer: false });
@@ -21,24 +21,33 @@ const counters = () => ({ msgsIn: 0, msgsOut: 0, proactive: 0, proposals: 0, acc
 const member = (id: string, name: string, area: string): ObsMember => ({
   id, name, city: "nyc", area, state: "normal", joined: true, joinedAt: 1, minor: false, age: 30, counters: counters(),
 });
+const opportunity = (id: string): ObsOpportunity => ({
+  id, kind: "intro", source: "network", origin: "request", generator: "probe", city: "nyc",
+  objective: "Meet someone", score: 1, explanations: {}, exploration: false, participants: ["m1", "m2"], alternates: [],
+  state: "SCHEDULED", status: { m1: "accepted", m2: "accepted" }, enjoyment: {}, createdAt: 1, updatedAt: 2,
+});
 const stats = (): ObsStats => ({
-  members: 4, joined: 4, byCity: { nyc: 4 }, byState: { joined: 4 }, messages: 0, inbound: 0, outbound: 0,
+  members: 6, joined: 6, byCity: { nyc: 4, sf: 2 }, byState: { joined: 6 }, messages: 0, inbound: 0, outbound: 0,
   proactive: 0, proposals: 0, proposalsBySource: {}, oppsByState: {}, invites: 0, accepts: 0, declines: 0,
   meetingsScheduled: 0, meetingsHeld: 0, attended: 0, noShows: 0, cancelledWithNotice: 0,
   enjoymentSum: 0, enjoymentN: 0, blocks: 0, optOuts: 0, adversarialAttempts: 0, invariantViolations: 0,
   errors: 0, compatible: 0, unsafe: 0, oracleJudged: 0, edgesByType: {},
 });
 
-test("typing the exact place name Harlem offers it first and Enter only picks a visible hit", async () => {
+test("place search ranks Harlem first, preserves dismissal, and opens places from the snapshot", async () => {
   const state: ObsState = {
     env: {
       mode: "game", app: "ntwrk", label: "SIMULATION seed 1 · synthetic v1", dataset: "synthetic v1",
-      capabilities: { canStep: false, canIntervene: false, hiddenTruth: false, readOnly: false },
+      capabilities: { canStep: true, canIntervene: true, hiddenTruth: false, readOnly: false },
     },
     clock: clock(10), version: 10,
-    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea")],
+    members: [member("m1", "Maya Rao", "East Village"), member("m2", "Ava Chen", "Chelsea"), member("m3", "Maya", "Greenwich Village"), member("m4", "Ana Mayer", "Chelsea"),
+      { ...member("sf1", "Jamie Ellis", "Dogpatch"), city: "sf" },
+      { ...member("sf2", "Ari Chen", "Dogpatch"), city: "sf" },
+    ],
     edges: [], opportunities: [], feed: [], stats: stats(), engineRuns: [],
   };
+  state.opportunities = ["nw-42-10", "nw-42-11", "nw-42-12", "nw-42-1"].map(opportunity);
   const api = await serveHttp({
     hostname: "127.0.0.1", port: 0,
     async fetch(req, server) {
@@ -107,6 +116,18 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     appRoot = createRoot(box as unknown as HTMLElement);
     await act(async () => { appRoot!.render(createElement(App)); });
     await wait(() => !!window.document.getElementById("obs-search"), "the search box");
+    await wait(() => !!window.document.querySelector('button[aria-label="Play"]'), "simulation controls");
+    const control = vi.spyOn(store, "control").mockResolvedValue({ ok: true });
+    const members = window.document.querySelector('[role="combobox"][aria-label="Members"]')!;
+    const sendN = (el: typeof members) => el.dispatchEvent(new window.KeyboardEvent("keydown", { key: "n", bubbles: true, cancelable: true }));
+    try {
+      await act(async () => { sendN(members); });
+      expect(control).not.toHaveBeenCalled();
+      await act(async () => { sendN(window.document.body); });
+      expect(control).toHaveBeenCalledExactlyOnceWith({ type: "step", ms: 3_600_000 });
+    } finally {
+      control.mockRestore();
+    }
     const input = window.document.getElementById("obs-search") as unknown as TestInput;
     await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "harlem");
@@ -116,7 +137,11 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     const options = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     // The exact place name comes first; the longer name that merely contains it comes after.
-    expect(options.slice(0, 2)).toEqual(["Harlem · Manhattan", "East Harlem · Manhattan"]);
+    expect(options.slice(0, 3)).toEqual([
+      "Harlem · Manhattan",
+      "Harlem / Morningside · NYC · Midtown & Flatiron",
+      "East Harlem · Manhattan",
+    ]);
     const press = async (key: string) => {
       await act(async () => { input.dispatchEvent(new window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true })); });
     };
@@ -133,10 +158,21 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     await press("Enter");
     expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Harlem" });
     await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "NW-42-1");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => el.textContent?.includes("nw-42-10")), "opportunity ID hits");
+    const ids = [...window.document.querySelectorAll('[role="option"]')]
+      .map(el => el.textContent?.trim().split(" · ").at(-1))
+      .filter(id => id?.startsWith("nw-"));
+    expect(ids).toEqual(["nw-42-1", "nw-42-10", "nw-42-11"]);
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "opportunity", id: "nw-42-1" });
+    await act(async () => {
       Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "maya");
       input.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
-    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => (el.textContent ?? "").includes("Maya")), "member hits");
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => (el.textContent ?? "").includes("Maya · Greenwich Village")), "member hits");
     const memberOptions = [...window.document.querySelectorAll('[role="option"]')]
       .map(el => (el.textContent ?? "").replace(/\s+/g, " ").trim());
     expect(memberOptions[0]).toEqual("Maya · Greenwich Village");
@@ -151,6 +187,17 @@ test("typing the exact place name Harlem offers it first and Enter only picks a 
     expect(store.ui.focus).toEqual({ kind: "member", id: "m3" });
     await act(async () => { filterEscape(false); });
     expect(store.ui.focus).toBeNull();
+
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, "dogpatch");
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+    });
+    await wait(() => [...window.document.querySelectorAll('[role="option"]')].some(el => el.textContent?.includes("Dogpatch")), "updated Dogpatch results");
+    const placeHits = [...window.document.querySelectorAll('[role="option"]')]
+      .filter(el => el.textContent?.startsWith("Dogpatch"));
+    expect(placeHits.map(el => el.textContent)).toEqual(["Dogpatch · Member area"]);
+    await press("Enter");
+    expect(store.ui.focus).toEqual({ kind: "neighborhood", id: "Dogpatch" });
   } finally {
     await act(async () => { appRoot?.unmount(); });
     disconnectStore?.();

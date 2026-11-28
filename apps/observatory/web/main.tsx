@@ -46,9 +46,10 @@ export function App() {
   }, []);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const field = (e.target as Element | null)?.closest?.("input, textarea, select");
+      const target = e.target as Element | null;
+      const field = target?.closest?.("input, textarea, select");
       if (e.key === "Escape") { store.escape(); if (field && !store.ui.query) (field as HTMLElement).blur(); return; }
-      if (field || e.metaKey || e.ctrlKey || e.altKey) return;
+      if (field || target?.closest?.('[role="combobox"], [role="listbox"]') || e.metaKey || e.ctrlKey || e.altKey) return;
       const canStep = !!store.env?.capabilities.canStep && store.canSim();
       if (e.key === "/") { e.preventDefault(); document.getElementById("obs-search")?.focus(); }
       else if (e.key === "?") store.toggleHelp();
@@ -223,14 +224,21 @@ function searchHits(query: string, groups: HitGroups): Hit[] {
       allPlaces.push({ name: n.name, meta: `${spec.shortName} · ${zoneName}` });
     }
   }
+  for (const { area } of store.members.values()) {
+    if (!area) continue;
+    const k = area.toLowerCase();
+    if (seenPlaces.has(k)) continue;
+    seenPlaces.add(k);
+    allPlaces.push({ name: area, meta: "Member area" });
+  }
   for (const n of allPlaces.filter(n => n.name.toLowerCase().includes(q)).sort((a, b) => matchRank(a.name, q) - matchRank(b.name, q)).slice(0, 3)) {
     hits.push({ key: `n${n.name}`, label: n.name, meta: n.meta, go: () => store.pickHit({ kind: "neighborhood", id: n.name }) });
   }
   if (groups === "NamesPlacesAndIds") {
-    let k = 0;
-    for (const o of store.opps.values()) {
-      if (k >= 3) break;
-      if (o.id.toLowerCase().includes(q)) { k++; hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.pickHit({ kind: "opportunity", id: o.id }) }); }
+    const matching = [...store.opps.values()].filter(o => o.id.toLowerCase().includes(q))
+      .sort((a, b) => matchRank(a.id, q) - matchRank(b.id, q)).slice(0, 3);
+    for (const o of matching) {
+      hits.push({ key: `o${o.id}`, label: store.oppTitle(o), meta: o.id.slice(0, 12), go: () => store.pickHit({ kind: "opportunity", id: o.id }) });
     }
   }
   return hits;

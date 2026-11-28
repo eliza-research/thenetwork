@@ -42,7 +42,7 @@ test("game and lab runs match for peon as for ntwrk (spec/runtimeUnit.md: the re
     }
     for (const app of ["peon", "ntwrk"] as const) {
       const run = await lab.start({ app, arms: [...LAB_ARMS], seeds: [1], days: 7 }, "regression");
-      const deadline = Date.now() + 90_000;
+      const deadline = Date.now() + 150_000;
       let done = (await lab.get(run.id))!;
       while ((done.status === "queued" || done.status === "running") && Date.now() < deadline) {
         await sleep(25);

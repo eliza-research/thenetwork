@@ -105,6 +105,15 @@ test("MapView focuses SF members in San Francisco, Bay Area zips near their cent
     expect(marker.getLatLng()).toMatchObject(memberPoint(moving.id, "Astoria", "nyc"));
     expect(edgeStart()).toMatchObject(marker.getLatLng());
 
+    store.members.delete(moving.id);
+    store.edges.delete("moving-edge");
+    store.graphTick++;
+    mapView["sync"]();
+    expect(mapView["map"].hasLayer(marker)).toBe(false);
+    expect(mapView["members"].has(moving.id)).toBe(false);
+    expect(mapView["edgeLayer"].getLayers()).toHaveLength(0);
+    expect(mapView["members"].has("ny-0005")).toBe(true);
+
   } finally {
     store.edges.delete("moving-edge");
     mapView.destroy();

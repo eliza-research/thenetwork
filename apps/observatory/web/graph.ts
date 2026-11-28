@@ -126,6 +126,12 @@ export class GraphView {
 
   private resize() {
     const r = this.canvas.getBoundingClientRect();
+    if (!r.width || !r.height) return;
+    if (this.w && this.h) {
+      const dx = (r.width - this.w) / 2, dy = (r.height - this.h) / 2;
+      this.view.x += dx; this.view.y += dy;
+      if (this.drag) { this.drag.vx += dx; this.drag.vy += dy; }
+    }
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.w = r.width; this.h = r.height;
     this.canvas.width = Math.max(1, Math.round(r.width * this.dpr));
