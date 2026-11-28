@@ -118,6 +118,7 @@
   },
   "packageManager": "pnpm@10.24.0",
   "exports": {
+    "./alchemy": "./vibestack/alchemy.ts",
     "./formal": "./vibestack/formal.ts",
     "./testing": "./vibestack/testing/index.ts",
     "./testing/vitest": "./vibestack/testing/vitest.ts",
@@ -134,6 +135,7 @@
   },
   "publishConfig": {
     "exports": {
+      "./alchemy": "./dist/alchemy.js",
       "./formal": "./dist/formal.js",
       "./testing": "./dist/testing/index.js",
       "./testing/vitest": "./dist/testing/vitest.js",

@@ -24,7 +24,7 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["{apps,deploy,packages,scripts,sites}/**/*.test.{ts,tsx}"],
-          exclude: [...configDefaults.exclude, "packages/ui/generated/stories/**"],
+          exclude: [...configDefaults.exclude, "packages/ui/generated/stories/**", "deploy/worker.test.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
         },

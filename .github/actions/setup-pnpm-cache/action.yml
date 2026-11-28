@@ -1,0 +1,27 @@
+name: Setup pnpm and store cache
+description: Enable pnpm via pinned corepack and cache the pnpm content-addressable store
+inputs:
+  scope:
+    description: Optional cache key isolation scope (e.g. production)
+    required: false
+    default: ci
+runs:
+  using: composite
+  steps:
+    - name: Enable pnpm via pinned corepack
+      shell: bash
+      run: |
+        npm install --global corepack@0.35.0
+        corepack enable pnpm
+        STORE_DIR="${RUNNER_TEMP}/pnpm-store"
+        mkdir -p "$STORE_DIR"
+        pnpm config set store-dir "$STORE_DIR"
+        echo "PNPM_STORE_DIR=$STORE_DIR" >> "$GITHUB_ENV"
+    - name: Cache pnpm store
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ env.PNPM_STORE_DIR }}
+        key: pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc', 'pnpm-lock.yaml', 'tools/vibestack/pnpm-lock.yaml') }}
+        restore-keys: |
+          pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.nvmrc') }}-
+          pnpm-store-v1-${{ inputs.scope }}-${{ runner.os }}-${{ runner.arch }}-
