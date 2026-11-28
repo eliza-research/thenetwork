@@ -1693,7 +1693,7 @@ function completeProbeOrdinals(text: string, refusals: readonly OrdinalMention[]
   return ordinals;
 }
 
-const PAST_PROBE_CUE = /\b(?:was|were|wasn't|weren't|went|came|met|enjoyed|loved|ago)\b/;
+const PAST_PROBE_CUE = /\b(?:was|were|wasn't|weren't|went|came|met|enjoyed|loved|ago|worked|(?:had|did\s+have)\s+(?:a\s+|an\s+|the\s+)?(?:great|good|fine|perfect|best|better))\b/;
 const PAST_RELATIVE_TIME = /\b(?:yesterday|last\s+(?:week|month|year|mon(?:day)?|tue(?:s(?:day)?)?|wed(?:nesday)?|thu(?:rs(?:day)?)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?))\b/;
 const PROBE_TIME_LABEL = /\boption\s+[abc]\b|^\s*[abc]\s+(?:was|were)\b|\bweekends?\b|\b(?:mon|tues?|weds?|thu|thur|thurs|fri|sat|sun)\s+(?:was|were)\b/;
 

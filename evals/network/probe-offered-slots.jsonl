@@ -51,6 +51,18 @@
 {"text":"Last Saturday was great, except Sunday.","answer":"unclear","keys":[]}
 {"text":"Last Saturday was great, anything except Sunday.","answer":"yes","keys":["a","b"]}
 {"text":"Last Saturday was great and neither works.","answer":"yes","keys":[]}
+{"text":"I had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"We had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"I had a great time Saturday.","answer":"unclear","keys":[]}
+{"text":"Yes, I had a great Saturday.","answer":"unclear","keys":[]}
+{"text":"I had a great Saturday, Sunday works.","answer":"yes","keys":["c"]}
+{"text":"I had a great Saturday and Sunday works.","answer":"yes","keys":["c"]}
+{"text":"I had a great Saturday, neither works.","answer":"yes","keys":[]}
+{"text":"I had a great Saturday, no thanks.","answer":"no","keys":[]}
+{"text":"I had Saturday in mind, Sunday works.","answer":"yes","keys":["b","c"]}
+{"text":"Saturday worked for me.","answer":"unclear","keys":[]}
+{"text":"Saturday worked for me, Sunday works.","answer":"yes","keys":["c"]}
+{"text":"It worked out, Saturday works.","answer":"yes","keys":["b"]}
 {"text":"both Saturday and Sunday","answer":"yes","keys":["b","c"]}
 {"text":"Saturday and Sunday both work","answer":"yes","keys":["b","c"]}
 {"text":"both Sat and Sun","answer":"yes","keys":["b","c"]}
