@@ -111,3 +111,9 @@
 {"text":"Yes, count me in instead of a new crowd.","label":"yes"}
 {"text":"Yes! Way better than another group, count me in!","label":"yes"}
 {"text":"Yeah, same group, and we can add another table.","label":"yes"}
+{"text":"The same group flaked again, I don't want another group.","label":"no"}
+{"text":"Yes it was ok, but I don't want another group.","label":"no"}
+{"text":"Yeah, I don't want another group.","label":"no"}
+{"text":"Same people were late, I don't want another group.","label":"no"}
+{"text":"Yep, it was fine, I don't want another group.","label":"no"}
+{"text":"Yes, same group was okay, I don't want another group.","label":"no"}

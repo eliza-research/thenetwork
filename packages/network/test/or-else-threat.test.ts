@@ -39,6 +39,9 @@ describe("or-else threat detection across inbound classification and relay block
       "Reply or else he's gonna hurt you.",
       "Answer me or else they're going to dox you.",
       "Text back or else she's going to ruin him.",
+      "\"Answer me or else!",
+      "“Reply or else you'll regret it",
+      "\"Answer me or else. Stop ignoring my messages.",
     ];
 
     for (const sample of threats) {
@@ -74,6 +77,11 @@ describe("or-else threat detection across inbound classification and relay block
       "I'll grab the coffee, or else you'll pay next time.",
       "I can do coffee or else we'll meet Thursday.",
       "Tuesday after 6, or else any time Sunday.",
+      "Ramen or else\ntacos, you pick",
+      "Movie night or else? Happy either way.",
+      "Lunch on Monday or else. Tuesday also works.",
+      "Coffee at 6 or else\n7 works too.",
+      "Text me on Monday or else. Tuesday also works.",
     ];
 
     for (const sample of benignChoices) {

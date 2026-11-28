@@ -166,7 +166,8 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
   const unlabelled = ["Find someone to babysit my kid on Saturday.", "Find someone to watch my 6 year old on Saturday.",
     "Find someone to pick my two kids up from school.", "Find a climber to babysit my kid on Saturday.",
-    "Find someone who likes climbing to watch my 6 year old on Saturday.", "Find someone to drive my kids to school."];
+    "Find someone who likes climbing to watch my 6 year old on Saturday.", "Find someone to drive my kids to school.",
+    "Looking for someone to pick up my 2 kids after practice."];
   const declined: string[] = [];
   for (const request of unlabelled) {
     await w.say("requester", request);
@@ -201,7 +202,10 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
     "looking for someone to go with me to volunteer at the hospital", "looking for a rabbit sitter",
     "looking for someone to watch my son's soccer game with", "I drop off my daughter at school every morning, looking for a running partner after",
     "I have to pick up my kids at 3, looking for people to grab coffee with before", "looking for someone to drive with me to my daughter's graduation",
-    "Find someone to watch movies with my kids and me.", "I will drive my kids to camp this summer, looking for new friends in August"];
+    "Find someone to watch movies with my kids and me.", "I will drive my kids to camp this summer, looking for new friends in August",
+    "I'm going to drive my kids to soccer, looking for coffee friends after", "I've got to drop off my son at 8, looking for running buddies at 9",
+    "My husband has to pick up our kids at 3, looking for coffee before", "I wanted to drive my kids to the museum, looking for parent friends",
+    "I'm trying to teach my son chess, looking for chess buddies"];
   const refusedOrdinary: string[] = [];
   for (const request of ordinary) {
     await w.say("requester", request);

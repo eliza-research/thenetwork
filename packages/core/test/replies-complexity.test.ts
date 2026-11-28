@@ -1,16 +1,8 @@
 import { describe, expect, test } from "vitest";
 import { parseReply } from "../src/replies.ts";
 
-// Regression: parseReply was quadratic in the number of signal words in a reply.
-// extract() rebuilt the whole string once per regex match (masking), sliced the
-// sentence prefix once per yes word (negation scope), sliced the remainder once
-// per condition word, and scanned the sentence-start list once per match. A
-// ~140 KB reply dense in ordinary yes/no/if words took seconds (the "if" shape
-// below took ~87 s on a throttled 1.5-CPU box); the same shapes now finish in
-// well under a second. The readings are unchanged.
 describe("parseReply on long signal-dense replies", () => {
   const shapes: [string, string, string][] = [
-    // [shape, text, expected answer]
     ["refusal salad", "no but yes maybe cancel stop start ".repeat(4000), "no"],
     ["conditions only", "if ".repeat(46666), "unsure"],
     ["yes repeated", "yes ".repeat(35000), "yes"],

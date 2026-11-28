@@ -307,7 +307,6 @@ function sentenceBounds(t: string): number[] {
   return starts;
 }
 
-/** The last `count` whitespace-separated words of t in [from, to), in order, joined by one space. */
 function lastWords(t: string, from: number, to: number, count: number): string {
   const words: string[] = [];
   let i = to;
@@ -336,10 +335,6 @@ function extract(t: string): Signal[] {
       found.push({ at: m.index + lead, end: m.index + m[0].length, text: m[0].trim() });
       if (m[0].length === 0) rule.re.lastIndex++;
     }
-    // Mask the found spans in one rebuild. Rebuilding the string once per match (the old
-    // mask() loop) copies the whole text per match — quadratic on signal-dense replies.
-    // `found` is in exec order, so its spans ascend and never overlap. Sentence indexes
-    // ride the same ascent: a pointer walk instead of a scan from 0 per match.
     let sentence = 0;
     for (const f of found) {
       while (sentence + 1 < starts.length && starts[sentence + 1]! <= f.at) sentence++;
@@ -354,10 +349,6 @@ function extract(t: string): Signal[] {
     }
   }
   out.sort((a, b) => a.at - b.at);
-  // The passes below once sliced the whole text (or the rest of it) once per signal, which is
-  // quadratic on a long, signal-dense reply (a 140 KB reply dense in yes/no/if words took
-  // seconds). They now read from delimiter indexes built in one pass each and touch only the
-  // span a signal needs; the readings are unchanged.
   const condDelims: number[] = [];
   { const re = /[.!?;,\n]/g; let m: RegExpExecArray | null; while ((m = re.exec(t))) condDelims.push(m.index); }
   const clauseDelims: { start: number; end: number }[] = [];
@@ -386,19 +377,12 @@ function extract(t: string): Signal[] {
     }
   }
   // Conditions: the clause after the condition word. Time conditions constrain a yes; others make it unsure.
-  // The clause is kept as a span and read only by the caller that consumes it: materializing
-  // it per condition word copies the rest of the text per match (quadratic on "if if if ...").
-  // Time-word matches are likewise collected in one pass: a clause holds a time word when a
-  // match lies inside it, or when a match crossing its end (a dotted "a.m." is cut by its own
-  // dot) still matches the clause text on its own.
   const timeSpans: { start: number; end: number }[] = [];
   { const re = new RegExp(TIME_WORD.source, "g"); let m: RegExpExecArray | null; while ((m = re.exec(t))) timeSpans.push({ start: m.index, end: m.index + m[0].length }); }
   for (const s of out) {
     if (s.kind !== "cond") continue;
     const di = firstCondDelim(s.at);
     const clauseEnd = di >= 0 ? condDelims[di]! : t.length;
-    // BENIGN_COND is anchored and its longest alternative is 17 chars, so a 32-char head
-    // decides it exactly.
     if (BENIGN_COND.test(t.slice(s.at, Math.min(clauseEnd, s.at + 32)))) { s.kind = "neutral"; continue; }
     s.condSpan = [s.at, clauseEnd];
     s.condTime = false;
@@ -520,7 +504,7 @@ export function explicitRepeatRequest(body: string): boolean {
 }
 
 /** Idioms with a no-word that do not say no: "yes, no doubt", "no complaints", "wouldn't miss it". */
-const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no|swap (?:anyone|anybody|them))|(?:don'?t|do not) (?:want|wanna) to miss|not gonna lie|not to lie)\b/g;
+const AGAIN_YES_IDIOM = /\b(no (?:doubt|question|hesitation|complaints?|regrets?|notes)|(?:wouldn'?t|won'?t|would not|will not) (?:miss|change|hesitate|say no|swap (?:anyone|anybody|them))|(?:don'?t|do not) (?:want|wanna) to miss|(?:don'?t|do not) (?:want|wanna) a different (?:group|crowd|crew|table|lineup|roster)(?=\s*[,!.]?\s*(?:keep us together|stick with (?:this|the same)|same (?:group|people|crowd|crew)))|not gonna lie|not to lie)\b/g;
 
 /**
  * The answer to "Would you do it again with this group?" after a plan (plans ask 8): yes, no, or
@@ -536,8 +520,6 @@ const PLAN_ALT_ROSTER_NP = /\b(different|another|other|fresh|new)\s+(?:(?:set|gr
 const PLAN_ALT_ROSTER_NEG_OR_COMP = /\b(?:not|no|never|without|don'?t|do not|didn'?t|did not|rather than|instead of|better than|beats?)\b/;
 const PLAN_ALT_ROSTER_ADDITIVE = /\b(?:add|adding|combine|merge)\s+$/;
 const PLAN_RETROSPECTIVE_NEW = /\b(?:loved|liked|enjoyed|was\s+(?:so\s+|really\s+)?(?:great|fun|nice))\s+(?:to\s+)?(?:meet(?:ing)?|be(?:ing)?(?:\s+(?:in|with|around))?|hang(?:ing)?(?:\s+out)?\s+with|get(?:ting)?\s+to\s+know|talk(?:ing)?\s+(?:to|with)|chat(?:ting)?\s+with)\s+(?:a\s+|the\s+|some\s+)?$/;
-const PLAN_SAME_GROUP_AFFIRM = /\b(?:yes(?!\s+to\s+the\b)|yeah|yep|yup|count me in|keep us together|same (?:group|people|crowd|crew|folks))\b/;
-const PLAN_LOYAL_NO_OTHER_GROUP = /\b(?:don'?t|do not) (?:really )?(?:want|wanna) (?:a |any )?(?:different|other|another) (?:groups?|crowd|crew|table|people|folks|lineup|roster)(?:\s+(?:instead|next time))?(?=$|[.!?;,:\n—–])/g;
 
 function asksForDifferentGroup(s: string): boolean {
   for (const raw of s.split(PLAN_ROSTER_CLAUSE_SPLIT)) {
@@ -566,10 +548,7 @@ export function planAgainOf(body: string): "yes" | "no" | "unclear" {
   const t = body.toLowerCase().replace(/[‘’ʼ]/g, "'");
   if (/\b(couldn'?t make it|didn'?t (go|make it)|nobody else|no one else|never showed|didn'?t show)\b/.test(t)) return "unclear";
   const afterCourtesy = t.replace(PLAN_REPEAT_COURTESY, "");
-  const base = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
-  const s = PLAN_SAME_GROUP_AFFIRM.test(base) && !/\b(?:or|nor) this (?:one|group|crowd|crew|table|bunch)\b/.test(base)
-    ? base.replace(PLAN_LOYAL_NO_OTHER_GROUP, " ")
-    : base;
+  const s = afterCourtesy.replace(AGAIN_YES_IDIOM, " ");
   if (/\b(probably not|not really|no\b|nah|nope|wouldn'?t|won'?t|would not|will not|not again|never again|don'?t think|(?:don'?t|do not) (?:really )?(?:want|wanna|sign me up)|(?:never|not) (?:\w+ ){0,4}again|once was enough|i'?ll pass|not for me|rather not|not (?:with (?:this|that|the|these|those|them)|(?:(?:to|for) )?(?:(?:this|that) (?:group|crowd|crew|table|bunch|lineup)|(?:these|those) (?:people|folks|guys|ones|members)))|(?:wasn'?t|not) (?:really )?my (?:thing|crowd|scene|vibe))\b/.test(s)) return "no";
   if (asksForDifferentGroup(s)) return "unclear";
   if (afterCourtesy !== t) {

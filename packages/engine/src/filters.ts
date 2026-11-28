@@ -384,10 +384,18 @@ export const HOME_ENTRY_PATTERNS: readonly string[] = [
 ];
 
 const SAFETY_RES = SAFETY_RISK_PATTERNS.map(p => new RegExp(p));
-const ASKED_OF_OTHER = "\\b(?:(?<!\\b(?:i|we)\\s+(?:\\w+\\s+)?(?:need|have|had|want|used|like|love|try|plan|get|got|going)\\s+)to|(?<!\\b(?:i|we)\\s+)(?:can|could|would|will))\\s+";
+const CHILD_CARE_VERB = "(?:watch|baby[\\s-]?sit|mind|look after|care for|stay with|pick up|drop off|drive|tutor|teach|coach|mentor)";
+const REQUEST_FOR_OTHER = "(?:"
+  + "\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|connect(?:\\s+(?:me|us))?\\s+with|intro(?:duce)?(?:\\s+(?:me|us))?\\s+to|match(?:\\s+(?:me|us))?\\s+with|know)\\s+"
+    + "(?:some(?:one|body)|any(?:one|body)|people|folks|an?\\s+(?!time|way|chance|minute|moment|break|reason|place|spot|car|ride)\\w+(?:\\s+\\w+){0,2})(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+"
+    + "(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:need|want)(?:s|ing)?\\s+(?:some(?:one|body)|any(?:one|body))(?:\\s+(?:who|that)\\s+[^.?!,;]{1,40})?\\s+(?:(?:available|free|willing|able|down)\\s+to|to|who\\s+(?:can|could|would|will))"
+  + "|\\b(?:(?:can|could|would|will)\\s+(?:you|some(?:one|body)|any(?:one|body))|(?:any(?:one|body)|some(?:one|body))\\s+(?:(?:here|around)\\s+)?(?:available|free|willing|able|down)\\s+to|who\\s+(?:can|could|would|will))"
+  + ")\\s+";
 const CHILD_TASK_RES = [
-  `${ASKED_OF_OTHER}(?:watch|baby[\\s-]?sit|mind|look after|care for|stay with|pick up|drop off|drive|tutor|teach|coach|mentor)\\b(?:\\W+(?!(?:to|with|at|for|from)\\b)\\w+){0,2}?\\W+(?:my|our|your|their|his|her)\\s+${CHILD}(?!')`,
-  `${ASKED_OF_OTHER}(?:pick\\s+${CHILD_PICKUP}(?!')\\s+up|drop\\s+${CHILD_PICKUP}(?!')\\s+off)\\b`,
+  `${REQUEST_FOR_OTHER}${CHILD_CARE_VERB}\\b(?:\\W+(?!(?:to|with|at|for|from)\\b)\\w+){0,2}?\\W+(?:my|our|your|their|his|her)\\s+${CHILD_COUNT}${CHILD}(?!')`,
+  `${REQUEST_FOR_OTHER}(?:pick\\s+${CHILD_PICKUP}(?!')\\s+up|drop\\s+${CHILD_PICKUP}(?!')\\s+off)\\b`,
+  `\\b(?:find(?:ing)?|look(?:ing)?\\s+for|search(?:ing)?\\s+for|seek(?:ing)?|need(?:ing)?|want(?:ing)?)\\s+(?:a\\s+)?(?:baby[\\s-]?sitters?|nann(?:y|ies)|(?<!(?:dog|pet|cat|plant|house|bird|rabbit)\\s+)sitters?)\\b`,
 ].map(p => new RegExp(p));
 const normalized = (text: string) => text.toLowerCase().replace(/_/g, " ").replace(/[\u2018\u2019]/g, "'");
 const riskCache = new WeakMap<EngineConfig, RegExp[]>();
