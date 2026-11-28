@@ -5,6 +5,9 @@ import { spawnSync } from "node:child_process";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
+import { friendsArms } from "../src/apps/friends/arms.ts";
+import { friendsMetrics } from "../src/apps/friends/metrics.ts";
+import { runFriendsWorldAsync } from "../src/apps/friends/world.ts";
 
 const run = (weeks: number) => {
   const root = resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..");
@@ -44,3 +47,13 @@ test("friends table keeps the measured repeat rates at 8 weeks", () => {
   expect(rates[1]!).toBeGreaterThan(0);
   expect(rates[2]!).toBeGreaterThanOrEqual(rates[0]!);
 }, 300_000);
+
+test("a meetup with only 29 observed follow-up days stays out of the repeat base", async () => {
+  const weeks = 5;
+  const run = await runFriendsWorldAsync({ seed: 1, n: 150, weeks, planCap: 1, matcher: friendsArms().pack! });
+  const lastDay = weeks * 7 - 1;
+  const held = run.meetups.filter(m => m.kind !== "crew_self");
+  expect(held.some(m => lastDay - m.day === 29)).toBe(true);
+  const complete = held.filter(m => lastDay - m.day >= 30);
+  expect(friendsMetrics(run).repeatBase).toBe(complete.length);
+});

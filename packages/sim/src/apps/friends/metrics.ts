@@ -18,7 +18,7 @@ export interface FriendsMetrics {
   proposals: number; probes: number; probeYesRate: number; quorumRate: number; capDrops: number;
   meetups: number; meetupsByKind: Record<string, number>; attendance: number; meanGroupSize: number;
   goodRate: number; meanEnjoy: number;
-  /** Meetups (held by day D-30) where >= 2 of the attendees met again (any app meetup) within 30 days. */
+  /** Meetups with 30 observed follow-up days where >= 2 of the attendees met again (any app meetup) within 30 days. */
   repeatRate: number;
   /** Stricter: >= 3 of the attendees (or both of a pair) met again together within 30 days. */
   repeatGroupRate: number;
@@ -28,7 +28,7 @@ export interface FriendsMetrics {
    * (graduation is a success, not a drop). Tracked, not a gate.
    */
   repeatRateWithHandoff: number;
-  /** Meetups held by day D-30: the base of the three repeat rates. 0 when no meetup can have a 30-day follow-up window yet, so the rates above are 0/0, not a measured 0%. */
+  /** Meetups with 30 observed follow-up days: the base of the three repeat rates. 0 when no meetup can have a 30-day follow-up window yet, so the rates above are 0/0, not a measured 0%. */
   repeatBase: number;
   crewsFormed: number; crewSessions: number; crewsHandedOff: number;
   /** Mean over real members of total hours with other members, and of the hours with their top person. */
@@ -183,13 +183,13 @@ export function friendsMetrics(res: FriendsRunResult): FriendsMetrics {
   const realE = held.flatMap(m => m.attendees.filter(id => realIds.has(id)).map(id => m.enjoy[id]!));
 
   // Repeat: did >= 2 (or >= 3) of this meetup's attendees meet again together within 30 days? Base:
-  // meetups the Network arranged by day D-30; "again" includes a handed-off crew meeting on its own
+  // Network-arranged meetups with a complete follow-up window; "again" includes a handed-off crew meeting on its own
   // (the same group met again; graduation is a success), not pairs' private hangouts.
   const allMeet = meetups.filter(m => m.kind !== "crew_self");
   let rep = 0, repG = 0, repH = 0, base = 0;
   const handed = world.state.crews.filter(c => c.handedOff).map(c => new Set(c.members));
   for (const m of allMeet) {
-    if (m.day > days - 30) continue;
+    if (m.day + 30 >= days) continue;
     base++;
     const later = meetups.filter(x => x.day > m.day && x.day <= m.day + 30);
     const overlap = later.map(x => x.attendees.filter(id => m.attendees.includes(id)).length);
