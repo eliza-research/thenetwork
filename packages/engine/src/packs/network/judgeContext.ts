@@ -392,7 +392,8 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       .map(f => {
         const x = f as FacetX;
         const at = typeof x.observedAt === "number" ? x.observedAt : f.validFrom;
-        const rawAge = at !== undefined ? dayAge((now - at) / DAY) : undefined;
+        const rawDays = at !== undefined ? Math.max(0, (now - at) / DAY) : undefined;
+        const rawAge = rawDays !== undefined ? dayAge(rawDays) : undefined;
         const age = rawAge;
         const val = scrub(f.value).trim().slice(0, 180);
         const src = typeof x.source === "string" && x.source.trim().length > 0 ? x.source : undefined;
@@ -400,7 +401,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
           field: f.kind, value: val, visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
           basis: basisOf(f), ...(src !== undefined ? { source: src } : {}),
           confidence: Math.round(f.confidence * 100) / 100,
-          ...(age !== undefined ? { age_days: age } : {}), ...(rawAge !== undefined && rawAge > STALE_DAYS ? { older_than_180_days: true } : {}),
+          ...(age !== undefined ? { age_days: age } : {}), ...(rawDays !== undefined && rawDays > STALE_DAYS ? { older_than_180_days: true } : {}),
           ...(v3 && isHypothesis(f) ? { hypothesis: true } : {}),
         };
       })
