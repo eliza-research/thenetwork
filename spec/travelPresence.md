@@ -96,3 +96,25 @@ pure val firstValues = windowValues
 pure val secondValues = windowValues
 pure val presenceValues = windowValues
 ```
+
+### A signed end correction moves one saved trip end
+
+The signed conversation identifies the app and checks that the phone still belongs to the active member there, as for a save. Without that binding, the command produces no write or reply. A correction naming a saved trip's city, its new end weekday, and the end weekday it replaces moves only the earliest current or future saved trip to that city whose end date falls on the replaced weekday, keeping that trip's start date. The end date is the first day away from that city. The new end is the named weekday in the same week as the saved end, read in the trip city's time zone. An end that would not follow the trip's start changes nothing. A later trip, a trip to another city, another member's trip, and a trip that has ended all stay. The reply names the corrected trip with its dates, with the end date excluded. When no such trip is saved, the reply says so and nothing changes. This command changes no consent, account status, home location, or matching markets.
+
+```quint
+type TravelEndCorrection = TravelEndUnavailable | TravelEndNone | TravelEndMove
+
+pure def decideTravelEndCorrection(authorized: bool, matchingTrips: int, endFollowsStart: bool): TravelEndCorrection =
+  if (not(authorized)) TravelEndUnavailable
+  else if (matchingTrips > 0 and endFollowsStart) TravelEndMove
+  else TravelEndNone
+
+pure def lawEndCorrectionMovesOneOnlyWhenSaved(authorized: bool, matchingTrips: int, endFollowsStart: bool): bool =
+  decideTravelEndCorrection(authorized, matchingTrips, endFollowsStart) == TravelEndMove implies (authorized and matchingTrips > 0 and endFollowsStart)
+
+pure def lawUnauthorizedEndCorrectionChangesNothing(matchingTrips: int, endFollowsStart: bool): bool =
+  decideTravelEndCorrection(false, matchingTrips, endFollowsStart) == TravelEndUnavailable
+
+pure val matchingTripsValues = Set(-1, 0, 1, 2)
+pure val endFollowsStartValues = Set(true, false)
+```

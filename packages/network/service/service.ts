@@ -37,7 +37,7 @@ import * as BirthDay from "../../core/src/birth-date.ts";
 import { standingIntentCommand } from "../src/standing-intents.ts";
 import { contributionHistoryReply, contributionHistoryRequest } from "./contribution-history.ts";
 import { contributionHistoryReplayAllowed } from "../../core/src/generated/contributionHistory.ts";
-import { saveTravelPresence, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
+import { moveTravelEnd, saveTravelPresence, travelEndCorrectionCommand, travelOwner, travelPresenceCommand } from "./travel-presence.ts";
 import { soloReplyReplayAllowed } from "../../core/src/generated/soloConcierge.ts";
 import { soloConciergeReply, soloConciergeRequest } from "./solo-concierge.ts";
 import { NetworkRuntime, type RuntimeHost, type StagedMemberInvitation } from "./runtime.ts";
@@ -2263,6 +2263,7 @@ export class NetworkService implements RuntimeHost {
     const gatheringFollowup = !kw && gatheringFollowupRequested(ev.text);
     const surveyAnswer = !kw && interruptionFeedbackAnswer(ev.text);
     const travel = !kw && this.inboundTurn() ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
+    const travelEnd = !kw && this.inboundTurn() ? travelEndCorrectionCommand(ev.text) : undefined;
     const soloEvents = !kw && this.inboundTurn() ? soloConciergeRequest(ev.text) : undefined;
     const contributionPage = !kw && this.inboundTurn() ? contributionHistoryRequest(ev.text) : undefined;
     const threadRead = !kw && threadUpdateRequested(ev.text);
@@ -2274,7 +2275,7 @@ export class NetworkService implements RuntimeHost {
       && !gatheringRsvp && !gatheringFollowup && inboundReleasesHeldTexts(stopRequested, leavingId !== undefined);
     const signed = !!this.inboundTurn() && !banned;
     const reportReply = signed && !kw && !factCommand && !intentCommand && !controls && !calendar
-      && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !soloEvents && contributionPage === undefined;
+      && !gatheringRsvp && !gatheringFollowup && !surveyAnswer && !travel && !travelEnd && !soloEvents && contributionPage === undefined;
     const route = await this.route(ev, o.app, threadRead && signed, reportReply);
     const app = this.apps[route.app];
     const joinedMember = (await this.memberApps(ev.from)).find(m => m.app === route.app);
@@ -2416,8 +2417,8 @@ export class NetworkService implements RuntimeHost {
     if (!memberId && surveyAnswer) return "handled";
     const accountIntent = !!intentCommand
       && !refusedCommandPasses(intentCommand.kind, "target" in intentCommand && intentCommand.target.kind === "pending");
-    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
-      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || travelEnd || soloEvents || contributionPage !== undefined)) {
+      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel || travelEnd ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (kw === "start" && e164) {
@@ -2803,10 +2804,11 @@ export class NetworkService implements RuntimeHost {
         return "handled";
       }
       const travel = signedDirect ? travelPresenceCommand(ev.text, this.clock.now()) : undefined;
+      const travelEnd = signedDirect ? travelEndCorrectionCommand(ev.text) : undefined;
       const soloEvents = signedDirect ? soloConciergeRequest(ev.text) : undefined;
       const contributionPage = signedDirect ? contributionHistoryRequest(ev.text) : undefined;
-      if (travel || soloEvents || contributionPage !== undefined) {
-        const reason = travel ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
+      if (travel || travelEnd || soloEvents || contributionPage !== undefined) {
+        const reason = travel || travelEnd ? "travel_presence" : soloEvents ? "solo_events" : "contribution_history";
         const e164 = normalizePhone(ev.from);
         if (e164) rt.unit.memberCommand = async tx => {
           const owner = { app: rt.app, memberId, e164 };
@@ -2814,6 +2816,12 @@ export class NetworkService implements RuntimeHost {
           const now = this.clock.now();
           if (travel) {
             const body = await saveTravelPresence(tx, accounts, owner, travel, now);
+            if (body === undefined) return;
+            rt.unit.inbound = inbound;
+            rt.unit.atomicReply = "travel_presence";
+            rt.collectedMemberReply(memberId, `sys:${rowId}`, body, "travel_presence");
+          } else if (travelEnd) {
+            const body = await moveTravelEnd(tx, accounts, owner, travelEnd, now);
             if (body === undefined) return;
             rt.unit.inbound = inbound;
             rt.unit.atomicReply = "travel_presence";

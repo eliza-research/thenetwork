@@ -5,6 +5,8 @@
 export interface PresenceWindow { from: number; to: number }
 /** Story: Tell the Network my travel dates / A signed travel statement saves only the member's own dates in that app (spec/travelPresence.md) */
 export type TravelEntry = "TravelUnavailable" | "TravelNeedsDates" | "TravelDateConflict" | "TravelAlreadySaved" | "TravelSave";
+/** Story: Tell the Network my travel dates / A signed end correction moves one saved trip end (spec/travelPresence.md) */
+export type TravelEndCorrection = "TravelEndUnavailable" | "TravelEndNone" | "TravelEndMove";
 
 
 /** Story: Use my travel dates for matching / A temporary presence needs both dates in order (spec/travelPresence.md) */
@@ -101,4 +103,24 @@ export function lawUnavailableTravelNeverSaves(hasDates: boolean, window: Presen
 export function lawRepeatedTravelDoesNotSave(window: PresenceWindow, now: number, conflict: boolean): boolean {
   //@ ensures \result === true
   return decideTravelEntry(true, true, window, now, conflict, true) !== "TravelSave";
+}
+
+/** Story: Tell the Network my travel dates / A signed end correction moves one saved trip end (spec/travelPresence.md) */
+//@ pure
+export function decideTravelEndCorrection(authorized: boolean, matchingTrips: number, endFollowsStart: boolean): TravelEndCorrection {
+  return !authorized ? "TravelEndUnavailable" : (matchingTrips > 0 && endFollowsStart ? "TravelEndMove" : "TravelEndNone");
+}
+
+/** Story: Tell the Network my travel dates / A signed end correction moves one saved trip end (spec/travelPresence.md) */
+//@ pure
+export function lawEndCorrectionMovesOneOnlyWhenSaved(authorized: boolean, matchingTrips: number, endFollowsStart: boolean): boolean {
+  //@ ensures \result === true
+  return !(decideTravelEndCorrection(authorized, matchingTrips, endFollowsStart) === "TravelEndMove") || (authorized && matchingTrips > 0 && endFollowsStart);
+}
+
+/** Story: Tell the Network my travel dates / A signed end correction moves one saved trip end (spec/travelPresence.md) */
+//@ pure
+export function lawUnauthorizedEndCorrectionChangesNothing(matchingTrips: number, endFollowsStart: boolean): boolean {
+  //@ ensures \result === true
+  return decideTravelEndCorrection(false, matchingTrips, endFollowsStart) === "TravelEndUnavailable";
 }

@@ -1,6 +1,6 @@
 import { CITY_TZ, fromLocal, isCity, localParts, resolveCity, temporaryPresenceWindow, type City } from "@thenetwork/core";
 import {
-  decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
+  decideTravelEndCorrection, decideTravelEntry, presenceWindowsOverlap, samePresenceWindow, travelEntryReplyAllowed, type PresenceWindow,
 } from "../../core/src/generated/travelPresence.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { homeCityOf, type Accounts } from "../../platform/src/accounts.ts";
@@ -110,6 +110,30 @@ export function travelPresenceCommand(text: string, now?: number): TravelCommand
   return natural ? { city, dates: natural } : { city };
 }
 
+const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)";
+const WEEKDAYS: Record<string, number> = {
+  monday: 0, mon: 0, tuesday: 1, tue: 1, tues: 1, wednesday: 2, wed: 2, thursday: 3, thu: 3, thur: 3, thurs: 3,
+  friday: 4, fri: 4, saturday: 5, sat: 5, sunday: 6, sun: 6,
+};
+const WEEKDAY_RX = Object.keys(WEEKDAYS).sort((a, b) => b.length - a.length).join("|");
+
+/** A direct first-person correction of a saved trip's end weekday. */
+export function travelEndCorrectionCommand(text: string): { city: City; endWeekday: number; replacesWeekday: number } | undefined {
+  const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
+  const match = new RegExp(
+    `^(?:actually,? )?my ${CITY_RX} trip ends (?:on )?(${WEEKDAY_RX}),? not (?:on )?(${WEEKDAY_RX})$`,
+    "i",
+  ).exec(line);
+  if (!match) return;
+  const resolved = homeCityOf(match[1]!.toLowerCase()) ?? resolveCity(match[1]!.toLowerCase());
+  const city: City | undefined = isCity(resolved) ? resolved : undefined;
+  const endWeekday = WEEKDAYS[match[2]!.toLowerCase()];
+  const replacesWeekday = WEEKDAYS[match[3]!.toLowerCase()];
+  return city && endWeekday !== undefined && replacesWeekday !== undefined && endWeekday !== replacesWeekday
+    ? { city, endWeekday, replacesWeekday }
+    : undefined;
+}
+
 /** Same canonical and app-local guard on the write and on any later reply replay. */
 export async function travelOwner(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner): Promise<boolean> {
   const binding = await memberCommandOwner(tx, accounts, owner);
@@ -143,4 +167,45 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
     case "TravelAlreadySaved": break;
   }
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
+}
+
+/** Moves the end of the owner's earliest current or future trip to the named city whose end date falls on the replaced weekday. */
+export async function moveTravelEnd(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, command: { city: City; endWeekday: number; replacesWeekday: number }, now: number): Promise<string | undefined> {
+  const authorized = await travelOwner(tx, accounts, owner);
+  const { app, memberId } = owner;
+  const current = authorized ? await tx`select member_id, city, type, from_at, to_at from network.presence
+    where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.city} and to_at > ${new Date(now)}
+    order by from_at asc` : [];
+  const trips = current.map(presenceOf).flatMap(p => {
+    const window = temporaryPresenceWindow(p);
+    return window ? [window] : [];
+  });
+  const matching = trips.filter(window => localParts(window.to, CITY_TZ[command.city]).weekday === command.replacesWeekday);
+  const trip = matching[0];
+  const shifted = trip ? shiftEndWeekday(trip, command.city, command.endWeekday) : undefined;
+  switch (decideTravelEndCorrection(authorized, matching.length, !!shifted && shifted.window.to > trip!.from)) {
+    case "TravelEndUnavailable": return;
+    case "TravelEndNone": return `No saved ${CITY_NAME[command.city]} trip in ${app.domain}.`;
+    case "TravelEndMove": break;
+  }
+  await tx`delete from network.presence
+    where ctid in (select ctid from network.presence
+      where app_id=${app.id} and member_id=${memberId} and type='temporary' and city=${command.city} and from_at=${new Date(trip!.from)} and to_at=${new Date(trip!.to)}
+      order by from_at asc limit 1)`;
+  await tx`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+    values (${app.id}, ${memberId}, ${command.city}, 'temporary', ${new Date(trip!.from)}, ${new Date(shifted!.window.to)})`;
+  return `Saved in ${app.domain}: ${CITY_NAME[command.city]} from ${shifted!.from} until ${shifted!.to} (end date excluded).`;
+}
+
+function shiftEndWeekday(window: PresenceWindow, city: City, endWeekday: number): { from: string; to: string; window: PresenceWindow } | undefined {
+  const fromParts = localParts(window.from, CITY_TZ[city]);
+  const toParts = localParts(window.to, CITY_TZ[city]);
+  const fromIso = isoDate(fromParts.year, fromParts.month, fromParts.day);
+  const toIso = isoDate(toParts.year, toParts.month, toParts.day);
+  if (!fromIso || !toIso) return;
+  const monday = new Date(`${toIso}T00:00:00Z`).getTime() - toParts.weekday * 86_400_000;
+  const shiftedIso = new Date(monday + endWeekday * 86_400_000).toISOString().slice(0, 10);
+  const end = localMidnight(shiftedIso, city);
+  if (end === undefined) return;
+  return { from: fromIso, to: shiftedIso, window: { from: window.from, to: end } };
 }
