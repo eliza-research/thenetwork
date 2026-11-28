@@ -823,14 +823,26 @@ const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this|our) (?:
 const EXACT_ATTENDANCE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it to|attend) (?:my|the|this|our) (?:meeting|date|plan|booking) on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d)(?: anymore)?(?:, sorry)?[.!]?$/i;
 const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:(?:need|have) to (?:cancel|call it off)|(?:can'?t|cannot|won'?t be able to) (?:make it|come)(?: anymore)?|have to bail)(?:, sorry)?[.!]?$/i;
 const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:need|have) to (?:cancel|call it off)|have to bail|(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)(?: to [^.?!;,]{1,80} on)?)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const DAY_TIME_CANCEL = /^(?:please )?(?:sorry[, ]+)?(?:i )?(?:cancel|call off)(?: (?:my|the|this|our))?(?: (?:meeting|date|plan|booking))?(?: on)?\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: (?:meeting|date|plan|booking))?(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))?(?: please)?[.!]?$/i;
 const QUALIFIED_ATTENDANCE = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t|will not)\b[^.;!?]*\b(?:if|unless|assuming|in case)\b/i;
 const KEEP_BOOKING = /^(?:please )?(?:(?:i|we) (?:don'?t|do not) need to|(?:there(?: is|'s) )?no need to|(?:don'?t|do not)) (?:cancel|call off|call it off)\b[^.;!?]*(?:[.!]*)$/i;
-type BookingCancellation = { localStart?: string; day?: string; needsExactStart?: boolean };
+type BookingCancellation = { localStart?: string; day?: string; time?: string; needsExactStart?: boolean };
 
 export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
   const booking = BOOKING_CANCEL.exec(command) ?? EXACT_ATTENDANCE_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
+  const dayTime = DAY_TIME_CANCEL.exec(command);
+  if (dayTime) {
+    const two = (n: number) => String(n).padStart(2, "0");
+    let time: string | undefined;
+    if (dayTime[4] && Number(dayTime[2]) >= 1 && Number(dayTime[2]) <= 12 && Number(dayTime[3] ?? "00") <= 59) {
+      const hour = Number(dayTime[2]) % 12 + (dayTime[4].toLowerCase() === "pm" ? 12 : 0);
+      time = `${two(hour)}:${dayTime[3] ?? "00"}`;
+    } else if (dayTime[5] && Number(dayTime[5]) <= 23 && Number(dayTime[6]) <= 59) time = `${two(Number(dayTime[5]))}:${dayTime[6]}`;
+    if ((dayTime[2] || dayTime[5]) && !time) return { needsExactStart: true };
+    return { day: dayTime[1]!.toLowerCase(), ...(time ? { time } : {}) };
+  }
   const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);
   if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true } : { day: namedDay[1]!.toLowerCase() };
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
@@ -1924,8 +1936,9 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now, !strictReschedule);
     const directBookingReply = this.memberReply && !msg.reaction;
     const bookingText = directBookingReply ? body : "";
-    const cancellation = explicitBookingCancellation(bookingText);
-    const cancelDay = cancellation?.day ? bookingCancellationDay(cancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const namedCancellation = explicitBookingCancellation(bookingText);
+    const cancelDay = namedCancellation?.day ? bookingCancellationDay(namedCancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const cancellation = namedCancellation?.time && cancelDay ? { ...namedCancellation, localStart: `${cancelDay} ${namedCancellation.time}` } : namedCancellation;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
       if (upcomingBookings.length === 1 && aw?.kind !== "booked") {
