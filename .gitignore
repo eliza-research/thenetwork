@@ -9,6 +9,7 @@ runs/
 *.log
 .venv/
 __pycache__/
+.alchemy/
 .wrangler/
 .dev.vars
 /gen/
