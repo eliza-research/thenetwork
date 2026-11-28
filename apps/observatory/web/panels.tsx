@@ -261,8 +261,9 @@ function KpiGrid({ area }: { area?: string }) {
   const yesRate = revealed.length ? allYes / revealed.length : undefined;
   const met = opps.filter(o => originOk(o) && MET.has(o.state) && o.meetingAt !== undefined && s.inRange(o.meetingAt)).length;
   const upcoming = opps.filter(o => o.state === "SCHEDULED").length;
-  const requests = s.network && !area && f.borough === "all"
-    ? s.network.requests.waiting + s.network.requests.probing
+  const network = !area && f.borough === "all" ? s.network : undefined;
+  const requests = network
+    ? network.requests.waiting + network.requests.probing
     : opps.filter(o => OPEN.has(o.state) && originOf(o) === "request").length;
   const holds = members.filter(m => m.trust === "hold").length;
   const range = s.rangeLabel();
@@ -278,7 +279,10 @@ function KpiGrid({ area }: { area?: string }) {
         : <Kpi label="In review" value={num(inReview.length)} tone={dueSoon ? KPI_TONE.warn : undefined} title="Waiting for a human reviewer before anyone is contacted (PRD 32.8). Amber: one is due in under 1 h." onSelect={() => (jumpTo("review") ? store.setUI({ reviewView: "pending" }) : jumpTo("pipeline"))} />}
       <Kpi label="Everyone-yes" value={yesRate === undefined ? "–" : pct(yesRate)} tone={yesRate !== undefined && yesRate >= 0.85 ? KPI_TONE.good : undefined} title={`Of ${revealed.length} opportunities revealed in the range, the share where every participant said yes. Target 85%.`} onSelect={() => store.setUI({ drawer: "pipeline", drawerOpen: true })} />
       <Kpi label={`Meetings · ${range}`} value={num(met)} title={`Meetings held in the range. ${upcoming} scheduled.`} onSelect={() => go({ stateGroup: "met" }, "pipeline")} />
-      <Kpi label="Open requests" value={num(requests)} tone={requests ? KPI_TONE.warn : undefined} title="People requests still being worked on (probing or waiting)" onSelect={() => go({ origin: "request" }, "pipeline")} />
+      <Kpi label="Open requests" value={num(requests)} tone={requests ? KPI_TONE.warn : undefined} title="People requests still being worked on (probing or waiting)" onSelect={() => {
+        if (network && jumpTo("requests")) store.setUI({ requestSegment: initialWorkspace.requestSegment });
+        else go({ origin: "request" }, "pipeline");
+      }} />
       <Kpi label="Safety holds" value={num(holds)} tone={holds ? KPI_TONE.bad : undefined} title="Members on trust hold (never matched until cleared)" onSelect={() => go({ members: "hold" }, "safety")} />
     </KpiGridView>
   );
