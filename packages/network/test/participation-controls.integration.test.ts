@@ -76,6 +76,10 @@ test.skipIf(!pgAvailable)("signed participation controls commit with the reply a
     expect(await (await send(quiet)).json()).toEqual(confirmed);
     expect(await (await say("friends", "Resume matching")).json()).toMatchObject({ replies: [expect.stringContaining("Matching is no longer paused")] });
     expect((await member("friends")).participation_state).toBe("normal");
+    expect(await (await say("friends", "PAUSE")).json()).toMatchObject({ replies: [expect.stringContaining("Matching is paused")] });
+    expect((await member("friends")).participation_state).toBe("paused");
+    expect(await (await say("friends", "Resume matching")).json()).toMatchObject({ replies: [expect.stringContaining("Matching is no longer paused")] });
+    expect((await member("friends")).participation_state).toBe("normal");
     expect(await (await say("friends", "Quiet hours off")).json()).toMatchObject({ replies: ["Quiet hours are off for this app."] });
     expect((await member("friends")).prefs.quietHours).toEqual([0, 0]);
     expect((await say("friends", "STOP")).status).toBe(200);
