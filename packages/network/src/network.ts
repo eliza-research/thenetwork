@@ -823,14 +823,36 @@ const BOOKING_CANCEL = /^(?:please )?(?:cancel|call off) (?:my|the|this|our) (?:
 const EXACT_ATTENDANCE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it to|attend) (?:my|the|this|our) (?:meeting|date|plan|booking) on (\d{4}-\d{2}-\d{2}) at ((?:[01]\d|2[0-3]):[0-5]\d)(?: anymore)?(?:, sorry)?[.!]?$/i;
 const STANDALONE_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:(?:need|have) to (?:cancel|call it off)|(?:can'?t|cannot|won'?t be able to) (?:make it|come)(?: anymore)?|have to bail)(?:, sorry)?[.!]?$/i;
 const ATTENDANCE_DAY_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:cancel|(?:need|have) to (?:cancel|call it off)|have to bail|(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)(?: to [^.?!;,]{1,80} on)?)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: anymore)?(?:, sorry)?[.!]?$/i;
+const DAY_TIME_CANCEL = /^(?:please )?(?:sorry[, ]+)?(?:i )?(?:cancel|call off)(?: (?:my|the|this|our))?(?: (?:meeting|date|plan|booking))?(?: on)?\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: (?:meeting|date|plan|booking))?(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))?(?: please)?[.!]?$/i;
+const ATTENDANCE_DAY_TIME_CANCEL = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t be able to) (?:make it|make|come|attend)\s+(today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)(?: at)?(?: (\d{1,2})(?::(\d{2}))?\s*(am|pm)| (\d{1,2}):(\d{2}))(?: anymore)?(?:, sorry)?[.!]?$/i;
 const QUALIFIED_ATTENDANCE = /^(?:sorry[, ]+)?(?:i )?(?:can'?t|cannot|won'?t|will not)\b[^.;!?]*\b(?:if|unless|assuming|in case)\b/i;
 const KEEP_BOOKING = /^(?:please )?(?:(?:i|we) (?:don'?t|do not) need to|(?:there(?: is|'s) )?no need to|(?:don'?t|do not)) (?:cancel|call off|call it off)\b[^.;!?]*(?:[.!]*)$/i;
-type BookingCancellation = { localStart?: string; day?: string; needsExactStart?: boolean };
+type BookingCancellation = { localStart?: string; altLocalStart?: string; day?: string; time?: string; altTime?: string; needsExactStart?: boolean };
+
+function parseCancelClock(match: RegExpExecArray): BookingCancellation {
+  const day = match[1]!.toLowerCase();
+  if (!match[2] && !match[5]) return { day };
+  const two = (n: number) => String(n).padStart(2, "0");
+  if (match[4] && Number(match[2]) >= 1 && Number(match[2]) <= 12 && Number(match[3] ?? "00") <= 59) {
+    const hour = Number(match[2]) % 12 + (match[4].toLowerCase() === "pm" ? 12 : 0);
+    return { day, time: `${two(hour)}:${match[3] ?? "00"}` };
+  }
+  if (match[5] && Number(match[5]) <= 23 && Number(match[6]) <= 59) {
+    const bareHour = Number(match[5]);
+    if (bareHour >= 1 && bareHour <= 12) {
+      return { day, time: `${two(bareHour % 12)}:${match[6]}`, altTime: `${two(bareHour % 12 + 12)}:${match[6]}` };
+    }
+    return { day, time: `${two(bareHour)}:${match[6]}` };
+  }
+  return { needsExactStart: true };
+}
 
 export function explicitBookingCancellation(text: string): BookingCancellation | undefined {
   const command = text.trim().replace(/[‘’ʼ`´]/g, "'").replace(/\s+/g, " ");
   const booking = BOOKING_CANCEL.exec(command) ?? EXACT_ATTENDANCE_CANCEL.exec(command);
   if (booking) return booking[1] ? { localStart: `${booking[1]} ${booking[2]}` } : {};
+  const dayTime = DAY_TIME_CANCEL.exec(command) ?? ATTENDANCE_DAY_TIME_CANCEL.exec(command);
+  if (dayTime) return parseCancelClock(dayTime);
   const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);
   if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true } : { day: namedDay[1]!.toLowerCase() };
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
@@ -1924,8 +1946,11 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (reschedule) return this.handleMeetingReschedule(m, reschedule, msg.id, msg.signedReceivedAt ?? msg.ts, now, !strictReschedule);
     const directBookingReply = this.memberReply && !msg.reaction;
     const bookingText = directBookingReply ? body : "";
-    const cancellation = explicitBookingCancellation(bookingText);
-    const cancelDay = cancellation?.day ? bookingCancellationDay(cancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const namedCancellation = explicitBookingCancellation(bookingText);
+    const cancelDay = namedCancellation?.day ? bookingCancellationDay(namedCancellation.day, msg.signedReceivedAt ?? msg.ts, tz) : undefined;
+    const cancellation = namedCancellation?.time && cancelDay
+      ? { ...namedCancellation, localStart: `${cancelDay} ${namedCancellation.time}`, ...(namedCancellation.altTime ? { altLocalStart: `${cancelDay} ${namedCancellation.altTime}` } : {}) }
+      : namedCancellation;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
       if (upcomingBookings.length === 1 && aw?.kind !== "booked") {
@@ -2208,7 +2233,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       const startAt = o.meetingAt;
       if (!upcomingCancellationEligible(opportunityLifecycle(o), o.participants.includes(m.id),
         o.status.get(m.id) === "yes", startAt !== undefined && Number.isFinite(startAt), startAt ?? 0, now)) continue;
-      if (request.localStart !== undefined && localBookingStart(startAt!, tz) !== request.localStart) continue;
+      if (request.localStart !== undefined && localBookingStart(startAt!, tz) !== request.localStart && localBookingStart(startAt!, tz) !== request.altLocalStart) continue;
       if (date !== undefined && localDateParts(startAt!, tz).day !== date) continue;
       matches.push(o);
       if (matches.length === 2) break;
@@ -8255,7 +8280,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
-    const yes = this.crewApart(offer.yes);
+    const yes = this.crewApart(offer.yes.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m, undefined, { busyOk: true }); }));
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
     const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;

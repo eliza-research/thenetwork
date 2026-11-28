@@ -51,9 +51,16 @@ export function directInviteVouch(body: string): Pick<MemberInviteRequest, "firs
 const inviteDuration = /(?<![\d.])\b(\d{1,4}(?:\.\d{1,2})?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\s*(day|week|month|year)s?\b/i;
 const durationWords = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
 const durationPerMonth: Record<string, number> = { day: 1 / 30, week: 7 / 30, month: 1, year: 12 };
+const recurringAfterOnce = String.raw`\s+(?:(?:per|every)\s+(?:(?:\d+|two|three|four|few|couple(?:\s+of)?|other)\s+)?(?:day|week|weekend|fortnight|month|quarter|semester|year)s?\b|a\s+(?:day|week|weekend|fortnight|month|quarter|semester|year)\b(?![^.!?;,\n]{0,30}\b(?:ago|back|earlier|before|prior|previously)\b)|or\s+twice\b)`;
+const singleMeetingDepth = new RegExp(
+  String.raw`\b(?:(?<!not )(?<!not just )(?<!not only )(?:met|spoken|talked|hung out)\b[^.!?;,\n]{0,30}(?<!more than )\bonce\b(?!${recurringAfterOnce})|(?:met|spoken|talked|hung out)(?: (?:them|her|him|\p{Lu}[\p{L}\p{M}'’-]{0,39}))? (?:just |only )?(?<!\bat\s)(?:one|a single) time(?!\s+or\s+another\b))\b`,
+  "iu",
+);
+const negatedStrongDepth = /\b(?:(?:not|never|hardly|barely) (?:(?:really|very|super|all that|particularly|especially|too|that) )?(?:close|well)|(?:aren['’]?t|are not|isn['’]?t|is not|weren['’]?t|were not) (?:(?:really|very|super|all that|too|that) )?close|(?:don['’]?t|do not|wouldn['’]?t|would not) (?:really )?(?:know (?:them|her|him|\p{Lu}[\p{L}\p{M}'’-]{0,39}) (?:very |super |all that |too )?well|say we(?:['’]?re| are) (?:very |super |that )?close))\b/iu;
 const individualDepths = [
-  [/\b(?:met (?:them |her |him )?(?:just |only )?once|only (?:met|spoken) (?:them |her |him )?once|met one time)\b/i, "met_once"],
-  [/\b(?:somewhat|a little|not (?:very )?(?:close|well))\b/i, "somewhat"],
+  [singleMeetingDepth, "met_once"],
+  [negatedStrongDepth, "somewhat"],
+  [/\b(?:somewhat|a little|acquaintances?|casually)\b/i, "somewhat"],
   [/\b(?:well|close(?: friends)?|very close)\b/i, "well"],
 ] as const;
 

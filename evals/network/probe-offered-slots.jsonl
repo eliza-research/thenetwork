@@ -441,3 +441,15 @@
 {"text":"No pressure Thursday doesn't work","answer":"unclear","keys":[]}
 {"text":"No, Thursday works","answer":"unclear","keys":[]}
 {"text":"No doubt, Saturday doesn't work, Thursday works","answer":"yes","keys":["a"]}
+{"text":"Sunday around 2 works","answer":"yes","keys":["c"]}
+{"text":"Saturday around 2 works","answer":"unclear","keys":[]}
+{"text":"around 2 works","answer":"unclear","keys":[]}
+{"text":"Yes, Thursday works, I'm free after 2","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I can stay until 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free before 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I can make it by 2","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free till 3","answer":"yes","keys":["a"]}
+{"text":"Yes, Thursday works, I'm free from 2","answer":"yes","keys":["a"]}
+{"text":"Yes, I'm free after 2","answer":"unclear","keys":[]}
+{"text":"after 2 works","answer":"unclear","keys":[]}
+{"text":"Yes, Thursday works, I can stay around 2 hours","answer":"yes","keys":["a"]}

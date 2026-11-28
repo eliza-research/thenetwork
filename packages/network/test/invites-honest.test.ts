@@ -1,8 +1,8 @@
 // Without an invite link (the service sets no NetworkContext.invite), an unmet request offers no
 // invite and does not wait for a friend's name: a one-word reply afterwards is not read as one.
 import { describe, expect, test } from "vitest";
-import { DAY, MINUTE } from "@thenetwork/core";
-import { memberInvitationLink, type MemberInviteRequest } from "../src/invitation.ts";
+import { DAY, HOUR, MINUTE } from "@thenetwork/core";
+import { inviteVouchEvidence, memberInvitationLink, type MemberInviteRequest } from "../src/invitation.ts";
 import { Mini } from "./mini.ts";
 
 describe("no invite link: an unmet request does not wait for a friend's name", () => {
@@ -179,4 +179,80 @@ test("a verified cross-city notice leaves the invitee out of this Network and re
   expect(notices).toEqual([expect.objectContaining({ body: expect.stringContaining("Orla just joined."), meta: expect.objectContaining({ invitationJoins: ["foreign"] }) })]);
   expect(w.net.memberList().some(member => member.id === "foreign")).toBe(false);
   expect(JSON.stringify(w.net.exportState())).not.toContain("Orla");
+});
+
+test("single-meeting vouches with intervening or past-time detail hold for weak_vouch review while recurring schedules and negated closeness classify accurately", async () => {
+  const attempts: MemberInviteRequest[] = [];
+  const reviewId = `mir_${"b".repeat(32)}`;
+  const w = new Mini([{ id: "rae", name: "Rae Kim", age: 30 }], {
+    memberInviteTurnAllowed: () => true,
+    issueMemberInvite: request => {
+      attempts.push(request);
+      return request.disposition === "review" ? { status: "review", reviewId }
+        : { status: "issued", url: memberInvitationLink({ id: "ntwrk", domain: "ntwrk.party" }, "B".repeat(43)) };
+    },
+  });
+  await w.onboard("rae");
+  for (const [name, evidence] of [
+    ["Maya", "2 months, met at a party once and got along well"],
+    ["Liam", "6 months, met him once a while back, we got along well"],
+    ["Cleo", "6 months, met her once a few months ago at a party, got along well"],
+    ["Owen", "1 year, met him once a year ago at a wedding, know him well enough"],
+    ["Zara", "6 months, met once a couple of months ago, seemed close to my friends"],
+    ["Kai", "2 years, met him once a year or so ago, know him well"],
+    ["Jude", "2 years, met her once a month back at a gig, got along well"],
+    ["Milo", "2 years, met him once a year back in 2023, know him well"],
+    ["Vera", "2 years, met her once a month earlier, know her well"],
+    ["Theo", "6 months, I don't know him well yet"],
+    ["Nia", "2 years, close friends who met once a week"],
+  ]) {
+    await w.say("rae", `Invite my friend ${name}`);
+    await w.say("rae", evidence!);
+    await w.say("rae", "CONFIRM INVITE");
+    await w.run(31 * DAY);
+  }
+  expect(attempts.map(({ firstName, durationMonths, depth, disposition, reviewReasons }) => ({
+    firstName, durationMonths, depth, disposition, reviewReasons,
+  }))).toEqual([
+    { firstName: "Maya", durationMonths: 2, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Liam", durationMonths: 6, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Cleo", durationMonths: 6, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Owen", durationMonths: 12, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Zara", durationMonths: 6, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Kai", durationMonths: 24, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Jude", durationMonths: 24, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Milo", durationMonths: 24, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Vera", durationMonths: 24, depth: "met_once", disposition: "review", reviewReasons: ["weak_vouch"] },
+    { firstName: "Theo", durationMonths: 6, depth: "somewhat", disposition: "issue", reviewReasons: [] },
+    { firstName: "Nia", durationMonths: 24, depth: "well", disposition: "issue", reviewReasons: [] },
+  ]);
+  expect(inviteVouchEvidence("8 months, not met once, we work together well")).toEqual({ durationMonths: 8, depth: "well" });
+  expect(inviteVouchEvidence("8 months, not just met once, we're close")).toEqual({ durationMonths: 8, depth: "well" });
+  expect(inviteVouchEvidence("8 months, not only met once, we're close")).toEqual({ durationMonths: 8, depth: "well" });
+  expect(inviteVouchEvidence("1 year, met more than once, very close")).toEqual({ durationMonths: 12, depth: "well" });
+  expect(inviteVouchEvidence("1 year, spoken once per week, know her well")).toEqual({ durationMonths: 12, depth: "well" });
+  expect(inviteVouchEvidence("1 year, hung out once every month, close friends")).toEqual({ durationMonths: 12, depth: "well" });
+  expect(inviteVouchEvidence("2 years, hung out once every two weeks, close friends")).toEqual({ durationMonths: 24, depth: "well" });
+  expect(inviteVouchEvidence("3 years, met once a year at our reunion, close friends")).toEqual({ durationMonths: 36, depth: "well" });
+  expect(inviteVouchEvidence("3 years, met once a week back in college, close friends")).toEqual({ durationMonths: 36, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met him once a year back in 2023, know him well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met her once a month earlier, know her well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met her once a month before, know her well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met him once a week prior, know him well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met him once a month previously, know him well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met at one time or another, close friends")).toEqual({ durationMonths: 24, depth: "well" });
+  expect(inviteVouchEvidence("6 months, hung out once or twice, know him well")).toEqual({ durationMonths: 6, depth: "well" });
+  expect(inviteVouchEvidence("3 months, only talked to her at work, know her well")).toEqual({ durationMonths: 3, depth: "well" });
+  expect(inviteVouchEvidence("2 years, met him once a month or two ago, we got along well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met her once a year and a half ago, close with my sister")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met him once a year back, get along well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met him a single time at a meetup, seemed well spoken")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("2 years, met her one time last spring, got along well")).toEqual({ durationMonths: 24, depth: "met_once" });
+  expect(inviteVouchEvidence("4 months, not close friends yet")).toEqual({ durationMonths: 4, depth: "somewhat" });
+  expect(inviteVouchEvidence("4 months, not that close yet")).toEqual({ durationMonths: 4, depth: "somewhat" });
+  expect(inviteVouchEvidence("5 months, we aren't that close")).toEqual({ durationMonths: 5, depth: "somewhat" });
+  expect(inviteVouchEvidence("5 months, wouldn't say we're close")).toEqual({ durationMonths: 5, depth: "somewhat" });
+  expect(inviteVouchEvidence("5 months, wouldn't say we're that close")).toEqual({ durationMonths: 5, depth: "somewhat" });
+  expect(inviteVouchEvidence("6 months, acquaintances from climbing, get along well")).toEqual({ durationMonths: 6, depth: "somewhat" });
+  expect(inviteVouchEvidence("6 months, know her casually, get along well")).toEqual({ durationMonths: 6, depth: "somewhat" });
 });

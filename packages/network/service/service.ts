@@ -109,6 +109,7 @@ import { CostLedger, costRatesFromEnv, dayOf, PgCostSink } from "./cost.ts";
 import { BlooioAdapter, collectedReplyGuard, originalBookingNoticeStale, type ChannelAdapter, type DirectKind, type Outbound } from "./channel.ts";
 import { peerOpportunityContactRestricted } from "./peer-opportunity-admission.ts";
 import { parseRescheduleCommand, RESCHEDULE_QUEUE_PREFIX } from "../src/rescheduling.ts";
+import { tzForCity } from "../src/outreach.ts";
 import { interruptionFeedbackAnswer } from "../src/interruption-feedback.ts";
 import { APPS, isAppId, keywordApp, lookingFor, POWERED_BY, stagingSiteOrigins, type AppId, type AppInfo } from "../../platform/src/apps.ts";
 import { Accounts, homeCityOf, joinProfileText, JoinReviewRequired, type AccountHooks, type EnrollmentReferral, type HomeInput, type JoinHookContext, type MemberHookContext, type TeenAgeFacts, type Who } from "../../platform/src/accounts.ts";
@@ -390,6 +391,9 @@ const isJoinNameToken = (word: string, appWords: readonly string[]): boolean => 
 
 const joinMembershipOf = (state: Membership["state"] | undefined): JoinMembership =>
   state === undefined ? "NoMembership" : state === "removed" ? "RemovedMembership" : state === "invited" ? "InvitedMembership" : "LiveMembership";
+
+const savedQuietHours = (value: unknown): readonly [number, number] | undefined =>
+  Array.isArray(value) && value.length === 2 && Number.isInteger(value[0]) && Number.isInteger(value[1]) ? [value[0], value[1]] : undefined;
 
 const bareJoinAge = (text: string, appWords: readonly string[]): number | undefined => {
   const nums = [...text.matchAll(/(?:^|[\s,.;:(])(\d{1,3})(?=$|[\s,.;:!)])/g)];
@@ -1486,6 +1490,7 @@ export class NetworkService implements RuntimeHost {
           personId,
           to,
           timeZone: resolveTimeZone(r.time_zone ?? undefined, rt.city) ?? "America/New_York",
+          quietHours: savedQuietHours(rawPrefs.quietHours),
           prefs,
           proactiveAllowed: !paused && !suppressProactiveForLocalAgent,
         };
@@ -3080,7 +3085,7 @@ export class NetworkService implements RuntimeHost {
       }
       return keyword || systemReply ? "handled" as const : disposition;
     }, !fromAssistant && !kw && !calendarPreferenceCommand(ev.text) && this.inboundTurn()?.memberId === memberId
-      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text) } : undefined);
+      ? { kind: "member", memberId, reschedule: parseRescheduleCommand(ev.text, tzForCity(rt.city)) } : undefined);
   }
 
   private async cofounderIntentOwner(tx: SQL, rt: NetworkRuntime, memberId: MemberId, e164: string): Promise<boolean> {
