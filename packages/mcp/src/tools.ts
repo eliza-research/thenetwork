@@ -15,14 +15,14 @@ import { publicSignupUsesBrowser } from "../../core/src/generated/siteEnrollment
 import { minorNoticeFor, type MinorNotice } from "../../core/src/generated/textEnrollment.ts";
 import { photoSlotsMax } from "../../core/src/generated/photoRelayItem.ts";
 import { profileSubmissionAccepted } from "../../core/src/generated/mcpProfileSubmission.ts";
-import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
-import type { AssistantKind, LeakContext, LookingForEntry, LookingForResult, LookingForView, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, PublicUpdate, SavedProfileFields, SetAvailabilityInput, SetRedLinesInput } from "./hooks.ts";
+import { appsOn, connectorApp, connectorSurface, DATING_AGE_RULE, domainsOn, isDomainId, type DomainId, type McpApp, type McpAppId, type Surface, WORK_AGE_RULE } from "./apps.ts";
+import type { AssistantKind, LeakContext, LookingForEntry, LookingForResult, LookingForView, ManageDomainsInput, PhotoHoldingsView, PhotoRequestStatus, PlatformHooks, PublicStatus, PublicUpdate, SavedProfileFields, SetAvailabilityInput, SetRedLinesInput } from "./hooks.ts";
 import type { Grant, Scope, OAuthStore, SignupDraftFields } from "./store.ts";
 import { CONTACT_PATTERNS, contactVariants } from "../../core/src/guard.ts";
 import { isCity, LAUNCH_CITIES } from "../../core/src/types.ts";
 import { outputLeaks, passesOutputGate } from "./leaks.ts";
 
-export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "get_context", "read_profile", "submit_profile", "set_availability", "set_red_lines", "get_updates", "prepare_signup",
+export const TOOL_NAMES = ["app_info", "start_signup", "check_status", "get_context", "read_profile", "submit_profile", "set_availability", "set_red_lines", "manage_domains", "get_updates", "prepare_signup",
   "list_looking_for", "pause_looking_for", "resume_looking_for", "my_photos", "photo_request"] as const;
 export type ToolName = (typeof TOOL_NAMES)[number];
 export const CANONICAL_RED_LINES = [
@@ -35,9 +35,10 @@ const CONTEXT_INCLUDES: readonly ContextInclude[] = ["status", "profile", "looki
 export const connectorTool: Record<ToolName, ConnectorTool> = {
   app_info: "AppInfoTool", start_signup: "StartSignupTool", check_status: "CheckStatusTool",
   get_context: "GetContextTool", read_profile: "ReadProfileTool", submit_profile: "SubmitProfileTool",
-  set_availability: "SetAvailabilityTool", set_red_lines: "SetRedLinesTool", get_updates: "GetUpdatesTool",
-  prepare_signup: "PrepareSignupTool", list_looking_for: "ListLookingForTool", pause_looking_for: "PauseLookingForTool",
-  resume_looking_for: "ResumeLookingForTool", my_photos: "MyPhotosTool", photo_request: "PhotoRequestTool",
+  set_availability: "SetAvailabilityTool", set_red_lines: "SetRedLinesTool", manage_domains: "SetRedLinesTool",
+  get_updates: "GetUpdatesTool", prepare_signup: "PrepareSignupTool", list_looking_for: "ListLookingForTool",
+  pause_looking_for: "PauseLookingForTool", resume_looking_for: "ResumeLookingForTool", my_photos: "MyPhotosTool",
+  photo_request: "PhotoRequestTool",
 };
 const oauthScope: Record<ConnectorScope, Scope | null> = { NoScope: null, MembershipRead: "membership:read", ProfileWrite: "profile:write", ProfileRead: "profile:read", PhotosUse: "photos:use" };
 /** The OAuth scope that each tool needs, from the generated `scopeFor` (spec/connectorTools.md, "Public tools need no sign-in"). */
@@ -62,7 +63,7 @@ export function canCallTool(c: Connection, tool: ToolName): boolean {
     case "read_profile": return canCallReadProfile(c);
     case "get_updates": return canCallGetUpdates(c);
     case "submit_profile": return canCallSubmitProfile(c);
-    case "set_availability": case "set_red_lines": return canCallPreferenceTool(c, connectorTool[tool]);
+    case "set_availability": case "set_red_lines": case "manage_domains": return canCallPreferenceTool(c, connectorTool[tool]);
     case "prepare_signup": return canCallPrepareSignup(c);
     case "list_looking_for": case "pause_looking_for": case "resume_looking_for": return canCallLookingForTool(c, connectorTool[tool]);
     case "my_photos": case "photo_request": return canCallPhotoTool(c, connectorTool[tool]);
@@ -97,6 +98,8 @@ const annotations = (title: string) => ({ title, readOnlyHint: true, destructive
 
 export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host: McpApp, site: McpApp) {
   const ids = appsOn(apps, surface, host.id).map(a => a.id);
+  const surfaceDomains = domainsOn(surface, host.id);
+  const domainArr = { type: "array", items: { enum: surfaceDomains } };
   const signInApp = signInSite(connectorApp[site.id], connectorApp[host.id]);
   const signIn = Object.values(apps).find(a => connectorApp[a.id] === signInApp) ?? site;
   const appProp = (description?: string) => (description ? { enum: ids, description } : { enum: ids });
@@ -173,7 +176,7 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       name: "check_status",
       description: `After allows access on ${signIn.domain}, returns ${host.name} status.`,
       inputSchema: { type: "object", properties: { app: ownAppInput }, additionalProperties: false },
-      outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text, finish_signup_url: text }, ["app", "status", "next_step", "manage_url"]),
+      outputSchema: object({ app: ownApp, status, next_step: text, manage_url: text, finish_signup_url: text, enabled_domains: arr, available_domains: arr }, ["app", "status", "next_step", "manage_url"]),
       annotations: annotations("Status"),
       ...schemes("check_status"),
     },
@@ -194,6 +197,8 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
         profile: { anyOf: [{ type: "null" }, obj] },
         looking_for: { anyOf: [{ type: "null" }, arrObj] },
         updates: arrObj,
+        enabled_domains: arr,
+        available_domains: arr,
       }, ["app", "status", "next_step", "profile_read_granted", "profile", "looking_for", "updates"]),
       annotations: { title: "Context", readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       ...schemes("get_context"),
@@ -258,6 +263,24 @@ export function toolDefs(apps: Record<McpAppId, McpApp>, surface: Surface, host:
       outputSchema: object({ saved: bool, app: ownApp, red_lines: { type: "array", items: text }, next_step: text }),
       annotations: changeAnnotations("Red lines"),
       ...schemes("set_red_lines"),
+    },
+    {
+      name: "manage_domains",
+      description: `Enable or disable domains (${surfaceDomains.join(", ")}).`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          app: ownAppInput,
+          enable: domainArr,
+          disable: domainArr,
+        },
+        additionalProperties: false,
+      },
+      outputSchema: object({
+        app: ownApp, updated: bool, enabled_domains: arr, available_domains: arr, blocked: arrObj, next_step: text,
+      }),
+      annotations: changeAnnotations("Domains"),
+      ...schemes("manage_domains"),
     },
     {
       name: "list_looking_for",
@@ -434,7 +457,7 @@ function formatAvailabilitySummary(input: SetAvailabilityInput): string {
   return parts.join("; ");
 }
 
-export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; ref?: string; words?: string; draft?: SignupDraftFields; include?: ContextInclude[]; availability?: SetAvailabilityInput; redLines?: SetRedLinesInput } | { ok: false; message: string } {
+export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host: McpApp): { ok: true; app?: string; about?: string; token?: string; ref?: string; words?: string; draft?: SignupDraftFields; include?: ContextInclude[]; availability?: SetAvailabilityInput; redLines?: SetRedLinesInput; domains?: ManageDomainsInput } | { ok: false; message: string } {
   if (args === undefined || args === null) args = {};
   if (typeof args !== "object" || Array.isArray(args)) return { ok: false, message: "Arguments must be an object." };
   const a = args as Record<string, unknown>;
@@ -446,6 +469,7 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
     && !(name === "get_context" && (k === "include" || k === "update_token"))
     && !(name === "set_availability" && (k === "days" || k === "windows" || k === "quietHours" || k === "timezone" || k === "notes"))
     && !(name === "set_red_lines" && (k === "redLines" || k === "mode"))
+    && !(name === "manage_domains" && (k === "enable" || k === "disable"))
     && !(name === "prepare_signup" && (k === "firstName" || k === "homeCity"))
     && !(changesLookingFor && k === "ref")
     && !(name === "photo_request" && k === "words"));
@@ -532,6 +556,22 @@ export function checkArgs(name: ToolName, args: unknown, enumIds: string[], host
       if (!seen.has(item)) { seen.add(item); redLines.push(item); }
     }
     return { ok: true, app: host.id, redLines: { redLines, mode } };
+  }
+  if (name === "manage_domains") {
+    if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
+    const parseList = (v: unknown): DomainId[] | undefined => {
+      if (v === undefined) return undefined;
+      if (!Array.isArray(v) || v.some(x => !isDomainId(x))) return undefined;
+      return [...new Set(v as DomainId[])];
+    };
+    if (a.enable !== undefined && !parseList(a.enable)) return { ok: false, message: "enable must list valid domain names." };
+    if (a.disable !== undefined && !parseList(a.disable)) return { ok: false, message: "disable must list valid domain names." };
+    const enable = parseList(a.enable);
+    const disable = parseList(a.disable);
+    if ((!enable || !enable.length) && (!disable || !disable.length)) {
+      return { ok: false, message: "Provide at least one domain to enable or disable." };
+    }
+    return { ok: true, app: host.id, domains: { ...(enable ? { enable } : {}), ...(disable ? { disable } : {}) } };
   }
   if (name === "get_context") {
     if (a.app !== undefined && a.app !== host.id) return { ok: false, message: `This connection covers ${host.name} only.` };
@@ -879,6 +919,12 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         ? (await c.hooks.minorNotice?.(personId, g.app, g.phoneKey)) ?? minorNoticeFor(a.id, false, false, false, true)
         : undefined;
       const finishSignupUrl = status === "not_joined" || status === "invited" ? await c.mintFinishSignupUrl?.() : undefined;
+      const surfaceDomains = domainsOn(c.surface, c.host.id);
+      const domains = personId !== null && status !== "not_joined" && status !== "on_hold" && c.hooks.memberDomains
+        ? await c.hooks.memberDomains(personId, g.app, g.phoneKey).catch(() => undefined)
+        : undefined;
+      const enabled_domains = domains?.enabledDomains.filter(d => surfaceDomains.includes(d));
+      const available_domains = domains?.availableDomains.filter(d => surfaceDomains.includes(d));
       return {
         kind: "ok",
         data: {
@@ -886,6 +932,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
           next_step: nextStep(status, a, notice, finishSignupUrl),
           manage_url: a.links.support,
           ...(finishSignupUrl ? { finish_signup_url: finishSignupUrl } : {}),
+          ...(domains ? { enabled_domains, available_domains } : {}),
         },
       };
     }
@@ -935,6 +982,12 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         const rawUpdates = await c.hooks.updates(personId, g.app, c.assistant ?? "web", chk.token, gate);
         updates = rawUpdates.filter(u => gate(u.summary)).map(u => formatPublicUpdate(u, gate));
       }
+      const surfaceDomains = domainsOn(c.surface, c.host.id);
+      const domains = personId !== null && status !== "not_joined" && status !== "on_hold" && c.hooks.memberDomains
+        ? await c.hooks.memberDomains(personId, g.app, g.phoneKey).catch(() => undefined)
+        : undefined;
+      const enabled_domains = domains?.enabledDomains.filter(d => surfaceDomains.includes(d));
+      const available_domains = domains?.availableDomains.filter(d => surfaceDomains.includes(d));
       return {
         kind: "ok",
         data: {
@@ -946,6 +999,7 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
           profile,
           looking_for: lookingFor,
           updates,
+          ...(domains ? { enabled_domains, available_domains } : {}),
         },
       };
     }
@@ -1105,6 +1159,73 @@ export async function callTool(name: ToolName, args: unknown, c: CallContext): P
         return { kind: "ok", data: { saved: false, app: a.id, red_lines: [], next_step: nextStep(status, a) } };
       }
       return { kind: "error", message: "Red line updates are not available here." };
+    }
+    case "manage_domains": {
+      const g = c.grant;
+      if (!g || g.app !== c.host.id) return { kind: "invalid_grant" };
+      const refusal = grantOwnerRefusal(await checkGrantOwner(c.hooks, g));
+      if (refusal) return refusal;
+      const a = c.apps[g.app];
+      const surfaceDomains = domainsOn(c.surface, c.host.id);
+      const reqEnable = chk.domains?.enable ?? [];
+      const reqDisable = chk.domains?.disable ?? [];
+      if ([...reqEnable, ...reqDisable].some(d => !surfaceDomains.includes(d))) {
+        return { kind: "error", message: "That domain is not available here." };
+      }
+      const person = g.personId;
+      const status: PublicStatus = person === null ? "not_joined" : await c.hooks.status(person, g.app, g.phoneKey);
+      const conn = { ...connectionOf(c.host, c.surface, c.scopes), status: memberStatus[status] };
+      if (person === null || callPreferenceTool(conn, "SetRedLinesTool", true).lastResult !== "PreferencesSaved") {
+        return { kind: "ok", data: { app: a.id, updated: false, enabled_domains: [], available_domains: [], blocked: [], next_step: nextStep(status, a) } };
+      }
+      if (!c.hooks.manageDomains) return { kind: "error", message: "Domain updates are not available here." };
+      const isMinor = await c.hooks.minorMember(person, g.phoneKey);
+      const minorBlocked = isMinor
+        ? reqEnable.filter(d => d !== "friendship").map(domain => ({ domain, reason: "minor_restricted" as const }))
+        : [];
+      const safeEnable = isMinor ? reqEnable.filter(d => d === "friendship") : reqEnable;
+      if (minorBlocked.length && !safeEnable.length && !reqDisable.length) {
+        const current = await c.hooks.memberDomains?.(person, g.app, g.phoneKey).catch(() => undefined);
+        return {
+          kind: "ok",
+          data: {
+            app: a.id,
+            updated: false,
+            enabled_domains: (current?.enabledDomains ?? []).filter(d => surfaceDomains.includes(d)),
+            available_domains: (current?.availableDomains ?? ["friendship"]).filter(d => surfaceDomains.includes(d)),
+            blocked: minorBlocked,
+            next_step: "Only friendship is available for people under 18.",
+          },
+        };
+      }
+      try {
+        const res = await c.hooks.manageDomains(person, g.app, g.phoneKey, { enable: safeEnable, disable: reqDisable });
+        if (!res.ok && res.error === "stopped") {
+          return { kind: "ok", data: { app: a.id, updated: false, enabled_domains: [], available_domains: [], blocked: [], next_step: nextStep("stopped", a) } };
+        }
+        if (!res.ok && res.error === "not_member") {
+          return { kind: "ok", data: { app: a.id, updated: false, enabled_domains: [], available_domains: [], blocked: [], next_step: nextStep(status, a) } };
+        }
+        const blocked = [...minorBlocked, ...res.blocked.filter(b => !minorBlocked.some(m => m.domain === b.domain))];
+        const enabled_domains = res.enabledDomains.filter(d => surfaceDomains.includes(d));
+        const available_domains = res.availableDomains.filter(d => surfaceDomains.includes(d));
+        return {
+          kind: "ok",
+          data: {
+            app: a.id,
+            updated: res.ok,
+            enabled_domains,
+            available_domains,
+            blocked,
+            next_step: blocked.length && !res.ok
+              ? "Requested domain changes were not allowed for this account."
+              : `Updated domains for ${a.name}.`,
+          },
+        };
+      } catch (e) {
+        c.log(`[mcp] ${g.app} manage_domains failed grant=${g.id}: ${(e as Error).message}`);
+        return { kind: "error", message: "Domain settings could not be updated right now." };
+      }
     }
     case "list_looking_for": {
       const g = c.grant;

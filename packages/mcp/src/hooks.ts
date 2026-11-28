@@ -1,4 +1,4 @@
-import type { Accounts, AppInfo, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
+import type { Accounts, AppInfo, BlockedDomain, DomainId, JoinError, JoinInput, Membership, MembershipState, OtpService, PeopleStore, SessionService } from "@thenetwork/platform";
 import { canJoinApp, effectiveAgeAt, normalizePhone, resolveConsent, signupAccountView } from "@thenetwork/platform";
 import type { PhotoAccessState } from "@thenetwork/platform/src/photo-relay.ts";
 import type { McpAppId } from "./apps.ts";
@@ -59,6 +59,24 @@ export interface SetAvailabilityInput {
 export interface SetRedLinesInput {
   redLines: string[];
   mode?: "merge" | "replace";
+}
+
+export interface MemberDomainsView {
+  enabledDomains: DomainId[];
+  availableDomains: DomainId[];
+}
+
+export interface ManageDomainsInput {
+  enable?: DomainId[];
+  disable?: DomainId[];
+}
+
+export interface ManageDomainsResult {
+  ok: boolean;
+  enabledDomains: DomainId[];
+  availableDomains: DomainId[];
+  blocked: BlockedDomain[];
+  error?: string;
 }
 
 export interface LeakContext {
@@ -126,6 +144,8 @@ export interface PlatformHooks {
   submitProfile?(personId: string, app: McpAppId, phoneKey: string, text: string): Promise<"accepted" | "not_member" | "stopped" | { status: "accepted"; nextQuestion?: string }>;
   setAvailability?(personId: string, app: McpAppId, phoneKey: string, input: SetAvailabilityInput): Promise<{ ok: boolean; summary?: string; error?: string }>;
   setRedLines?(personId: string, app: McpAppId, phoneKey: string, input: SetRedLinesInput): Promise<{ ok: boolean; redLines?: string[]; error?: string }>;
+  memberDomains?(personId: string, app: McpAppId, phoneKey: string): Promise<MemberDomainsView | undefined>;
+  manageDomains?(personId: string, app: McpAppId, phoneKey: string, input: ManageDomainsInput): Promise<ManageDomainsResult>;
   lookingFor?(personId: string, app: McpAppId, phoneKey: string): Promise<LookingForView | undefined>;
   changeLookingFor?(personId: string, app: McpAppId, phoneKey: string, grantId: string, ref: string, change: LookingForChange): Promise<LookingForResult>;
   photoHoldings?(personId: string, app: McpAppId, phoneKey: string): Promise<PhotoHoldingsView | undefined>;
@@ -164,6 +184,8 @@ export interface PlatformParts {
   submitProfile?: (personId: string, app: McpAppId, e164: string, text: string) => Promise<"accepted" | "not_member" | { status: "accepted"; nextQuestion?: string }>;
   setAvailability?: (personId: string, app: McpAppId, phoneKey: string, input: SetAvailabilityInput) => Promise<{ ok: boolean; summary?: string; error?: string }>;
   setRedLines?: (personId: string, app: McpAppId, phoneKey: string, input: SetRedLinesInput) => Promise<{ ok: boolean; redLines?: string[]; error?: string }>;
+  memberDomains?: (personId: string, app: McpAppId, e164: string) => Promise<MemberDomainsView | undefined>;
+  manageDomains?: (personId: string, app: McpAppId, e164: string, input: ManageDomainsInput) => Promise<ManageDomainsResult>;
   leakContext?: (personId: string, app: McpAppId, e164: string) => Promise<LeakContext | undefined>;
   lookingFor?: (personId: string, app: McpAppId, e164: string) => Promise<LookingForView | undefined>;
   minorNotice?: (personId: string, app: McpAppId, e164: string) => Promise<MinorNotice | undefined>;
@@ -264,6 +286,30 @@ export function platformHooks(p: PlatformParts): PlatformHooks {
         return p.setRedLines!(personId, id, key, input);
       },
     } : {}),
+    async memberDomains(personId: string, id: McpAppId, key: string) {
+      const e164 = await ownerE164(personId, key);
+      if (!e164) return undefined;
+      if (p.memberDomains) return p.memberDomains(personId, id, e164);
+      return p.accounts.memberDomains(personId, e164);
+    },
+    async manageDomains(personId: string, id: McpAppId, key: string, input: ManageDomainsInput) {
+      const e164 = await ownerE164(personId, key);
+      if (!e164) return { ok: false, enabledDomains: [], availableDomains: [], blocked: [], error: "not_member" };
+      if (resolveConsent(await p.store.lastConsent(e164, id)) === "opted_out") {
+        return { ok: false, enabledDomains: [], availableDomains: [], blocked: [], error: "stopped" };
+      }
+      if (p.manageDomains) return p.manageDomains(personId, id, e164, input);
+      const res = await p.accounts.updateDomains({
+        personId,
+        e164,
+        enable: input.enable,
+        disable: input.disable,
+        originBrand: id,
+        source: "mcp",
+      });
+      const ok = res.blocked.length === 0 || res.applied.enabled.length > 0 || res.applied.disabled.length > 0;
+      return { ok, enabledDomains: res.enabledDomains, availableDomains: res.availableDomains, blocked: res.blocked };
+    },
     ...(p.lookingFor ? {
       lookingFor: async (personId: string, id: McpAppId, key: string) => {
         const e164 = await ownerE164(personId, key);

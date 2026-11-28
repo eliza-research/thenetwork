@@ -7,7 +7,7 @@
 //
 // Engine-visible inputs only. Nothing here reads hidden truth.
 import type { Category, City, MemberId, ScoreComponents } from "@thenetwork/core";
-import { CITY_TZ, DAY, HOUR, MINUTE } from "@thenetwork/core";
+import { CITY_TZ, DAY, HOUR, isFriendshipDomain, MINUTE } from "@thenetwork/core";
 import { teenActivityOffered, teenPlaceAllowed } from "../../core/src/generated/friendIntroAge.ts";
 import { teenGroupPlanApp } from "../../core/src/generated/matchLane.ts";
 import { teenMeetingAllowed } from "../../core/src/generated/teenIntroSwitch.ts";
@@ -22,7 +22,7 @@ import {
   venueCanHoldGroup, venueCanHostActivity,
 } from "../../core/src/generated/planFormation.ts";
 import { activitiesForTags, activityAllAges, activityById, venueAllAges, type ActivityType, type Daypart, type Venue } from "./packs/network/activities.ts";
-import { hood } from "./packs/friends/geo.ts";
+import { hood } from "./packs/friendship/geo.ts";
 import { availabilityProb, candidateSlots, standingWindowCoversSlot, timeOptionsPhrase, type AvailabilityEvidence, type TimeSlot } from "./attention.ts";
 import { DEFAULT_ATTENTION, DEFAULT_PLANS, type AttentionConfig, type PlansConfig } from "./config.ts";
 import { tokenize } from "./embed.ts";
@@ -169,7 +169,7 @@ export function planMemberReason(w: World, id: MemberId, role: Role = "guest"): 
   return r === "interruption_budget" || (r === "contribution_budget" && role !== "host") ? null : r;
 }
 
-export const teenPlanSeat = (w: World, id: MemberId): boolean => teenGroupPlanApp(w.pack.id) && teenCandidateIn(w, id, plansOf(w).lane);
+export const teenPlanSeat = (w: World, id: MemberId): boolean => teenGroupPlanApp(isFriendshipDomain(w.pack.id) ? "friends" : w.pack.id) && teenCandidateIn(w, id, plansOf(w).lane);
 
 export const planActivityOffered = (rosterHasMinor: boolean, a: ActivityType): boolean =>
   teenActivityOffered(rosterHasMinor, activityAllAges(a), a.adultPlans);

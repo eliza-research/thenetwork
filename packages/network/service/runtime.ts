@@ -17,7 +17,7 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { CITY_TZ, DAY, isCity, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, isBusinessDomain, isCity, isDatingDomain, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
@@ -542,14 +542,14 @@ export class NetworkRuntime {
   }
 
   async peonHireAdmission(tx: SQL, row: Pick<QueueRow, "id" | "app" | "memberId" | "oppId" | "text">): Promise<RecipientCheck> {
-    if (this.app.id !== "peon" || row.app !== "peon" || !row.memberId || !row.oppId) return { ok: true };
+    if (!isBusinessDomain(this.app.id) || !isBusinessDomain(row.app) || !row.memberId || !row.oppId) return { ok: true };
     const [contact] = await this.peonHireContacts(tx, row.memberId, [row.id]);
     const current = !contact || (contact.opportunity_id === row.oppId && await this.peonHireContactCurrent(tx, contact, row.memberId, row.text));
     return current ? { ok: true } : { ok: false, reason: "peon_search_changed" };
   }
 
   async peonHireRepliesCurrent(tx: SQL, memberId: MemberId, ids: readonly string[], bodies: readonly string[]): Promise<boolean> {
-    if (this.app.id !== "peon" || !ids.length) return true;
+    if (!isBusinessDomain(this.app.id) || !ids.length) return true;
     for (const contact of await this.peonHireContacts(tx, memberId, ids)) {
       await lockPeerOpportunityContact(tx, this.app.id, this.pg.id, memberId, contact.id);
       if (!await this.peonHireContactCurrent(tx, contact, memberId, bodies[ids.indexOf(contact.id)] ?? "")) return false;
@@ -558,7 +558,7 @@ export class NetworkRuntime {
   }
 
   private async slopContact(tx: SQL, row: QueueRow) {
-    if (this.app.id !== "slop" || row.app !== this.app.id || !row.oppId || !row.memberId) return;
+    if (!isDatingDomain(this.app.id) || row.app !== this.app.id || !row.oppId || !row.memberId) return;
     const [contact] = await tx<{ type: "probe" | "proposal"; body: string }[]>`select msg.type,msg.body from network.messages msg
       where msg.app_id=${row.app} and msg.id=${row.id} and msg.opportunity_id=${row.oppId}
         and msg.member_id=${row.memberId} and msg.direction='outbound' and msg.type in ('probe','proposal')`;
@@ -1002,8 +1002,8 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
-    if ((this.app.id === "slop" || this.app.id === "peon") && state) {
-      const introductions = this.app.id === "slop" ? pendingSlopIntroductions(state.opps, state.interactions)
+    if ((isDatingDomain(this.app.id) || isBusinessDomain(this.app.id)) && state) {
+      const introductions = isDatingDomain(this.app.id) ? pendingSlopIntroductions(state.opps, state.interactions)
         : state.opps.filter(opp => opp.seat && opp.seatAcceptedAt === undefined && opp.meetingAt !== undefined
           && (opp.stage === "scheduled" || (opp.stage === "done" && !opp.finalized)));
       const originalNotices = introductions.flatMap(opp =>

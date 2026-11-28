@@ -12,7 +12,7 @@ import { sha256 } from "./hash.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { explorationBar, type Scored } from "./scoring.ts";
 import { solveChooSiowIPFP, type MarketEquilibrium, type SparsePairEdge } from "./sinkhorn.ts";
-import { directionalStatusMultiplier, explorationPairAllowed, VERTICAL_KERNELS, worldStatusBeliefs } from "./status.ts";
+import { directionalStatusMultiplier, explorationPairAllowed, verticalKernelFor, worldStatusBeliefs } from "./status.ts";
 import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
@@ -298,7 +298,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
         tsSamples.set(id, b.mu.map((m, d) => Math.max(-3, Math.min(3, m + b.sigma[d]! * nextNormal()))));
       }
     }
-    const K = VERTICAL_KERNELS[w.pack.id] ?? VERTICAL_KERNELS.ntwrk;
+    const K = verticalKernelFor(w.pack.id);
     const all = scored.filter(x => Number.isFinite(x.score) && !use.keys.has(x.c.key) && (!x.reason || x.reason === "below_threshold")
       && x.verdict?.verdict !== "no" && x.score >= explorationBar(w, x.c, x.threshold))
       .sort(byKey)

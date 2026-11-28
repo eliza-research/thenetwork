@@ -20,7 +20,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     expect(d.body!.result._meta["io.modelcontextprotocol/serverInfo"].name).toBe("the-network");
 
     const l = await rpc(env, NTWRK, "tools/list");
-    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "get_context", "read_profile", "submit_profile", "set_availability", "set_red_lines", "list_looking_for", "pause_looking_for", "resume_looking_for", "get_updates"]);
+    expect(l.body!.result.tools.map((t: any) => t.name)).toEqual(["app_info", "start_signup", "prepare_signup", "check_status", "get_context", "read_profile", "submit_profile", "set_availability", "set_red_lines", "manage_domains", "list_looking_for", "pause_looking_for", "resume_looking_for", "get_updates"]);
     const described = (name: string) => l.body!.result.tools.find((t: any) => t.name === name).description as string;
     expect(described("prepare_signup")).toContain("ticks the text consent");
     expect(described("prepare_signup")).not.toMatch(/approves? their details and text consent there/i);
@@ -28,8 +28,8 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const site = await rpc(env, `${origin("peon.biz")}/mcp`, "tools/list");
     expect(site.body!.result.tools.find((t: any) => t.name === "check_status").description).toContain("allows access on peon.biz");
     for (const t of l.body!.result.tools) {
-      const ro = !["get_context", "submit_profile", "set_availability", "set_red_lines", "get_updates", "prepare_signup", "pause_looking_for", "resume_looking_for"].includes(t.name);
-      const idempotent = ro || ["set_availability", "set_red_lines", "pause_looking_for", "resume_looking_for"].includes(t.name);
+      const ro = !["get_context", "submit_profile", "set_availability", "set_red_lines", "manage_domains", "get_updates", "prepare_signup", "pause_looking_for", "resume_looking_for"].includes(t.name);
+      const idempotent = ro || ["set_availability", "set_red_lines", "manage_domains", "pause_looking_for", "resume_looking_for"].includes(t.name);
       expect(t.annotations).toEqual({ title: expect.any(String), readOnlyHint: ro, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false });
       expect(t.inputSchema.additionalProperties).toBe(false);
     }
@@ -90,7 +90,7 @@ describe("Streamable HTTP, 2026-07-28", () => {
     const future = await rpc(env, NTWRK, "initialize", { protocolVersion: "2030-01-01", capabilities: {} }, { modern: false });
     expect(future.body!.result.protocolVersion).toBe("2025-11-25");
     const list = await rpc(env, NTWRK, "tools/list", {}, { modern: false, headers: { "mcp-protocol-version": "2025-06-18" } });
-    expect(list.body!.result.tools).toHaveLength(13);
+    expect(list.body!.result.tools).toHaveLength(14);
     const tool = await call(env, NTWRK, "app_info", {}, { modern: false });
     expect(tool.body!.result.structuredContent.apps.map((a: any) => a.id)).toEqual(["ntwrk", "slop", "peon", "friends"]);
   });
@@ -290,6 +290,7 @@ describe("no tool accepts a phone number or a code", () => {
             : t.name === "get_context" ? ["app", "include", "update_token"]
             : t.name === "set_availability" ? ["app", "days", "windows", "quietHours", "timezone", "notes"]
             : t.name === "set_red_lines" ? ["app", "redLines", "mode"]
+            : t.name === "manage_domains" ? ["app", "enable", "disable"]
             : t.name === "prepare_signup" ? ["app", "firstName", "homeCity"]
             : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"]
             : t.name === "photo_request" ? ["app", "words"]

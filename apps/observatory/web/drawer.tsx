@@ -47,7 +47,7 @@ const navTab: Record<DrawerTab, NavTab> = {
 /** The stored tab of each generated drawer tab. */
 const storeTab = Object.fromEntries(DRAWER_TABS.map(t => [navTab[t], t])) as Record<NavTab, DrawerTab>;
 /** The generated filter key of each stored filter. */
-const navFilter: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey" };
+const navFilter: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey", domains: "DomainsKey" };
 
 /** The name of each stored drawer tab: the generated tab's name. */
 export const TAB_LABEL = Object.fromEntries(DRAWER_TABS.map(t => [t, drawerTabLabel[navTab[t]]])) as Record<DrawerTab, string>;
@@ -72,10 +72,10 @@ export function Drawer() {
   const s = useStore();
   const nav = navOf(s);
   const now = s.now();
-  const queued = [...s.opps.values()].filter(o => o.state === "IN_REVIEW");
+  const queued = s.reviewPending();
   const dueSoon = queued.some(o => o.review && o.review.deadline - now < 3_600_000);
   const counts: Partial<Record<NavTab, DrawerTabCount>> = {
-    ReviewTab: { value: s.network?.review?.queued ?? queued.length, tone: dueSoon ? "warn" : undefined, label: "waiting" },
+    ReviewTab: { value: queued.length, tone: dueSoon ? "warn" : undefined, label: "waiting" },
     ...(s.game ? { GameTab: { value: `${s.game.scores.find(x => x.source === "player")?.points ?? 0} pts` } } : {}),
   };
   const save = (next: ConsoleNav) => store.setUI({ drawer: storeTab[next.wantedTab], drawerOpen: next.drawerOpen });
@@ -469,7 +469,7 @@ function Metrics() {
   const byOrigin: Record<string, number> = {};
   for (const o of s.opps.values()) if (o.source !== "shadow" && s.inRange(o.createdAt) && s.matchOpp(o, { range: true, members: true, stateGroup: true })) { const k = originLabel(originOf(o)); byOrigin[k] = (byOrigin[k] ?? 0) + 1; }
   const byState: Record<string, number> = {};
-  for (const m of s.members.values()) if (s.inBorough(m)) byState[m.state] = (byState[m.state] ?? 0) + 1;
+  for (const m of s.members.values()) if (s.inBorough(m) && s.matchMemberDomain(m)) byState[m.state] = (byState[m.state] ?? 0) + 1;
   return (
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
@@ -478,7 +478,7 @@ function Metrics() {
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
-        <Kpi label="members who met someone" value={num([...s.members.values()].filter(m => m.counters.meetings > 0).length)} />
+        <Kpi label="members who met someone" value={num([...s.members.values()].filter(m => m.counters.meetings > 0 && s.matchMemberDomain(m)).length)} />
         {game && <Kpi label="precision (truth)" value={pct(st.oracleJudged ? st.compatible / st.oracleJudged : 0)} title="Proposals the hidden truth says were truly compatible" />}
         {game && <Kpi label="unsafe" value={num(st.unsafe)} tone={st.unsafe ? "destructive" : "ok"} title="Proposals the hidden truth says were unsafe" />}
         <Kpi label="opt-outs" value={num(st.optOuts)} tone={st.optOuts ? "warn" : undefined} />

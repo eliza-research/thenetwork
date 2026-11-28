@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { SQL } from "../../../packages/core/src/runtime/postgres.ts";
 import { allowedByRole, globalGrants, mayOpenCrossApp, scopedGrants } from "../../../packages/core/src/generated/staffPermissions.ts";
 import { staffSecondFactorShown, tokensAccepted } from "../../../packages/core/src/generated/staffSignIn.ts";
-import { APP_IDS, isAppId, type AppId } from "./apps.ts";
+import { APP_IDS, DOMAIN_IDS, domainAppsFor, isAppId, type AppId, type DomainId } from "./apps.ts";
 import { STAFF_ROLES, type AuditEntry, type Mode, type RoleGrant, type StaffRole, type StaffUser } from "./types.ts";
 
 export const REPO = resolve(import.meta.dirname, "../../..");
@@ -138,6 +138,15 @@ export function allowed(u: StaffUser, need: readonly StaffRole[], app?: AppId, m
 export const hasEverywhere = (u: StaffUser, role: StaffRole) => globalRolesFor(u).includes(role);
 export const canCrossApp = (u: StaffUser) => mayOpenCrossApp(globalRolesFor(u));
 export const appsFor = (u: StaffUser, mode: Mode): AppId[] => APP_IDS.filter(a => rolesFor(u, a, mode).size > 0);
+export function hasDomainRole(u: StaffUser, domain: DomainId, mode: Mode, need?: readonly StaffRole[]): boolean {
+  return domainAppsFor(domain).some(app => {
+    const held = rolesFor(u, app, mode);
+    if (!held.size) return false;
+    return need === undefined || allowedByRole([...held], [...need]);
+  });
+}
+export const domainsFor = (u: StaffUser, mode: Mode, need?: readonly StaffRole[]): DomainId[] =>
+  DOMAIN_IDS.filter(d => hasDomainRole(u, d, mode, need));
 
 /**
  * platform.staff_roles (real mode): loaded at start and every minute through the given connection. A

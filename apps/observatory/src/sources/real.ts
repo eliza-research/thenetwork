@@ -26,7 +26,7 @@ import type {
   ObsCitySummary, ObsDelta, ObsEdge, ObsFeedItem, ObsMember, ObsMessage, ObsOpportunity, ObsRequest, ObsState, ObsVenue, OpportunityDetail, ParticipantStatus, ReviewInfo,
   HealthAlert, SafetyAction, SafetyInfo, SearchHit, TimelineEntry,
 } from "../types.ts";
-import { appUrlEnv, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
+import { APP_TO_DOMAIN, appUrlEnv, DEFAULT_APP, DOMAIN_IDS, inferDomain, isDomainId, slaHours, type AppId, type DomainId } from "../apps.ts";
 import { serviceAlerts, ServiceClient, serviceFromEnv, type ServiceConfig } from "./service.ts";
 import type { GatheringRequest } from "../gatherings.ts";
 import type { StaffStepForward } from "../staffSteps.ts";
@@ -402,7 +402,7 @@ export class RealSource implements DataSource {
     const sql = this.sql!;
     const s = this.store;
     const app = this.app;
-    const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv, dbVenues, venueEvs] = await Promise.all([
+    const [members, msgAgg, partAgg, edges, opps, parts, runs, events, totals, reviews, ages, bookedMsgs, picksEv, dbVenues, venueEvs, memberDomainRows, intentDomains] = await Promise.all([
       sql`select id, name, home_city, home_area, account_status, participation_state, opted_out, age, invited_by, community, occupation, joined_at from network.members where app_id = ${app}`,
       sql`select member_id, count(*) filter (where direction = 'inbound')::int as msgs_in, count(*) filter (where direction = 'outbound')::int as msgs_out,
             count(*) filter (where direction = 'outbound' and proactive and status in ${sql(confirmedProactiveDeliveryStatuses)})::int as proactive
@@ -465,6 +465,8 @@ export class RealSource implements DataSource {
       sql`select at, type, payload from network.events where app_id = ${app} and type in ('probe_answer', 'time_answer', 'booked_cancelled') order by at, id`,
       sql`select id, city, neighborhood, name, lat, lon, arrival_landmark, status, category, price_tier from platform.venues`.catch(() => null),
       sql`select object_id, payload from network.events where app_id = ${app} and type = 'venue' order by at asc, id asc`.catch(() => []),
+      sql<{ member_id: string; domain: string }[]>`select m.id as member_id, d.domain from network.members m join platform.member_domains d on d.person_id = m.person_id where m.app_id = ${app} and d.enabled = true`.catch(() => []),
+      sql<{ member_id: string; category: string }[]>`select distinct member_id, category from network.intents where app_id = ${app}`.catch(() => []),
     ]);
     this.ages = ages;
     const reviewBy = new Map((reviews as any[]).map(r => [r.opportunity_id as string, r]));
@@ -485,6 +487,23 @@ export class RealSource implements DataSource {
         proposals.set(p.member_id, (proposals.get(p.member_id) ?? 0) + 1);
       }
     }
+    const domainsByMember = new Map<string, Set<DomainId>>();
+    const addDom = (memberId: string, d: DomainId) => {
+      let set = domainsByMember.get(memberId);
+      if (!set) { set = new Set<DomainId>(); domainsByMember.set(memberId, set); }
+      set.add(d);
+    };
+    const appDomain = APP_TO_DOMAIN[app];
+    for (const r of memberDomainRows as { member_id: string; domain: string }[]) {
+      if (isDomainId(r.domain)) addDom(r.member_id, r.domain);
+    }
+    for (const r of intentDomains as { member_id: string; category: string }[]) {
+      addDom(r.member_id, inferDomain({ app, category: r.category }));
+    }
+    for (const r of opps as any[]) {
+      const oppDom = inferDomain({ app, category: r.category ?? undefined, generator: r.generator ?? r.source, workIntroChannel: toCoreWorkIntroChannel(r.work_intro_channel) });
+      for (const p of partsBy.get(r.id) ?? []) if (p.role === "participant") addDom(p.member_id, oppDom);
+    }
     this.recordAges = new Map((members as any[]).map(r => [r.id as string, r.age as number | null]));
     const liveMembers = new Set<string>();
     this.firstNames = new Map();
@@ -496,6 +515,9 @@ export class RealSource implements DataSource {
       const declined = r.account_status === "removed" && r.name === null;
       const age = declined ? { minor: true } : ageView(r.age, ages.latest.get(r.id));
       const opt = ages.optIns.get(r.id);
+      const domSet = domainsByMember.get(r.id);
+      if (appDomain) { if (domSet) domSet.add(appDomain); }
+      const domains: DomainId[] = domSet?.size ? DOMAIN_IDS.filter(d => domSet.has(d)) : [appDomain ?? "friendship"];
       const m: ObsMember = {
         id: r.id, name: declined ? "Declined member" : displayName(r.name, this.reveal), city: r.home_city as City, area: r.home_area ?? undefined, state,
         ...(declined ? { declined: true } : {}),
@@ -503,6 +525,7 @@ export class RealSource implements DataSource {
         invitedBy: r.invited_by ?? undefined, community: r.community ?? (declined ? "declined" : undefined), occupation: r.occupation ?? undefined,
         ...(this.netState?.trust.get(r.id) ? { trust: this.netState.trust.get(r.id) } : {}),
         ...(opt?.calendar ? { calendar: true } : {}), ...(opt?.weekly ? { weekly: true } : {}),
+        domains, sourceApp: app,
         counters: {
           ...emptyCounters(), msgsIn: mm?.msgs_in ?? 0, msgsOut: mm?.msgs_out ?? 0, proactive: mm?.proactive ?? 0,
           proposals: proposals.get(r.id) ?? 0, accepted: pp?.accepted ?? 0, meetings: pp?.meetings ?? 0,
@@ -591,8 +614,9 @@ export class RealSource implements DataSource {
       } : undefined;
       const workIntroChannel = toCoreWorkIntroChannel(r.work_intro_channel);
       const citySpec = isCity(r.city) ? getCity(r.city) : undefined;
+      const domain = inferDomain({ app, category: r.category ?? undefined, generator: r.generator ?? r.source, workIntroChannel });
       const o: ObsOpportunity = {
-        id: r.id, kind: r.kind, source: r.source, generator: r.generator ?? r.source, category: r.category ?? undefined, city: r.city,
+        id: r.id, kind: r.kind, source: r.source, generator: r.generator ?? r.source, category: r.category ?? undefined, city: r.city, domain, sourceApp: app,
         objective: scrubText(r.objective, this.reveal), score: r.score ?? 0, components: r.components ?? undefined,
         explanations: Object.fromEntries(Object.entries(r.explanations ?? {}).map(([k, v]) => [k, scrubText(String(v), this.reveal)])),
         exploration: r.exploration, participants, alternates: ps.filter(p => p.role === "alternate").map(p => p.member_id),
@@ -792,6 +816,7 @@ export class RealSource implements DataSource {
       return {
         id: r.id, memberId: r.member_id, kind: r.kind, category: r.category ?? "social", label: requestLabel({ kind: r.kind, desireId: r.desire_id, category: r.category }),
         outcome: r.outcome ?? "open", tries: r.tries ?? 0, openedAt: at, ageHours: hours(now - at),
+        domain: inferDomain({ app, category: r.category ?? "social" }),
         ...(done !== undefined ? { fulfilledAt: done, hoursToFulfil: hours(done - at) } : {}), ...(r.opportunity_id ? { opportunityId: r.opportunity_id } : {}),
       };
     });
@@ -849,15 +874,16 @@ export class RealSource implements DataSource {
         member_opted_out: ["opt_out", `${nm(e.actor_id)} opted out`, "warn"],
         safety_flag: ["adversarial", `Safety flag on ${nm(e.actor_id)}: ${String(p.kind ?? "").replace(/_/g, " ")}`, "bad"],
       };
+      const appDom = APP_TO_DOMAIN[this.app];
       const net = NET_FEED[e.type];
       if (net) {
         const d = describe(e as EventRow, x => nm(x));
-        this.store.pushFeed({ t: ms(e.at) ?? 0, kind: net, text: d.text, severity: d.severity, members: d.memberId ? [d.memberId] : ids.length ? ids : undefined, opportunityId: e.object_type === "opportunity" ? e.object_id : undefined });
+        this.store.pushFeed({ t: ms(e.at) ?? 0, kind: net, text: d.text, severity: d.severity, members: d.memberId ? [d.memberId] : ids.length ? ids : undefined, opportunityId: e.object_type === "opportunity" ? e.object_id : undefined, ...(appDom ? { domain: appDom } : {}) });
         continue;
       }
       const m = map[e.type];
       if (!m) continue;
-      this.store.pushFeed({ t: ms(e.at) ?? 0, kind: m[0], text: m[1], severity: m[2], members: ids.length ? ids : undefined, opportunityId: e.object_type === "opportunity" ? e.object_id : undefined });
+      this.store.pushFeed({ t: ms(e.at) ?? 0, kind: m[0], text: m[1], severity: m[2], members: ids.length ? ids : undefined, opportunityId: e.object_type === "opportunity" ? e.object_id : undefined, ...(appDom ? { domain: appDom } : {}) });
     }
   }
 

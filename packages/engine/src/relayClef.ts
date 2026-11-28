@@ -20,7 +20,7 @@ import { fenceUntrusted, UNTRUSTED_NOTE } from "@thenetwork/core";
 import { fileAt } from "../../core/src/runtime/files.ts";
 import { sha256, stableStringify } from "./hash.ts";
 import { maskPii } from "../../core/src/pii.ts";
-import { CLEF_PRICE_PER_M_INPUT, ClefError, clefFeatureNames, clefFeatureRow, clefRun, type ClefCallOptions, type ClefModel, type ClefQuestion, type ClefResult } from "./packs/slop/clef.ts";
+import { CLEF_PRICE_PER_M_INPUT, ClefError, clefFeatureNames, clefFeatureRow, clefRun, type ClefCallOptions, type ClefModel, type ClefQuestion, type ClefResult } from "./packs/dating/clef.ts";
 import type { RelayClassifierHook, RelayClassifierInput, RelayClassifierOutput } from "./relay.ts";
 
 /** Bump when a question's id or wording changes: cache keys and fitted weights refer to it. */

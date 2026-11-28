@@ -9,10 +9,10 @@ import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneE
 import { erasureKeepsStaffHold, includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import { personMinorSignalOpen } from "../../core/src/generated/safetyCase.ts";
 import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src/generated/webSession.ts";
-import type { AppId } from "./apps.ts";
+import { APP_TO_DOMAIN, DOMAIN_IDS, type AppId, type DomainId } from "./apps.ts";
 import { resolveConsent, type ConsentEvent, type ConsentLast } from "./consent.ts";
 import { LONG_RATE_WINDOWS } from "./store.ts";
-import type { AgeFloorRecord, AppLeaveAdmission, AppLeaveInput, Ban, BirthRecord, HitResult, HitRule, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, ShareGrant, SignupAge, SignupBirth, StaffBanProjection, TeenAgeFactsRow } from "./store.ts";
+import type { AgeFloorRecord, AppLeaveAdmission, AppLeaveInput, Ban, BirthRecord, HitResult, HitRule, MemberDomainRecord, Membership, OtpChallenge, PendingKind, PendingText, PeopleStore, Person, PhoneChange, PhoneHold, PhoneIdentity, PhoneMethod, PhoneMove, PhoneMoveResult, RateBucket, RateBucketRead, RecordedMemberAge, Session, SetMemberDomainInput, ShareGrant, SignupAge, SignupBirth, StaffBanProjection, TeenAgeFactsRow } from "./store.ts";
 import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, verifiedBrowserBirthWrite, type TeenBarReason } from "./age.ts";
 
 type Row = Record<string, any>;
@@ -319,6 +319,95 @@ export class PgPeopleStore implements PeopleStore {
 
   async restrictBannedMemberships(personId: string): Promise<void> {
     await this.sql`update platform.memberships set state='restricted' where person_id=${personId}::uuid and state not in ('removed','invited')`;
+  }
+
+  async listMemberDomains(personId: string): Promise<MemberDomainRecord[]> {
+    let rows: Row[] = [];
+    try {
+      rows = await this.sql<Row[]>`select domain, enabled, origin_brand, source, enabled_at, disabled_at
+        from platform.member_domains where person_id = ${personId}::uuid order by domain`;
+    } catch (e) {
+      if ((e as { code?: unknown } | null)?.code !== "42P01") throw e;
+    }
+    if (rows.length) {
+      const byDomain = new Map<DomainId, MemberDomainRecord>();
+      for (const r of rows) {
+        const domain = r.domain as DomainId;
+        const disabledAt = ms(r.disabled_at);
+        byDomain.set(domain, {
+          domain,
+          enabled: Boolean(r.enabled),
+          originBrand: r.origin_brand as AppId,
+          source: String(r.source),
+          enabledAt: ms(r.enabled_at) ?? 0,
+          ...(disabledAt !== null ? { disabledAt } : {}),
+        });
+      }
+      return DOMAIN_IDS.flatMap(d => { const rec = byDomain.get(d); return rec ? [rec] : []; });
+    }
+    const msList = await this.memberships(personId);
+    const derived = new Map<DomainId, MemberDomainRecord>();
+    let ntwrkMembership: Membership | undefined;
+    for (const m of msList) {
+      if (m.state !== "active" && m.state !== "onboarding" && m.state !== "paused") continue;
+      if (m.app === "ntwrk") { ntwrkMembership = m; continue; }
+      const domain = APP_TO_DOMAIN[m.app];
+      if (!domain) continue;
+      const enabled = m.state !== "paused";
+      const enabledAt = m.joinedAt ?? 0;
+      derived.set(domain, {
+        domain, enabled, originBrand: m.app, source: "membership_fallback", enabledAt,
+        ...(enabled ? {} : { disabledAt: enabledAt }),
+      });
+    }
+    if (!derived.size && ntwrkMembership) {
+      const enabled = ntwrkMembership.state !== "paused";
+      const enabledAt = ntwrkMembership.joinedAt ?? 0;
+      derived.set("friendship", {
+        domain: "friendship", enabled, originBrand: "ntwrk", source: "membership_fallback", enabledAt,
+        ...(enabled ? {} : { disabledAt: enabledAt }),
+      });
+    }
+    return DOMAIN_IDS.flatMap(d => { const rec = derived.get(d); return rec ? [rec] : []; });
+  }
+
+  async setMemberDomain(input: SetMemberDomainInput): Promise<MemberDomainRecord> {
+    const at = input.at ?? Date.now();
+    const originBrand = input.originBrand ?? "ntwrk";
+    const source = input.source ?? "onboarding";
+    const hasOrigin = input.originBrand !== undefined;
+    const [r] = await this.sql<Row[]>`insert into platform.member_domains
+        (person_id, domain, enabled, origin_brand, source, enabled_at, disabled_at, updated_at)
+      values (${input.personId}::uuid, ${input.domain}, ${input.enabled}, ${originBrand}, ${source}, ${ts(at)}, ${input.enabled ? null : ts(at)}, ${ts(at)})
+      on conflict (person_id, domain) do update set
+        enabled = excluded.enabled,
+        origin_brand = case when ${hasOrigin} then excluded.origin_brand else platform.member_domains.origin_brand end,
+        source = excluded.source,
+        enabled_at = case when excluded.enabled and not platform.member_domains.enabled then excluded.enabled_at else platform.member_domains.enabled_at end,
+        disabled_at = case when excluded.enabled then null else excluded.disabled_at end,
+        updated_at = excluded.updated_at
+      returning domain, enabled, origin_brand, source, enabled_at, disabled_at`;
+    const disabledAt = ms(r!.disabled_at);
+    return {
+      domain: r!.domain as DomainId,
+      enabled: Boolean(r!.enabled),
+      originBrand: r!.origin_brand as AppId,
+      source: String(r!.source),
+      enabledAt: ms(r!.enabled_at) ?? at,
+      ...(disabledAt !== null ? { disabledAt } : {}),
+    };
+  }
+
+  async disableMemberDomains(personId: string, domains: readonly DomainId[], source: string, at = Date.now()): Promise<void> {
+    const list = [...new Set(domains)];
+    if (!list.length) return;
+    try {
+      await this.sql`update platform.member_domains
+        set enabled = false, source = ${source}, disabled_at = ${ts(at)}, updated_at = ${ts(at)}
+        where person_id = ${personId}::uuid and domain = any(${this.sql.array(list, "TEXT")}) and enabled = true`;
+    } catch (e) {
+      if ((e as { code?: unknown } | null)?.code !== "42P01") throw e;
+    }
   }
 
   async enrollmentOwnerAllowed(tx: SQL, personId: string, e164: string | undefined, phoneHash: string | undefined, at: number): Promise<boolean> {
@@ -715,6 +804,7 @@ export class PgPeopleStore implements PeopleStore {
         if (!releaseHeldPhone) await tx`delete from platform.line_conversations where address = ${target}`;
       }
       if (personId) {
+        await tx`delete from platform.member_domains where person_id = ${personId}::uuid`;
         await tx`delete from platform.memberships where person_id = ${personId}`;
         await tx`delete from platform.signup_eligibility where person_id = ${personId}::uuid`;
         if (!erasureKeepsStaffHold(releaseHeldPhone)) await tx`delete from platform.staff_safety_holds where person_id = ${personId}::uuid`;

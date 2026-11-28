@@ -1,4 +1,4 @@
-import type { Category, City, MemberId } from "@thenetwork/core";
+import { isBusinessDomain, isDatingDomain, isFriendshipDomain, type Category, type City, type MemberId } from "@thenetwork/core";
 import {
   laneOffered, laneShape, laneSidesCompatible, standingCeiling, standingUncertaintyCeiling,
   type LaneSide, type MatchLane,
@@ -110,7 +110,15 @@ function internTags(tags: Iterable<string>): TagInterner {
   };
 }
 
-const normalTags = (tags: readonly string[]): string[] => tags.map(t => t.trim().toLowerCase()).filter(t => t.length > 0);
+const canonicalDomainTag = (tag: string): string => {
+  if (tag.startsWith("slop:")) return `dating:${tag.slice(5)}`;
+  if (tag.startsWith("peon:")) return `business:${tag.slice(5)}`;
+  if (tag.startsWith("friends:")) return `friendship:${tag.slice(8)}`;
+  return tag;
+};
+const normalTags = (tags: readonly string[]): string[] => tags.map(t => canonicalDomainTag(t.trim().toLowerCase())).filter(t => t.length > 0);
+const packLaneApp = (packId: string): string =>
+  isDatingDomain(packId) ? "slop" : isBusinessDomain(packId) ? "peon" : isFriendshipDomain(packId) ? "friends" : packId;
 
 interface Draft {
   readonly entity: MatchEntity; readonly id: EntityId; readonly key: string;
@@ -146,7 +154,7 @@ export function buildProfiles(w: World, standingUpdates?: MemberStandingRow[], m
       if (!isEntityId(id)) throw new Error(`empty entity id for member ${memberId}`);
       if (seen.has(id)) throw new Error(`duplicate entity id ${id}`);
       seen.add(id);
-      if (!laneOffered(w.pack.id, lane) || !laneSidesCompatible(lane, side, partnerSide(lane, side))) continue;
+      if (!laneOffered(packLaneApp(w.pack.id), lane) || !laneSidesCompatible(lane, side, partnerSide(lane, side))) continue;
       if (sendTimeReason(w, memberId, [], undefined, laneCategory(lane)) !== null) continue;
       const capacity = wholeNumber(membership.capacity, "capacity");
       if (!planProfileCapacityAllows(capacity, existingFriendPlan)) continue;

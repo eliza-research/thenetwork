@@ -23,6 +23,49 @@ export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "pa
 export const APP_IDS = ["ntwrk", "slop", "peon", "friends"] as const;
 export type AppId = (typeof APP_IDS)[number];
 export const isAppId = (v: unknown): v is AppId => typeof v === "string" && (APP_IDS as readonly string[]).includes(v);
+
+export const DOMAIN_IDS = ["dating", "friendship", "business"] as const;
+export type DomainId = (typeof DOMAIN_IDS)[number];
+export const DOMAIN_LABELS: Record<DomainId, string> = {
+  dating: "Dating",
+  friendship: "Friendship",
+  business: "Business",
+};
+export function isDomainId(value: unknown): value is DomainId {
+  return typeof value === "string" && (DOMAIN_IDS as readonly string[]).includes(value);
+}
+export const DOMAIN_TO_APP: Record<DomainId, AppId> = {
+  dating: "slop",
+  friendship: "friends",
+  business: "peon",
+};
+export const APP_TO_DOMAIN: Record<AppId, DomainId | null> = {
+  slop: "dating",
+  friends: "friendship",
+  peon: "business",
+  ntwrk: null,
+};
+export const BRAND_DEFAULT_DOMAINS: Record<AppId, readonly DomainId[]> = {
+  slop: ["dating"],
+  peon: ["business"],
+  friends: ["friendship"],
+  ntwrk: ["dating", "friendship", "business"],
+};
+export function toDomainId(value: string): DomainId | undefined {
+  if (value === "dating" || value === "slop") return "dating";
+  if (value === "friendship" || value === "friends") return "friendship";
+  if (value === "business" || value === "peon") return "business";
+  return undefined;
+}
+export function isDatingDomain(value: string): boolean {
+  return value === "dating" || value === "slop";
+}
+export function isBusinessDomain(value: string): boolean {
+  return value === "business" || value === "peon";
+}
+export function isFriendshipDomain(value: string): boolean {
+  return value === "friendship" || value === "friends";
+}
 export type PrivacyScope = "agent_private" | "matchable" | "shareable" | "opportunity_specific";
 export type Provenance = "said" | "connected_source" | "inferred" | "vouched";
 export type FacetKind =

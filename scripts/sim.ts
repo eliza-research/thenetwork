@@ -108,10 +108,16 @@ const DISPATCH_WEIGHT: Readonly<Record<string, number>> = {
   evals: 5,
 };
 
+const BLOCK_ALIASES: Readonly<Record<string, string>> = {
+  dating: "slop",
+  business: "peon",
+  friendship: "friends",
+};
+const resolveBlockName = (name: string): string => BLOCK_ALIASES[name] ?? name;
 const argv = process.argv.slice(2);
 const values = (k: string) => argv.flatMap((x, i) => (x === `--${k}` ? (argv[i + 1] ?? "").split(",") : x.startsWith(`--${k}=`) ? x.slice(k.length + 3).split(",") : []));
-const only = [...new Set(values("only").map(name => name.trim()))];
-const skip = [...new Set(values("skip").map(name => name.trim()))];
+const only = [...new Set(values("only").map(name => resolveBlockName(name.trim())))];
+const skip = [...new Set(values("skip").map(name => resolveBlockName(name.trim())))];
 const unknown = [...new Set([...only, ...skip])].filter(x => !Object.hasOwn(BLOCKS, x)).map(name => name || "<empty>");
 if (unknown.length) { console.error(`unknown block: ${unknown.join(", ")}; known: ${Object.keys(BLOCKS).join(", ")}`); process.exit(2); }
 if (only.length && skip.length) { console.error("Choose --only or --skip."); process.exit(2); }
