@@ -546,18 +546,38 @@ const ALLOWED_FACET_EXACT = new Set([
   "activity",
   "non_drinker",
   "strict_sober",
+  "alcohol_optional",
   "vegetarian",
   "vegan",
   "halal",
   "kosher",
   "gluten_free",
+  "severe_allergen",
   "wheelchair",
+  "low_walking",
   "smoke_free",
   "low_noise",
   "daytime_only",
+  "women_only",
+  "all_ages",
+  "wants_kids",
+  "wantskids",
+  "religion",
+  "politics",
+  "drinking",
+  "smoking",
 ]);
 
-const ALLOWED_FACET_PREFIXES = ["slop:goal:", "slop:dealbreaker:", "slop:free:"];
+const ALLOWED_FACET_PREFIXES = [
+  "slop:goal:",
+  "slop:dealbreaker:",
+  "slop:free:",
+  "slop:wants_kids:",
+  "slop:religion:",
+  "slop:politics:",
+  "slop:drinking:",
+  "slop:smoking:",
+];
 
 const FORBIDDEN_FACET_PATTERN =
   /(raw_html|html_dump|photo_url|photo_base64|clef|appearance_score|race|ethnicity|health_diagnosis|income|ssn|last_name|employer|ig_handle|instagram|transcript)/i;

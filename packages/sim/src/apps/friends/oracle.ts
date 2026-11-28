@@ -21,6 +21,7 @@
 //                      harasser: one attendee harassed; bot: a fake account in the group thread; a lying
 //                      minor in contact with adults. Victims report with p by kind -> hold + block.
 import { canBeMatched, type MemberId } from "@thenetwork/core";
+import { extractiveGroupDrag } from "../../strata-shared.ts";
 import { activityById } from "@thenetwork/engine/src/packs/network/activities.ts";
 import { hood, hoodForCity, transitMinutes, transitMinutesInCity } from "@thenetwork/engine/src/packs/friends/index.ts";
 import { h01 } from "../../coins.ts";
@@ -211,7 +212,7 @@ export class FriendsOracle {
       const spendTerm = adultTable && !advs.length && h.spendComfortTier === "free"
         ? (paidVenue ? -0.10 : 0.06)
         : adultTable && !advs.length && h.spendComfortTier === "low" && !paidVenue ? 0.03 : 0;
-      const extractTerm = adultTable && maxOtherExtract >= 0.65 && (h.extractionPropensity ?? 0) < 0.45 ? -0.18 : 0;
+      const extractTerm = adultTable ? -extractiveGroupDrag(h.extractionPropensity ?? 0, maxOtherExtract, n, 0.65, 0.45, 0.18) : 0;
       const L = P.c0 + P.wA * ((h.likes[activity] ?? 0.3) - 0.5) + pair + h.warmth + balance + P.wF * b - travel - size + spendTerm + extractTerm + P.sideSd * (draw === undefined ? this.n("side", key, i) : this.n("mc-side", draw, i))
         + (act && act.durationMin >= 180 && h.energy < 0.3 ? -0.1 : 0);
       enjoy[i] = sig(L) * (hit.get(i) ?? 1);

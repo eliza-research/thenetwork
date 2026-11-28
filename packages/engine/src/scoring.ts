@@ -1,9 +1,10 @@
 import type { Facet, MemberId, ScoreComponents } from "@thenetwork/core";
-import { DAY, HOUR } from "@thenetwork/core";
+import { DAY, HOUR, isDatingDomain } from "@thenetwork/core";
 import { pairValueScale } from "../../core/src/generated/pairValue.ts";
 import { reliabilityDownrankPermille } from "../../core/src/generated/qualityAndLeague.ts";
 import { isMinor, memberReliabilityTier, memberVampireTierOf, requiredPairValues } from "./filters.ts";
 import { mfhgGeometricNsw } from "./group.ts";
+import { slopHorizontalCompatibility } from "./packs/slop/score.ts";
 import { worldStatusPairMultipliers } from "./status.ts";
 import type { Candidate, JudgeVerdict } from "./types.ts";
 import { pairKey, provenanceWeight, type World } from "./world.ts";
@@ -40,7 +41,8 @@ function pairTerms(w: World, c: Candidate): { fit: number; mutualBenefit: number
   } else if (m === 2 && !w.minors.has(ids[0]!) && !w.minors.has(ids[1]!) && !isMinor(w, ids[0]!) && !isMinor(w, ids[1]!)) {
     const { ab, ba } = worldStatusPairMultipliers(w, ids[0]!, ids[1]!);
     const hMult = (2 * ab * ba) / Math.max(1e-6, ab + ba);
-    mb = clamp(mb * (0.84 + 0.16 * hMult));
+    const horMult = isDatingDomain(w.pack.id) ? slopHorizontalCompatibility(w, ids[0]!, ids[1]!) : 1;
+    mb = clamp(mb * (0.84 + 0.16 * hMult) * horMult);
   }
   if (!ids.some(id => w.minors.has(id) || isMinor(w, id))) {
     let relScale = 1;

@@ -316,4 +316,9 @@ console.log(`\n${failed.length ? "FAIL" : "PASS"}: ${all.filter(g => g.blocking)
 for (const g of failed) console.error(`  FAIL [${g.block}] ${g.name}${g.detail ? `: ${g.detail.split("\n")[0]}` : ""}`);
 const out = values("json").find(Boolean);
 if (out) await writePath(out, JSON.stringify({ quick: opts.quick, blocks: run, timings, total, gates: all }, null, 1));
+await new Promise<void>(resolve => {
+  process.stdout.write("", () => {
+    process.stderr.write("", () => resolve());
+  });
+});
 process.exit(failed.length ? 1 : 0);

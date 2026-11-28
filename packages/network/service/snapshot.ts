@@ -194,70 +194,188 @@ export interface SnapshotScope { app: string; city?: string; homeCities?: readon
 export async function loadSnapshot(sql: SQL, now: number, scope: SnapshotScope = { app: "ntwrk" }): Promise<WorldSnapshot & { reliability?: Record<MemberId, ReliabilityEvidence> }> {
   const app = scope.app;
   const signalCutoff = now - 90 * DAY;
+  const nowDate = new Date(now);
+  const recentSince = new Date(now - 30 * DAY);
+  const scoped = scope.homeCities !== undefined || scope.city !== undefined;
+  const scopedCte = () => scope.homeCities !== undefined
+    ? sql`with scoped_members as (
+        select id from network.members
+        where app_id = ${app} and account_status not in ('invited', 'removed')
+          and home_city = any(${sql.array([...scope.homeCities], "TEXT")})
+      )`
+    : sql`with scoped_members as (
+        select m.id from network.members m
+        where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+          and (
+            m.home_city = ${scope.city!}
+            or exists (
+              select 1 from network.presence p
+              where p.app_id = ${app} and p.member_id = m.id and p.city = ${scope.city!}
+                and (
+                  p.type <> 'temporary'
+                  or (p.from_at is not null and p.to_at is not null and p.from_at < p.to_at and p.to_at > ${nowDate})
+                )
+            )
+          )
+      )`;
   const [
     members, facets, intents, presence, edges, recent, parts, personBlocks, events, accepted, teenAvoid,
     quarantinedRows, boundaryRows, reliabilityRows, lineTypeRows,
   ] = await Promise.all([
-    sql<SnapshotMemberRow[]>`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
-      ${scope.console ? consoleAgeColumns(sql) : birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
-      ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${new Date(now)})` : sql`false`} as matured_signup
-      from network.members m
-      left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
-      where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
-    // Acceptance authorizes private intake, not matching or downstream automated use. Privacy scope is independent.
-    scope.purpose === 'profile_review'
-      ? sql`select * from network.facets where app_id = ${app} and status <> 'rejected' order by member_id, id`
-      : sql`select * from network.facets where app_id = ${app} and status <> 'rejected'
-          and ${automatedFacetPredicate(sql)} order by member_id, id`,
-    sql`select * from network.intents where app_id = ${app} order by member_id, id`,
-    sql`select * from network.presence where app_id = ${app} order by member_id, city, type`,
-    sql`select * from network.edges where app_id = ${app} order by from_id, to_id, type`,
-    sql`select * from network.opportunities where app_id = ${app} and created_at >= ${new Date(now - 30 * DAY)} order by created_at, id`,
-    sql`select opportunity_id, member_id, role from network.participations where app_id = ${app} order by opportunity_id, member_id, role`,
-    sql`select f.id as from_id, t.id as to_id, pb.at as created_at from platform.person_blocks pb
-      join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
-      join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
+    scoped
+      ? sql<SnapshotMemberRow[]>`${scopedCte()}
+          select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
+            ${scope.console ? consoleAgeColumns(sql) : birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
+            ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${nowDate})` : sql`false`} as matured_signup
+          from network.members m
+          join scoped_members sm on sm.id = m.id
+          left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+          where m.app_id = ${app} order by m.id`
+      : sql<SnapshotMemberRow[]>`select m.*, a.age as matching_age, a.banned as canonical_banned, (a.staff_held or a.report_held) as safety_held, a.minor_signal_at as person_minor_signal_at,
+          ${scope.console ? consoleAgeColumns(sql) : birthColumns(sql)}, a.teen_pool_barred as ab_teen_pool_barred, a.teen_pool_held as ab_teen_pool_held,
+          ${scope.includeMaturedSignup ? sql`exists (select 1 from platform.signup_eligibility s where s.person_id=m.person_id and s.eligible_at <= ${nowDate})` : sql`false`} as matured_signup
+          from network.members m
+          left join platform.matching_ages a on a.app_id = m.app_id and a.member_id = m.id
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed') order by m.id`,
+    scoped
+      ? (scope.purpose === "profile_review"
+        ? sql`${scopedCte()}
+            select f.* from network.facets f join scoped_members sm on sm.id = f.member_id
+            where f.app_id = ${app} and f.status <> 'rejected' order by f.member_id, f.id`
+        : sql`${scopedCte()}
+            select f.* from network.facets f join scoped_members sm on sm.id = f.member_id
+            where f.app_id = ${app} and f.status <> 'rejected'
+              and ${automatedFacetPredicate(sql, true)} order by f.member_id, f.id`)
+      : (scope.purpose === "profile_review"
+        ? sql`select * from network.facets where app_id = ${app} and status <> 'rejected' order by member_id, id`
+        : sql`select * from network.facets where app_id = ${app} and status <> 'rejected'
+            and ${automatedFacetPredicate(sql)} order by member_id, id`),
+    scoped
+      ? sql`${scopedCte()}
+          select i.* from network.intents i join scoped_members sm on sm.id = i.member_id
+          where i.app_id = ${app} order by i.member_id, i.id`
+      : sql`select * from network.intents where app_id = ${app} order by member_id, id`,
+    scoped
+      ? sql`${scopedCte()}
+          select p.* from network.presence p join scoped_members sm on sm.id = p.member_id
+          where p.app_id = ${app} order by p.member_id, p.city, p.type`
+      : sql`select * from network.presence where app_id = ${app} order by member_id, city, type`,
+    scoped
+      ? sql`${scopedCte()}
+          select e.* from network.edges e
+          join scoped_members sf on sf.id = e.from_id
+          join scoped_members st on st.id = e.to_id
+          where e.app_id = ${app} order by e.from_id, e.to_id, e.type`
+      : sql`select * from network.edges where app_id = ${app} order by from_id, to_id, type`,
+    sql`select * from network.opportunities where app_id = ${app} and created_at >= ${recentSince} order by created_at, id`,
+    sql`select p.opportunity_id, p.member_id, p.role from network.participations p
+      join network.opportunities o on o.app_id = p.app_id and o.id = p.opportunity_id
+      where p.app_id = ${app} and o.created_at >= ${recentSince} order by p.opportunity_id, p.member_id, p.role`,
+    scoped
+      ? sql`${scopedCte()}
+          select f.id as from_id, t.id as to_id, pb.at as created_at from platform.person_blocks pb
+          join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
+          join scoped_members sf on sf.id = f.id
+          join network.members t on t.person_id = pb.to_person and t.app_id = ${app}
+          join scoped_members st on st.id = t.id order by f.id, t.id`
+      : sql`select f.id as from_id, t.id as to_id, pb.at as created_at from platform.person_blocks pb
+          join network.members f on f.person_id = pb.from_person and f.app_id = ${app}
+          join network.members t on t.person_id = pb.to_person and t.app_id = ${app} order by f.id, t.id`,
     scope.purpose === "profile_review" ? [] : readPublicEvents(sql, now, scope.city),
-    sql`select p.opportunity_id, p.member_id, o.created_at from network.participations p
-      join network.opportunities o on o.id = p.opportunity_id and o.app_id = ${app}
-      where p.app_id = ${app} and p.role = 'participant'
-        and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
-        and p.status in ('accepted', 'confirmed', 'attended', 'no_show')
-        and p.booked_told
-      order by o.created_at, o.id, p.member_id`,
-    teenFriendApp(app) ? sql<PairRow[]>`select a.from_id, a.to_id, a.at as created_at from platform.teen_pair_avoid_members a
-      where a.app_id = ${app} order by a.from_id, a.to_id` : [],
-    scope.console ? [] : optionalQuery(() => sql<{ member_id: string }[]>`
-      select m.id as member_id
-      from network.members m
-      join platform.person_safety_quarantine q on q.person_id = m.person_id::text and q.active = true
-      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
-      order by m.id`),
-    scope.console ? [] : optionalQuery(() => sql<{ member_id: string; kind: string; reporter_hash: string }[]>`
-      select distinct m.id as member_id, s.kind, s.reporter_hash
-      from network.members m
-      left join platform.people p on p.id = m.person_id
-      join platform.person_boundary_signals s
-        on (s.subject_person_id = m.person_id::text or (p.phone_hash is not null and s.subject_phone_hash = p.phone_hash))
-      where m.app_id = ${app} and m.account_status not in ('invited', 'removed') and s.created_at >= ${signalCutoff}
-      order by m.id, s.kind, s.reporter_hash`),
-    scope.console ? [] : optionalQuery(() => sql<Record<string, any>[]>`
-      select distinct on (m.id) m.id as member_id, r.strikes, r.late_cancels_4h, r.late_cancels_24h,
-        r.reschedule_churn, r.clean_streak, r.resolved_90d, r.completed_90d, r.provisional_no_show
-      from network.members m
-      left join platform.people p on p.id = m.person_id
-      join platform.member_reliability r
-        on (r.person_id = m.person_id::text or (p.phone_hash is not null and r.phone_hash = p.phone_hash))
-      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
-        and (r.strikes > 0 or r.provisional_no_show = true)
-      order by m.id, r.strikes desc, r.updated_at desc`),
-    scope.console ? [] : optionalQuery(() => sql<{ member_id: string; line_type: string | null }[]>`
-      select m.id as member_id, ms.profile->>'phoneLineType' as line_type
-      from network.members m
-      join platform.memberships ms on ms.person_id = m.person_id and ms.app_id = m.app_id and ms.member_id = m.id
-      where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
-        and ms.profile ? 'phoneLineType'
-      order by m.id`),
+    scoped
+      ? sql`${scopedCte()}
+          select p.opportunity_id, p.member_id, o.created_at from network.participations p
+          join scoped_members sm on sm.id = p.member_id
+          join network.opportunities o on o.id = p.opportunity_id and o.app_id = ${app}
+          where p.app_id = ${app} and p.role = 'participant'
+            and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
+            and p.status in ('accepted', 'confirmed', 'attended', 'no_show')
+            and p.booked_told
+          order by o.created_at, o.id, p.member_id`
+      : sql`select p.opportunity_id, p.member_id, o.created_at from network.participations p
+          join network.opportunities o on o.id = p.opportunity_id and o.app_id = ${app}
+          where p.app_id = ${app} and p.role = 'participant'
+            and o.state in ('SCHEDULED', 'COMPLETED', 'CANCELLED')
+            and p.status in ('accepted', 'confirmed', 'attended', 'no_show')
+            and p.booked_told
+          order by o.created_at, o.id, p.member_id`,
+    teenFriendApp(app)
+      ? (scoped
+        ? sql<PairRow[]>`${scopedCte()}
+            select a.from_id, a.to_id, a.at as created_at from platform.teen_pair_avoid_members a
+            join scoped_members sf on sf.id = a.from_id
+            join scoped_members st on st.id = a.to_id
+            where a.app_id = ${app} order by a.from_id, a.to_id`
+        : sql<PairRow[]>`select a.from_id, a.to_id, a.at as created_at from platform.teen_pair_avoid_members a
+            where a.app_id = ${app} order by a.from_id, a.to_id`)
+      : [],
+    scope.console ? [] : optionalQuery(() => scoped
+      ? sql<{ member_id: string }[]>`${scopedCte()}
+          select m.id as member_id
+          from network.members m
+          join scoped_members sm on sm.id = m.id
+          join platform.person_safety_quarantine q on q.person_id = m.person_id::text and q.active = true
+          where m.app_id = ${app} order by m.id`
+      : sql<{ member_id: string }[]>`
+          select m.id as member_id
+          from network.members m
+          join platform.person_safety_quarantine q on q.person_id = m.person_id::text and q.active = true
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+          order by m.id`),
+    scope.console ? [] : optionalQuery(() => scoped
+      ? sql<{ member_id: string; kind: string; reporter_hash: string }[]>`${scopedCte()}
+          select distinct m.id as member_id, s.kind, s.reporter_hash
+          from network.members m
+          join scoped_members sm on sm.id = m.id
+          left join platform.people p on p.id = m.person_id
+          join platform.person_boundary_signals s
+            on (s.subject_person_id = m.person_id::text or (p.phone_hash is not null and s.subject_phone_hash = p.phone_hash))
+          where m.app_id = ${app} and s.created_at >= ${signalCutoff}
+          order by m.id, s.kind, s.reporter_hash`
+      : sql<{ member_id: string; kind: string; reporter_hash: string }[]>`
+          select distinct m.id as member_id, s.kind, s.reporter_hash
+          from network.members m
+          left join platform.people p on p.id = m.person_id
+          join platform.person_boundary_signals s
+            on (s.subject_person_id = m.person_id::text or (p.phone_hash is not null and s.subject_phone_hash = p.phone_hash))
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed') and s.created_at >= ${signalCutoff}
+          order by m.id, s.kind, s.reporter_hash`),
+    scope.console ? [] : optionalQuery(() => scoped
+      ? sql<Record<string, any>[]>`${scopedCte()}
+          select distinct on (m.id) m.id as member_id, r.strikes, r.late_cancels_4h, r.late_cancels_24h,
+            r.reschedule_churn, r.clean_streak, r.resolved_90d, r.completed_90d, r.provisional_no_show
+          from network.members m
+          join scoped_members sm on sm.id = m.id
+          left join platform.people p on p.id = m.person_id
+          join platform.member_reliability r
+            on (r.person_id = m.person_id::text or (p.phone_hash is not null and r.phone_hash = p.phone_hash))
+          where m.app_id = ${app} and (r.strikes > 0 or r.provisional_no_show = true)
+          order by m.id, r.strikes desc, r.updated_at desc`
+      : sql<Record<string, any>[]>`
+          select distinct on (m.id) m.id as member_id, r.strikes, r.late_cancels_4h, r.late_cancels_24h,
+            r.reschedule_churn, r.clean_streak, r.resolved_90d, r.completed_90d, r.provisional_no_show
+          from network.members m
+          left join platform.people p on p.id = m.person_id
+          join platform.member_reliability r
+            on (r.person_id = m.person_id::text or (p.phone_hash is not null and r.phone_hash = p.phone_hash))
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+            and (r.strikes > 0 or r.provisional_no_show = true)
+          order by m.id, r.strikes desc, r.updated_at desc`),
+    scope.console ? [] : optionalQuery(() => scoped
+      ? sql<{ member_id: string; line_type: string | null }[]>`${scopedCte()}
+          select m.id as member_id, ms.profile->>'phoneLineType' as line_type
+          from network.members m
+          join scoped_members sm on sm.id = m.id
+          join platform.memberships ms on ms.person_id = m.person_id and ms.app_id = m.app_id and ms.member_id = m.id
+          where m.app_id = ${app} and ms.profile ? 'phoneLineType'
+          order by m.id`
+      : sql<{ member_id: string; line_type: string | null }[]>`
+          select m.id as member_id, ms.profile->>'phoneLineType' as line_type
+          from network.members m
+          join platform.memberships ms on ms.person_id = m.person_id and ms.app_id = m.app_id and ms.member_id = m.id
+          where m.app_id = ${app} and m.account_status not in ('invited', 'removed')
+            and ms.profile ? 'phoneLineType'
+          order by m.id`),
   ]);
   // Runtime conversation ownership takes precedence; it never creates or changes physical presence.
   const joined = new Set(members.map(r => r.id as string));

@@ -28,14 +28,16 @@ export type Visibility = "public" | "compact" | "matchable" | "private";
 // ---- shared pieces ------------------------------------------------------------------------------
 
 const bucketDays = (days: number): number => {
-  const d = Math.round(days) || 0;
+  const d = (days >= 0 ? Math.floor(days) : Math.ceil(days)) || 0;
   const abs = Math.abs(d);
   if (abs <= 2) return d;
   if (abs <= 7) return Math.sign(d) * 7;
   if (abs <= 30) return Math.round(d / 7) * 7;
   return Math.round(d / 30) * 30;
 };
-const bucketAgeDays = (days: number): number => bucketDays(Math.max(0, days));
+const dayFloor = (days: number): number => bucketDays(days);
+const dayCeil = (days: number): number => bucketDays(days);
+const dayAge = (days: number): number => bucketDays(Math.max(0, days));
 const bucketOverlapHours = (hours: number): number => {
   if (hours <= 0) return 0;
   if (hours < 4) return 2;
@@ -45,7 +47,6 @@ const bucketOverlapHours = (hours: number): number => {
 };
 const CONNECTOR_ROLE = "connector (introduces the others, does not attend)";
 
-/** Pseudonymous refs: participants in order, then the connector. */
 function refsFor(ids: MemberId[]): { refs: Record<string, MemberId>; refOf: Map<MemberId, string>; scrub: (s: string) => string } {
   const refs: Record<string, MemberId> = {};
   const refOf = new Map<MemberId, string>();
@@ -55,9 +56,9 @@ function refsFor(ids: MemberId[]): { refs: Record<string, MemberId>; refOf: Map<
 
 const presenceOf = (p: Presence, now: number) => ({
   city: p.city, type: p.type, areas: [...p.areas].sort((a, b) => a.localeCompare(b)),
-  ...(p.from !== undefined ? { from_day: bucketDays((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: bucketDays((p.to - now) / DAY) } : {}),
+  ...(p.from !== undefined ? { from_day: dayFloor((p.from - now) / DAY) } : {}), ...(p.to !== undefined ? { to_day: dayCeil((p.to - now) / DAY) } : {}),
 });
-const joinedDaysAgo = (joinedAt: number, now: number) => bucketAgeDays((now - joinedAt) / DAY);
+const joinedDaysAgo = (joinedAt: number, now: number) => dayAge((now - joinedAt) / DAY);
 const roleOf = (id: MemberId, c: { via?: MemberId; roles: Record<MemberId, string> }) => (id === c.via ? CONNECTOR_ROLE : c.roles[id] ?? "peer");
 const everyone = (c: { participants: MemberId[]; via?: MemberId }) => [...c.participants, ...(c.via ? [c.via] : [])];
 
@@ -206,7 +207,7 @@ export function buildPublicView(snap: WorldSnapshot, cfg: ScreenConfig, o: Publi
   return {
     configuration: {
       kind: cfg.kind, category: cfg.category, objective: scrub(cfg.objective), city: cfg.city,
-      window_days: { from: bucketDays((cfg.window.start - now) / DAY), to: bucketDays((cfg.window.end - now) / DAY) },
+      window_days: { from: dayFloor((cfg.window.start - now) / DAY), to: dayCeil((cfg.window.end - now) / DAY) },
     },
     people, relationships, refs,
   };
@@ -309,7 +310,7 @@ export function summarizeConnectedSources(x: unknown, now: number): unknown {
     "facets", "facetCount", "facet_count", "observations", "observationCount", "lastSyncedAt", "observedAt", "connectedAt", "since", "scopes", "richness"]);
   const clean = (v: unknown, k: string): unknown => {
     if (typeof v === "boolean") return v;
-    if (typeof v === "number") return /At$|^since$/.test(k) && v > 1e11 ? `${bucketAgeDays((now - v) / DAY)} days ago` : v;
+    if (typeof v === "number") return /At$|^since$/.test(k) && v > 1e11 ? `${dayAge((now - v) / DAY)} days ago` : v;
     if (typeof v === "string") return v.length <= 40 && !/[@/]|https?:|www\./i.test(v) ? v : undefined;
     if (Array.isArray(v)) { const a = v.map(e => clean(e, k)).filter(e => e !== undefined); return a.length ? a.slice(0, 10) : undefined; }
     return undefined;
@@ -375,7 +376,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
   const ids = everyone(c);
   const { refs, refOf, scrub } = refsFor(ids);
   const now = w.now;
-  const daysAgo = (t: number) => bucketAgeDays((now - t) / DAY);
+  const daysAgo = (t: number) => dayAge((now - t) / DAY);
   const window = c.window ?? { start: now, end: now + w.cfg.windowDays * DAY };
   const anchorIntent = c.anchor?.type === "intent" ? w.intentById.get(c.anchor.id) : undefined;
   const snap = w.input;
@@ -386,22 +387,30 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     if (!mi) throw new Error(`unknown member ${id}`);
     const m = mi.m;
     const all = worldIdx.facetsByMember.get(id) ?? [];
+    const seenFactKeys = new Set<string>();
     const facts: DeepFact[] = all.filter(f => f.scope === "shareable" || f.scope === "matchable")
       .map(f => {
         const x = f as FacetX;
         const at = typeof x.observedAt === "number" ? x.observedAt : f.validFrom;
-        const rawAge = at !== undefined ? Math.max(0, Math.round((now - at) / DAY)) : undefined;
-        const age = rawAge !== undefined ? bucketAgeDays(rawAge) : undefined;
+        const rawAge = at !== undefined ? dayAge((now - at) / DAY) : undefined;
+        const age = rawAge;
+        const val = scrub(f.value).trim().slice(0, 180);
+        const src = typeof x.source === "string" && x.source.trim().length > 0 ? x.source : undefined;
         return {
-          field: f.kind, value: scrub(f.value), visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
-          basis: basisOf(f), ...(typeof x.source === "string" ? { source: x.source } : {}),
+          field: f.kind, value: val, visibility: f.scope === "shareable" ? "shareable" as const : "do_not_quote" as const,
+          basis: basisOf(f), ...(src !== undefined ? { source: src } : {}),
           confidence: Math.round(f.confidence * 100) / 100,
           ...(age !== undefined ? { age_days: age } : {}), ...(rawAge !== undefined && rawAge > STALE_DAYS ? { older_than_180_days: true } : {}),
           ...(v3 && isHypothesis(f) ? { hypothesis: true } : {}),
         };
       })
-      // Most useful first: shareable, then confident and fresh.
       .sort((a, b) => (a.visibility === b.visibility ? 0 : a.visibility === "shareable" ? -1 : 1) || (b.confidence - a.confidence) || ((a.age_days ?? 0) - (b.age_days ?? 0)))
+      .filter(f => {
+        const fk = `${f.field}|${f.value.toLowerCase()}`;
+        if (seenFactKeys.has(fk)) return false;
+        seenFactKeys.add(fk);
+        return true;
+      })
       .slice(0, MAX_FACTS);
     const budget = w.cfg.budgets[m.state];
     const declines = [...(w.memberCategoryDeclines.get(id)?.entries() ?? [])]
@@ -426,7 +435,7 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
       intents: mi.intents.map(it => ({
         objective: scrub(it.objective), category: it.category,
         ...(it.details ? { details: scrub(it.details) } : {}), ...(it.desiredPeople ? { desired_people: scrub(it.desiredPeople) } : {}),
-        created_days_ago: daysAgo(it.createdAt), expires_in_days: bucketDays((standingIntentDeadline(it) - now) / DAY),
+        created_days_ago: daysAgo(it.createdAt), expires_in_days: dayCeil((standingIntentDeadline(it) - now) / DAY),
         ...(anchorIntent?.id === it.id ? { anchors_this: true } : {}),
       })),
       presence: mi.presence.map(p => presenceOf(p, now)),
@@ -481,8 +490,8 @@ export function buildDeepContext(w: World, c: Candidate, o: DeepContextOptions =
     context: {
       configuration: {
         kind: c.kind, category: c.category, format: c.format, objective: scrub(c.objective), city: c.city ?? "unknown",
-        window_days: { from: bucketDays((window.start - now) / DAY), to: bucketDays((window.end - now) / DAY) },
-        hard_filters: "Enforced by code before and after you (age 18+ for everyone in any role, blocks, safety holds, category and romance opt-ins, budgets). You cannot override them.",
+        window_days: { from: dayFloor((window.start - now) / DAY), to: dayCeil((window.end - now) / DAY) },
+        hard_filters: "Code-enforced: 18+, blocks, holds, opt-ins, budgets.",
       },
       people, pairs,
       logistics: {

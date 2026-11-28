@@ -4,7 +4,7 @@
 // are known to over-accept, so letting the model choose would grade the engine against
 // unrealistically agreeable people (docs/research/matching-and-graphs.md). Set
 // `llmDecides: true` only for experiments comparing the two. PRD 34.3 "Persona agents".
-import { chatJson, getCity, type LLM, type LLMBudget } from "@thenetwork/core";
+import { chatJson, getCity, type LLM, type LLMBudget, type ResponseInfo } from "@thenetwork/core";
 import { anyJson, SIM_JSON_GROW } from "../llmGenerator.ts";
 import type { SimMessage } from "../channel.ts";
 import type { Persona } from "../persona.ts";
@@ -121,10 +121,22 @@ function situation(d: PolicyDecision, llmDecides: boolean): string {
   }
 }
 
+export interface LLMUsageSummary {
+  calls: number;
+  failures: number;
+  promptTokens: number;
+  completionTokens: number;
+  reasoningTokens: number;
+  costMicro: number;
+  totalLatencyMs: number;
+  meanLatencyMs: number;
+}
+
 export class LLMPersonaAgent implements PersonaAgent {
   readonly mode = "llm" as const;
   private fallback: PolicyPersonaAgent;
   calls = 0; failures = 0; budgetSkipped = 0;
+  promptTokens = 0; completionTokens = 0; reasoningTokens = 0; costMicro = 0; totalLatencyMs = 0; responses = 0;
   constructor(private llm: LLM, private worldStart: number, private opts: LLMAgentOptions = {}) {
     this.fallback = new PolicyPersonaAgent(worldStart, opts.policy);
   }
@@ -137,6 +149,28 @@ export class LLMPersonaAgent implements PersonaAgent {
           reasoningEffort: "low",
           promptCacheKey: cacheKey,
         }),
+    };
+  }
+
+  recordResponse(info: ResponseInfo): void {
+    this.responses++;
+    this.promptTokens += info.usage.promptTokens;
+    this.completionTokens += info.usage.completionTokens;
+    this.reasoningTokens += info.usage.reasoningTokens;
+    this.costMicro += info.costMicro;
+    this.totalLatencyMs += info.latencyMs;
+  }
+
+  usageSummary(): LLMUsageSummary {
+    return {
+      calls: this.calls,
+      failures: this.failures,
+      promptTokens: this.promptTokens,
+      completionTokens: this.completionTokens,
+      reasoningTokens: this.reasoningTokens,
+      costMicro: this.costMicro,
+      totalLatencyMs: Math.round(this.totalLatencyMs),
+      meanLatencyMs: this.responses > 0 ? Math.round(this.totalLatencyMs / this.responses) : 0,
     };
   }
 

@@ -6,7 +6,7 @@ import { requirePositiveSimulationValue } from "./input.ts";
 import { writePath } from "../../core/src/runtime/files.ts";
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { DAY, HOUR, MINUTE, SimClock, canBeMatched, type AppId, type MemberId, type Proposal } from "@thenetwork/core";
+import { DAY, HOUR, MINUTE, SimClock, canBeMatched, type AppId, type City, type MemberId, type Proposal } from "@thenetwork/core";
 import type { OracleSummary, RunRecord, RunRecordInput } from "@thenetwork/core";
 import { bookedCancellationPrefix } from "../../core/src/generated/outboundAdmission.ts";
 import { computeMetrics, type Metrics } from "./judge/metrics.ts";
@@ -671,7 +671,12 @@ export class World {
     const engine = this.opts.engine;
     if (!engine) return;
     const ctx = this.networkContext();
-    for (const city of ["sf", "nyc"] as const) {
+    const citySet = new Set<City>(["sf", "nyc"]);
+    for (const p of this.personas.values()) {
+      citySet.add(p.homeCity);
+      if (p.secondaryCity) citySet.add(p.secondaryCity);
+    }
+    for (const city of citySet) {
       try {
         const snap = ctx.snapshot();
         const props = await engine.propose(snap, { city, seed: hash32(this.opts.seed, city, this.clock.now()) });

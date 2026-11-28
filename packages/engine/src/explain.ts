@@ -20,24 +20,74 @@ export const EXPLORATION_LABEL = "Part of the reason is novelty: it is a bit out
  * short, and only the member's own shareable facets can clear them: another member's shareable
  * text never whitelists someone's private sensitive word (audit core-1 / engine-pipeline-3).
  */
-export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
+interface MemberVocabTokens {
+  readonly shareable: ReadonlySet<string>;
+  readonly priv: ReadonlySet<string>;
+  readonly sensitive: ReadonlySet<string>;
+}
+
+interface WorldVocabCache {
+  eventTokens: ReadonlySet<string> | undefined;
+  readonly byMember: Map<MemberId, MemberVocabTokens>;
+}
+
+const vocabCaches = new WeakMap<World, WorldVocabCache>();
+
+function vocabCacheOf(w: World): WorldVocabCache {
+  let cache = vocabCaches.get(w);
+  if (!cache) {
+    cache = { eventTokens: undefined, byMember: new Map() };
+    vocabCaches.set(w, cache);
+  }
+  return cache;
+}
+
+function eventTokensOf(w: World, cache: WorldVocabCache): ReadonlySet<string> {
+  if (!cache.eventTokens) {
+    const out = new Set<string>();
+    for (const e of w.events) for (const t of tokenize(`${e.title} ${e.tags.join(" ")}`)) out.add(t);
+    cache.eventTokens = out;
+  }
+  return cache.eventTokens;
+}
+
+function memberVocabOf(w: World, cache: WorldVocabCache, id: MemberId): MemberVocabTokens | undefined {
+  const cached = cache.byMember.get(id);
+  if (cached) return cached;
+  const mi = w.get(id);
+  if (!mi) return undefined;
   const shareable = new Set<string>();
+  const own = new Set<string>();
+  for (const f of mi.share) for (const t of tokenize(`${f.value} ${f.tags.join(" ")}`)) { shareable.add(t); own.add(t); }
+  for (const t of tokenize(mi.m.name)) shareable.add(t);
+  const priv = new Set<string>();
+  const sensitive = new Set<string>();
+  for (const v of mi.privateValues) for (const t of tokenize(v)) {
+    priv.add(t);
+    if (isSensitiveTerm(t) && !own.has(t)) sensitive.add(t);
+  }
+  for (const f of mi.match) if (f.scope !== "shareable") for (const t of tokenize(f.tags.join(" "))) {
+    priv.add(t);
+    if (isSensitiveTerm(t) && !own.has(t)) sensitive.add(t);
+  }
+  const entry: MemberVocabTokens = { shareable, priv, sensitive };
+  cache.byMember.set(id, entry);
+  return entry;
+}
+
+export function privateVocabulary(w: World, ids: MemberId[]): Set<string> {
+  const cache = vocabCacheOf(w);
+  const shareable = new Set<string>(eventTokensOf(w, cache));
   const priv = new Set<string>();
   const sensitive = new Set<string>();
   for (const id of ids) {
-    const mi = w.get(id);
-    if (!mi) continue;
-    const own = new Set<string>();
-    for (const f of mi.share) for (const t of tokenize(`${f.value} ${f.tags.join(" ")}`)) { shareable.add(t); own.add(t); }
-    for (const t of tokenize(mi.m.name)) shareable.add(t);
-    const mine = new Set<string>();
-    for (const v of mi.privateValues) for (const t of tokenize(v)) mine.add(t);
-    for (const f of mi.match) if (f.scope !== "shareable") for (const t of tokenize(f.tags.join(" "))) mine.add(t);
-    for (const t of mine) { priv.add(t); if (isSensitiveTerm(t) && !own.has(t)) sensitive.add(t); }
+    const mv = memberVocabOf(w, cache, id);
+    if (!mv) continue;
+    for (const t of mv.shareable) shareable.add(t);
+    for (const t of mv.priv) priv.add(t);
+    for (const t of mv.sensitive) sensitive.add(t);
   }
-  for (const e of w.events) for (const t of tokenize(`${e.title} ${e.tags.join(" ")}`)) shareable.add(t);
   for (const t of [...priv]) if (shareable.has(t) || t.length < 4) priv.delete(t);
-  // Pack vocabulary that is never private (slopPack: "date", "dating", pronouns from its facet templates). Absent for networkPack.
   for (const t of w.pack.explain.publicWords ?? []) priv.delete(t);
   for (const t of sensitive) priv.add(t);
   return priv;
@@ -68,18 +118,20 @@ export function explain(w: World, c: Candidate, verdict?: JudgeVerdict | null, d
       // event title or a facet value that carries another participant's private word is dropped.
       if (event && !leaksMemberFacing(event.title, vocab)) bits.push(`It is built around ${event.title}.`);
       if (E.kindBits) bits.push(...E.kindBits(w, c, me));
+      const cache = vocabCacheOf(w);
       for (const o of others.slice(0, 3)) {
         const mo = w.get(o)!;
         const ev = (c.evidence[o] ?? []).map(fid => mo.share.find(f => f.id === fid)).filter((f): f is Facet => !!f);
-        // Fallback: the other person's shareable facet most relevant to me.
-        const q = w.get(me)!.profileEmb;
-        const fallback = mo.share.filter(f => f.kind !== "boundary" && f.kind !== "preference" && f.kind !== "availability_pattern")
-          .map(f => ({ f, s: cosine(q, mo.facetEmb.get(f.id) ?? []) }))
-          .sort((a, b) => (b.s - a.s) || (a.f.id < b.f.id ? -1 : 1))[0]?.f;
-        const f = ev[0] ?? fallback;
-        // The other person's own shareable words are theirs to show; anyone else's private words are not.
-        const ownWords = new Set(mo.share.flatMap(x => tokenize(`${x.value} ${x.tags.join(" ")}`)));
-        const safe = f && !leaksMemberFacing(f.value, new Set([...vocab].filter(t => !ownWords.has(t))));
+        let f = ev[0];
+        if (!f) {
+          const q = w.get(me)!.profileEmb;
+          f = mo.share.filter(x => x.kind !== "boundary" && x.kind !== "preference" && x.kind !== "availability_pattern")
+            .map(x => ({ f: x, s: cosine(q, mo.facetEmb.get(x.id) ?? []) }))
+            .sort((a, b) => (b.s - a.s) || (a.f.id < b.f.id ? -1 : 1))[0]?.f;
+        }
+        const ownWords = memberVocabOf(w, cache, o)?.shareable;
+        const filteredVocab = ownWords ? new Set([...vocab].filter(t => !ownWords.has(t))) : vocab;
+        const safe = f && !leaksMemberFacing(f.value, filteredVocab);
         bits.push(safe && !teenRoster ? phrase(w, mo.m.name, f) : `${mo.m.name} could be a good fit.`);
       }
       if (others.length > 3) bits.push(`Plus ${others.length - 3} more.`);

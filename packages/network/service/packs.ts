@@ -15,7 +15,7 @@
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
 import {
-  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity, toDomainId,
+  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity, timeZoneOf, toDomainId,
   type City, type CityId, type DomainId, type LaunchCity, type MemberId, type MemberVenuePrefs, type VenuePriceTier, type VenueRecord,
 } from "@thenetwork/core";
 import {
@@ -211,7 +211,7 @@ export function datingVenue(
 ): HookVenue | undefined {
   if (!cells.length) return undefined;
   const o: DatingVenueOptions | undefined = Array.isArray(opts) ? { venues: opts } : (opts as DatingVenueOptions | undefined);
-  const timeZone = cityTimezone(city) ?? CITY_TZ.nyc;
+  const timeZone = timeZoneOf(city);
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
   // After dark, a busy, lit public place, never a park or a waterfront.
   const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));

@@ -38,8 +38,6 @@ export class Mini {
 
   constructor(specs: Spec[], opts: NetworkOptions = {}) {
     const city: City = isCity(opts.city) ? opts.city : "nyc";
-    // No engine opportunities unless a test asks for them: flows here are driven explicitly.
-    // The mini world is one market (NYC, or opts.city) unless a test names others.
     this.opts = { seed: 1, inlineJudge: simulatedReviewJudge({ exceptions: false }), maxNewPerDay: 0, ...opts, engine: { cities: [city], ...opts.engine } };
     for (const s of specs) this.add(s);
     this.net = new ConsentNetwork(this.opts);
@@ -58,7 +56,7 @@ export class Mini {
     const now = this.clock.now();
     const city: City = isCity(this.opts.city) ? this.opts.city : "nyc";
     this.members.push({
-      id: s.id, name: s.name, homeCity: city, state: s.state ?? "normal", joinedAt: now, age: s.age as number, unansweredProactive: 0, // a missing age is allowed here (6.3)
+      id: s.id, name: s.name, homeCity: city, state: s.state ?? "normal", joinedAt: now, age: s.age as number, unansweredProactive: 0,
       prefs: { categoriesOptIn: ["social", "hobby", "professional", "events", "growth", "help", ...(s.romance ? ["romance" as const] : [])], quietHours: s.quietHours ?? [21, 9], romanceOptIn: !!s.romance, formats: ["one_to_one", "small_group", "event"], maxTravelMinutes: 45, onlyWhenAsked: false },
     });
     this.presence.push({ memberId: s.id, city, type: "home", areas: [s.area ?? "Williamsburg"] });

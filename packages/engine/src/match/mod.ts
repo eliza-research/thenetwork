@@ -3,7 +3,7 @@ export {
   type EntityId, type EntityStanding, type EntityTags, type MatchEntity, type MatchProfile, type Membership,
   type PackVectors, type TagSet,
 } from "./profile.ts";
-export { eligiblePair, pairSideOf, pairValueOf } from "./pair.ts";
+export { eligiblePair, intersectCount, pairSideOf, pairValueOf } from "./pair.ts";
 export { buildCandidateIndex, partnerBlock, type CandidateBlock, type CandidateIndex, type Postings } from "./index.ts";
 export {
   bruteForceCandidates, emptySearchTally, mutualEdges, searchCandidates, tallySearch,

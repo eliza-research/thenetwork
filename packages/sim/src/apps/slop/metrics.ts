@@ -51,12 +51,7 @@ export interface SlopMetrics {
   };
 }
 
-const topShare = (xs: number[], q = 0.1) => {
-  const v = [...xs].sort((a, b) => b - a), s = v.reduce((a, b) => a + b, 0);
-  return s ? v.slice(0, Math.max(1, Math.round(v.length * q))).reduce((a, b) => a + b, 0) / s : 0;
-};
-const div = (a: number, b: number) => (b ? a / b : 0);
-const median = (xs: number[]) => { if (!xs.length) return null; const s = [...xs].sort((a, b) => a - b); const m = s.length >> 1; return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2; };
+import { medianOrNull as median, safeDiv as div, topShare } from "../../stats.ts";
 const WEEKS_PER_MONTH = 4.345;
 
 export function slopMetrics(res: SlopRunResult): SlopMetrics {

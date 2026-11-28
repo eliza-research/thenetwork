@@ -11,11 +11,11 @@
 import { requirePositiveSimulationValue, requireSimulationCount, requireSimulationShare, simulationNumber, simulationSeed } from "./input.ts";
 import { parseArgs } from "node:util";
 import { resolve } from "node:path";
-import { defaultLLM, judgeLLM } from "@thenetwork/core";
+import { defaultLLM, judgeLLM, type ResponseInfo } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import { formatMetrics } from "./judge/metrics.ts";
 import { judgeMessageQuality, privacyAudit } from "./judge/llmJudges.ts";
-import { LLMPersonaAgent } from "./agent/llmAgent.ts";
+import { LLMPersonaAgent, type LLMUsageSummary } from "./agent/llmAgent.ts";
 import { PolicyPersonaAgent } from "./agent/policy.ts";
 import { generatePersonas } from "./generator.ts";
 import { generateLLMPersonas } from "./llmGenerator.ts";
@@ -113,8 +113,15 @@ if (!a.scenario) {
 }
 
 const engine = await loadEngine();
-const llm = a.llm || a["llm-personas"] ? defaultLLM() : undefined;
-const agent = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined;
+const usageResponses: ResponseInfo[] = [];
+let llmAgentRef: LLMPersonaAgent | undefined;
+const onResponse = (info: ResponseInfo) => {
+  usageResponses.push(info);
+  llmAgentRef?.recordResponse(info);
+};
+const llm = a.llm || a["llm-personas"] ? defaultLLM({ onResponse }) : undefined;
+llmAgentRef = a.llm && llm ? new LLMPersonaAgent(llm, DEFAULT_START) : undefined;
+const agent = llmAgentRef ?? (a["quality-churn"] || a["trip-clock"] ? new PolicyPersonaAgent(DEFAULT_START, { qualityChurn: a["quality-churn"], tripClock: a["trip-clock"] }) : undefined);
 
 if (a.scenario) {
   const s = await loadScenario(a.scenario);
@@ -145,10 +152,21 @@ const res = await runWorld({
   onDay: d => { if (!a.json) process.stderr.write(`  day ${d}/${days}\r`); },
 });
 if (!a.json) process.stderr.write("\n");
+const llmUsage: LLMUsageSummary | undefined = llmAgentRef ? llmAgentRef.usageSummary() : usageResponses.length ? {
+  calls: usageResponses.length,
+  failures: usageResponses.filter(r => !r.ok).length,
+  promptTokens: usageResponses.reduce((s, r) => s + r.usage.promptTokens, 0),
+  completionTokens: usageResponses.reduce((s, r) => s + r.usage.completionTokens, 0),
+  reasoningTokens: usageResponses.reduce((s, r) => s + r.usage.reasoningTokens, 0),
+  costMicro: usageResponses.reduce((s, r) => s + r.costMicro, 0),
+  totalLatencyMs: Math.round(usageResponses.reduce((s, r) => s + r.latencyMs, 0)),
+  meanLatencyMs: Math.round(usageResponses.reduce((s, r) => s + r.latencyMs, 0) / usageResponses.length),
+} : undefined;
+if (llmUsage) res.metrics.llmUsage = llmUsage;
 if (a.json) console.log(JSON.stringify(res.metrics, null, 2));
 else {
   console.log(formatMetrics(res.metrics));
-  console.log(`\nsim events=${res.events} wall=${res.wallMs}ms${agent ? ` llmCalls=${(agent as LLMPersonaAgent).calls} llmFailures=${(agent as LLMPersonaAgent).failures}` : ""}`);
+  console.log(`\nsim events=${res.events} wall=${res.wallMs}ms${llmUsage ? ` llmCalls=${llmUsage.calls} llmFailures=${llmUsage.failures} promptTok=${llmUsage.promptTokens} compTok=${llmUsage.completionTokens} reasonTok=${llmUsage.reasoningTokens} costUsd=$${(llmUsage.costMicro / 1e6).toFixed(4)} meanLatMs=${llmUsage.meanLatencyMs}` : ""}`);
   if (res.dir) console.log(`run log: ${res.dir}`);
 }
 if (judgeCount !== undefined) await judgeRun(res.records, judgeCount);
