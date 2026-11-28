@@ -13,7 +13,7 @@ import { Mini, type Spec } from "./mini.ts";
 import { holdEveryItem } from "../../engine/src/reviewJudge.ts";
 
 test.skipIf(!pgAvailable).each([
-  "current", "peer availability changed", "receipt replaced", "message changed", "message missing", "review revised", "unpicked slot", "deadline reached",
+  "current", "away before slots", "peer availability changed", "receipt replaced", "message changed", "message missing", "review revised", "unpicked slot", "deadline reached",
 ] as const)(
   "a queued Friends partner probe rechecks the exact reviewed options (%s)", async scenario => {
     const url = await migratedDb("friends_plan_probe_claim");
@@ -92,13 +92,17 @@ test.skipIf(!pgAvailable).each([
         if (scenario === "unpicked slot") current.opps.find(o => o.id === oppId)!.picks![first] = [slots[0]!.start];
         net.importState(current);
       });
+      if (scenario === "away before slots") {
+        await sql`insert into network.presence (app_id, member_id, city, type, from_at, to_at)
+          values (${app.id}, ${second}, 'chicago', 'temporary', ${new Date(now + DAY)}, ${new Date(now + 3 * DAY)})`;
+      }
       if (scenario === "message changed") await sql`update network.messages set body='A different question' where app_id=${app.id} and id=${deliveryId}`;
       if (scenario === "message missing") await sql`delete from network.messages where app_id=${app.id} and id=${deliveryId}`;
       await adapter.queue.setLineSafety(undefined);
       clock.advance(HOUR);
       await rt.deliver();
       await rt.deliver();
-      const sent = scenario === "current";
+      const sent = scenario === "current" || scenario === "away before slots";
       expect(await adapter.queue.statusOf(deliveryId)).toBe(sent ? "sent" : "suppressed_ineligible");
       expect(calls.filter(call => call.idempotencyKey === `tn:${deliveryId}`)).toHaveLength(sent ? 1 : 0);
     } finally {

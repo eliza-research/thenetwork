@@ -7529,7 +7529,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     const item = this.opps.get(oppId);
     return !!venue && slot.start >= now + PARTNER_LEAD && duration > 0 && (!item || this.teenSlotAllowed(item, slot, venue.id))
       && plans.venueOpenForSlot(venue, slot, duration, this.cityTz())
-      && roster.every(id => this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start, oppId)
+      && roster.every(id => this.inNyc(id, slot.start, slot.end) && !this.bookedNear(id, slot.start, oppId)
         && plans.planWindowMatchesStated(this.member(id).stated, slot, now))
       && this.calendarAllows(roster, slot, now);
   }
@@ -7613,7 +7613,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     if (duration <= 0 || !plans.venueOpenForSlot(venue, slot, duration, this.cityTz())) return false;
     return roster.every(id => {
       const evidence = this.planEvidence(this.member(id), now);
-      return this.inNyc(id, now, slot.end) && !this.bookedNear(id, slot.start)
+      return this.inNyc(id, slot.start, slot.end) && !this.bookedNear(id, slot.start)
         && plans.hasWindow(evidence, slot, now, this.pcfg) > 0;
     });
   }
@@ -7808,7 +7808,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       first === id ? undefined : first && o.planRun.answers[first] === "yes" ? this.pickedPlanWindows(o, first) : [],
       slot => this.friendsPlanSlotCurrent(o.plan!, about, slot, now, o.id)), tz) : undefined;
     // The options path already checked presence and availability for each exact interval.
-    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: !!options || this.inNyc(id, now, o.plan.window.end) });
+    const inviteDeadline = o.stage === "scheduled" ? o.plan.window.start - this.pcfg.lateJoinHours * HOUR : o.plan.probeDeadline;
+    const presence = stepPlanDispatch(seat, { type: "checkPresence", present: (!!options || this.inNyc(id, o.plan.window.start, o.plan.window.end)) && this.presentBefore(id, now, inviteDeadline) });
     if (presence.phase !== "CheckingAvailability") {
       this.refuse(id, "probe", presence.reason);
       return this.planAnswer(o, id, false, true);
@@ -7823,7 +7824,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // In another open opportunity: the plan probe waits (one open question at a time) until the deadline.
     // spec/planDispatch.md, "Wait for the send window, earlier questions, and the right allowance"
     const busy = this.busy(m.id, o.id);
-    const windowOpen = !busy && this.timingOk(m, "slot", now);
+    const windowOpen = !busy && this.inNyc(id, now, now + 1) && this.timingOk(m, "slot", now);
     const awaitingAnswer = windowOpen && (m.awaiting?.kind === "probe" || m.awaiting?.kind === "booked" || this.questionHoldUntil(m, now) !== undefined);
     const day = windowOpen && !awaitingAnswer ? localDateParts(now, tz).day : undefined;
     const window = stepPlanDispatch(availability, { type: "checkWindow", busy, windowOpen, awaitingAnswer, sentToday: day !== undefined && m.planDay === day });
@@ -8304,7 +8305,7 @@ export class ConsentNetwork implements NetworkUnderTest {
   private crewWindowAvailable(member: MemberState, slot: attention.TimeSlot, now: number): boolean {
     const statedAllows = plans.planWindowMatchesStated(member.stated, slot, now);
     // spec/crewOffer.md, "A new recurring session needs a currently usable time"
-    return crewMemberWindowAvailable(this.inNyc(member.id, now, slot.end), !this.bookedNear(member.id, slot.start), statedAllows);
+    return crewMemberWindowAvailable(this.inNyc(member.id, slot.start, slot.end), !this.bookedNear(member.id, slot.start), statedAllows);
   }
 
   /**
@@ -10740,6 +10741,19 @@ export class ConsentNetwork implements NetworkUnderTest {
   /** Is the member in the network's city for all of [from, to]? Announced trips elsewhere say no. */
   inNyc(id: MemberId, from: number, to: number): boolean {
     return this.inCity(id, from, to, this.networkCity());
+  }
+  private presentBefore(id: MemberId, from: number, deadline: number): boolean {
+    if (from >= deadline) return false;
+    const rows = this.snapshotRows();
+    const own = rows.presence.get(id) ?? [];
+    const starts = new Set<number>([from]);
+    for (const p of own) {
+      const trip = temporaryPresenceWindow(p);
+      if (!trip) continue;
+      if (trip.from > from && trip.from < deadline) starts.add(trip.from);
+      if (trip.to > from && trip.to < deadline) starts.add(trip.to);
+    }
+    return [...starts].some(t => presentFor(rows.byId.get(id), own, t, t + 1, this.networkCity()));
   }
   private snapCache?: { at: number; snap: WorldSnapshot };
   /** The public snapshot, rebuilt at most every 20 sim minutes or when something we learned changed. */

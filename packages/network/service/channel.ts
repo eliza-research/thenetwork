@@ -332,7 +332,7 @@ function claimPresent(presence: ClaimPresence, id: MemberId, from: number, to: n
 }
 
 /** A previously rendered offer can only go out with the exact, still-permitted choices. */
-function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactMessage: boolean, now: number, slotPresent: (slot: { end: number }) => boolean): RecipientCheck {
+function reviewedFriendPlanProbe(current: StoredPlanProbe, row: QueueRow, exactMessage: boolean, now: number, slotPresent: (slot: { start: number; end: number }) => boolean): RecipientCheck {
   const refused = { ok: false, reason: "plan_probe_changed" } as const;
   const invited = Array.isArray(current.invited) ? current.invited : [];
   const [first, second] = invited;
@@ -441,11 +441,13 @@ async function probeAdmission(tx: SQL, row: QueueRow, rt: NetworkRuntime, now: n
     if (!reviewedKey || !current.reviewed_offer) return refused;
     const presence = await claimPresence(tx, row.app, [row.memberId, ...(current.peer_id ? [current.peer_id] : [])]);
     return reviewedFriendPlanProbe(current, row, probe.exact_message === true, now,
-      slot => claimPresent(presence, row.memberId!, now, slot.end, city)
-        && (!current.peer_id || claimPresent(presence, current.peer_id, now, slot.end, city)));
+      slot => claimPresent(presence, row.memberId!, now, now + 1, city)
+        && claimPresent(presence, row.memberId!, slot.start, slot.end, city)
+        && (!current.peer_id || claimPresent(presence, current.peer_id, slot.start, slot.end, city)));
   }
   const presence = await claimPresence(tx, row.app, [row.memberId]);
-  if (!claimPresent(presence, row.memberId, now, current.activity_window.end, city)) {
+  if (!claimPresent(presence, row.memberId, now, now + 1, city)
+    || !claimPresent(presence, row.memberId, current.activity_window.start, current.activity_window.end, city)) {
     return { ok: false, reason: "plan_availability_changed" };
   }
   return plans.planWindowMatchesStated(current.stated ?? undefined, current.activity_window, now)
