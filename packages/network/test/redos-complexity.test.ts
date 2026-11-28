@@ -43,3 +43,28 @@ describe("inbound-text regexes on adversarial repeats", () => {
     expect(ms).toBeLessThan(3000);
   }, 30_000);
 });
+
+describe("probe reply parsing on mention-dense repeats", () => {
+  const options = [
+    { key: "a", start: Date.UTC(2026, 11, 4, 15), end: Date.UTC(2026, 11, 4, 16), label: "Friday 3pm" },
+    { key: "b", start: Date.UTC(2026, 11, 5, 15), end: Date.UTC(2026, 11, 5, 16), label: "Saturday 3pm" },
+  ];
+
+  test("repeated bare clock mentions stay fast and read the same", () => {
+    const unit = "maybe 3pm or 4pm ";
+    const t0 = performance.now();
+    const r = parseProbeReply(unit.repeat(3200), options as never);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply(unit, options as never));
+    expect(ms).toBeLessThan(10000);
+  }, 60_000);
+
+  test("repeated weekday mentions stay fast and read the same", () => {
+    const unit = "friday saturday sunday monday ";
+    const t0 = performance.now();
+    const r = parseProbeReply(unit.repeat(3200), options as never);
+    const ms = performance.now() - t0;
+    expect(r).toEqual(parseProbeReply(unit, options as never));
+    expect(ms).toBeLessThan(10000);
+  }, 60_000);
+});
