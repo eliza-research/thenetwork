@@ -179,7 +179,7 @@ pnpm run sites:dev            # the four sites only, /api/* proxied to :8790
 - Never set `NETWORK_CHANNEL` locally. It alone makes sends real, for every app; without it every send is dry-run.
 - The local dev Postgres for the Observatory is on port **54339**. Do not touch port 54329; another tool uses it.
 - `apps/observatory/db/seed.ts` refuses non-local hosts. Do not pass `--allow-remote` unless a human asks.
-- Cloudflare work for ntwrk.party goes through `scripts/wrangler.sh` only. It refuses `deploy` (except `--dry-run`) and other commands that change Cloudflare resources unless `NTWRK_ALLOW_DEPLOY=1` is set. Do not set it without the founder's approval.
+- Cloudflare deploys and local `workerd` runtime use [Alchemy v2](.agents/skills/alchemy/SKILL.md) (`alchemy.run.ts`, `pnpm run dev:cf`, `pnpm run deploy:plan`, `pnpm run deploy`, `pnpm run test:deploy`). Direct Wrangler invocations go through `scripts/wrangler.sh`. Both refuse mutating Cloudflare changes unless `NTWRK_ALLOW_DEPLOY=1` is set with founder approval.
 
 ## Results
 
@@ -212,6 +212,7 @@ repository skill discovery can read these files directly.
 | [Shell](.agents/skills/shell/SKILL.md) | Designing an effectful boundary, including input decoding, storage, retries, and the Vibestack Machine adapter |
 | [Prove](.agents/skills/prove/SKILL.md) | Writing a proof file or a `//@` contract, or working on a failed proof |
 | [Design](.agents/skills/design/SKILL.md) | Making an approved change to anything a person sees |
+| [Alchemy](.agents/skills/alchemy/SKILL.md) | Configuring `alchemy.run.ts`, running local `workerd` dev/tests (`pnpm run dev:cf`, `pnpm run test:deploy`), deploying to Cloudflare, or writing deployment CI workflows |
 | [Bug review](.agents/skills/bug-review/SKILL.md) | Finishing an application, feature, or non-trivial PR: parallel review for bugs, leaks, state/rendering issues, inefficiencies, and code smells past `pnpm run check` |
 | [Architect](.agents/skills/architect/SKILL.md), [arena](.agents/skills/arena/SKILL.md), and [why](.agents/skills/why/SKILL.md) | Comparing designs or changing existing ownership |
 | [Benchmark checklist](.agents/skills/benchmark-checklist/SKILL.md) | Measuring performance |
@@ -228,7 +229,10 @@ The application, tests, and vendored Vibestack toolchain use Node 26
 and pnpm. Use the Node patch version in `.nvmrc`. Pure rules, transitions and
 validation types come from Quint. Existing services consume its generated
 TypeScript at their boundaries. Backend health, shutdown, and alert
-dispatch use compiled VibeLang shells. The public sites, connector authorization, and staff console use React 19
+dispatch use compiled VibeLang shells. Cloudflare edge routing, Pages projects,
+Observatory Container Worker, R2 buckets, and offline `workerd` deploy tests
+(`pnpm run test:deploy`) use [Alchemy v2](.agents/skills/alchemy/SKILL.md)
+(`alchemy.run.ts`) alongside the Railway backend. The public sites, connector authorization, and staff console use React 19
 and the shared design system. Put brand tokens in `packages/design-system`
 and shared components in `packages/ui`. Each brand sets `data-brand` on
 an ancestor. Use the existing theme classes and token utilities.
