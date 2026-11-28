@@ -705,10 +705,42 @@ export async function engineReportMinorsGate(b: Block): Promise<void> {
   });
 }
 
+export async function hiddenKeysLeakGate(b: Block): Promise<void> {
+  await b.run("synthetic validate: a hidden-only key in a public file fails the privacy split check", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const root = `${import.meta.dirname}/../..`;
+    const dir = fs.mkdtempSync(`${os.tmpdir()}/hidden-keys-`);
+    const check = (key: string | undefined) => {
+      const copy = `${dir}/${key ?? "clean"}`;
+      fs.cpSync(DATA_DIR, copy, { recursive: true });
+      if (key !== undefined) {
+        const file = `${copy}/members.jsonl`;
+        const lines = fs.readFileSync(file, "utf8").split("\n");
+        lines[0] = JSON.stringify({ ...JSON.parse(lines[0]!), [key]: "x" });
+        fs.writeFileSync(file, lines.join("\n"));
+      }
+      const out = `${copy}/result.json`;
+      spawnProcessSync([
+        process.execPath, "--import", "tsx", "scripts/synthetic/validate.ts", "--dir", copy, "--out", out,
+      ], { cwd: root, stdout: "pipe", stderr: "pipe" });
+      const report = JSON.parse(fs.readFileSync(out, "utf8"));
+      return report.checks.find((c: { name: string }) => c.name === "canaries_agent_private_and_hidden_split").pass as boolean;
+    };
+    try {
+      expect(check(undefined)).toBe(true);
+      for (const key of ["trueAge", "gender", "workplace", "personaPublic"]) expect([key, check(key)]).toEqual([key, false]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 export async function networkBlock(b: Block, o: { quick: boolean }): Promise<void> {
   await scenarioRepetitionGate(b);
   await generatorDryRunGate(b);
   await engineReportMinorsGate(b);
+  await hiddenKeysLeakGate(b);
   await scenarioAttendanceEvidenceGates(b);
   await scenarioContactEvidenceGates(b);
   await inviteRootGate(b);
