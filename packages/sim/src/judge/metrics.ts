@@ -638,10 +638,11 @@ export function computeMetrics(records: RunRecord[], opts: MetricsOptions = {}):
       for (const x of oppMembers.get(oppId) ?? []) if (x !== to && !hasAccepted(x, oppId) && names.namesScoped(m.body, x))
         violate("name_before_reveal", `${m.id} to ${to} names ${x} before ${x} said yes to ${oppId}`);
     }
+    const declineBody = m.body.replace(/\bif you\b[^.!?]{0,30}\bcan'?t make\b/gi, "");
     for (const [opp, ds] of decliners) for (const x of ds) {
       if (x === to) continue;
       const inThis = opp === oppId && names.namesScoped(m.body, x);
-      const declineTalk = named.has(x) && DECLINE_WORDS.test(m.body) && (oppMembers.get(opp)?.has(to) ?? false);
+      const declineTalk = named.has(x) && DECLINE_WORDS.test(declineBody) && (oppMembers.get(opp)?.has(to) ?? false);
       if (inThis || declineTalk) violate("decliner_exposed", `${m.id} to ${to} identifies ${x}, who declined ${opp}`);
     }
     const contacts = findContactDetails(m.body);
