@@ -37,7 +37,8 @@ export const meta: ComponentMeta<AuthSignupViewProps> = {
       await expect(birthday.value).toBe("");
       await expect(canvasElement.querySelector("input[name=age]")).toBeNull();
       await expect(page.getByText(/never match you for dates or for work/)).toBeTruthy();
-      await expect(page.getByText(/today we do not introduce you to anyone/)).toBeTruthy();
+      await expect(page.getByText(/friends\.help and the ntwrk Friend lane/)).toBeTruthy();
+      await expect(page.getByText(/within 2 years/)).toBeTruthy();
       await expect(page.queryByText(/will introduce|we introduce you/i)).toBeNull();
       const hrefs = [...canvasElement.querySelectorAll("a")].map(a => a.getAttribute("href"));
       await expect(hrefs).toEqual(["/", "/terms#sms", "/terms", "/privacy", "/privacy", "/terms"]);

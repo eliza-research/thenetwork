@@ -14,7 +14,7 @@ export interface RouteCheck { phase: AdmissionPhase; decision: Admission }
 /** Story: See only the detail my role permits / The analyst view shows counts and shapes rather than people (spec/staffPermissions.md) */
 export type MemberAccess = "AnyMember" | "OpenReviewMember" | "MemberRefused";
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
-export type StaffStep = "ReadPostings" | "SavePosting" | "ClosePosting" | "VerifyEmployer" | "ReadHomeHelp" | "DecideHomeHelp" | "ReadMemberInvitations" | "DecideMemberInvitation" | "SeedInvitations" | "VerifyMember" | "InviteMember" | "ReadAgentSignals" | "DecideAgentSignal" | "OpenPrivacyRequest" | "ConfirmPrivacyRequest" | "ReplayPrivacy" | "ReadHeldRelay" | "DecideHeldRelay" | "ResolveInboundTurn" | "ReadTurnWatch" | "DecideReviewItem" | "DecideSafetyCase" | "ReadJudgedReviews" | "StopApprovedReview";
+export type StaffStep = "ReadPostings" | "SavePosting" | "ClosePosting" | "VerifyEmployer" | "ReadHomeHelp" | "DecideHomeHelp" | "ReadMemberInvitations" | "DecideMemberInvitation" | "SeedInvitations" | "VerifyMember" | "InviteMember" | "ReadAgentSignals" | "DecideAgentSignal" | "OpenPrivacyRequest" | "ConfirmPrivacyRequest" | "ReplayPrivacy" | "ReadHeldRelay" | "DecideHeldRelay" | "ResolveInboundTurn" | "ReadTurnWatch" | "DecideReviewItem" | "DecideSafetyCase" | "ReadJudgedReviews" | "StopApprovedReview" | "ReadVenues" | "UpdateVenueStatus" | "ReadExternalEvents" | "ReviewExternalEvent" | "ReadMatchmakers" | "UpdateMatchmakerStatus" | "ReadCityOps";
 /** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */
 export type StepActor = "NamedReviewer" | "SharedToken";
 
@@ -154,19 +154,19 @@ export function lawRevealRefusesOneMinute(revealMinutes: number): boolean {
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
 //@ pure
 export function staffStepRoles(staffStep: StaffStep): string[] {
-  return staffStep === "ReadPostings" ? (["reviewer"] as string[]) : staffStep === "SavePosting" ? (["admin"] as string[]) : staffStep === "ClosePosting" ? (["admin"] as string[]) : staffStep === "VerifyEmployer" ? (["admin"] as string[]) : staffStep === "ReadHomeHelp" ? (["safety"] as string[]) : staffStep === "DecideHomeHelp" ? (["safety"] as string[]) : staffStep === "ReadMemberInvitations" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideMemberInvitation" ? (["reviewer", "safety"] as string[]) : staffStep === "SeedInvitations" ? (["admin"] as string[]) : staffStep === "VerifyMember" ? (["safety"] as string[]) : staffStep === "InviteMember" ? (["admin"] as string[]) : staffStep === "ReadAgentSignals" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideAgentSignal" ? (["safety"] as string[]) : staffStep === "OpenPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ConfirmPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ReplayPrivacy" ? (["admin"] as string[]) : staffStep === "ReadHeldRelay" ? (["safety"] as string[]) : staffStep === "DecideHeldRelay" ? (["safety"] as string[]) : staffStep === "ResolveInboundTurn" ? (["admin"] as string[]) : staffStep === "ReadTurnWatch" ? (["admin"] as string[]) : staffStep === "DecideReviewItem" ? (["reviewer"] as string[]) : staffStep === "DecideSafetyCase" ? (["safety"] as string[]) : staffStep === "ReadJudgedReviews" ? (["reviewer", "safety"] as string[]) : (["reviewer", "safety"] as string[]);
+  return staffStep === "ReadPostings" ? (["reviewer"] as string[]) : staffStep === "SavePosting" ? (["admin"] as string[]) : staffStep === "ClosePosting" ? (["admin"] as string[]) : staffStep === "VerifyEmployer" ? (["admin"] as string[]) : staffStep === "ReadHomeHelp" ? (["safety"] as string[]) : staffStep === "DecideHomeHelp" ? (["safety"] as string[]) : staffStep === "ReadMemberInvitations" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideMemberInvitation" ? (["reviewer", "safety"] as string[]) : staffStep === "SeedInvitations" ? (["admin"] as string[]) : staffStep === "VerifyMember" ? (["safety"] as string[]) : staffStep === "InviteMember" ? (["admin"] as string[]) : staffStep === "ReadAgentSignals" ? (["reviewer", "safety"] as string[]) : staffStep === "DecideAgentSignal" ? (["safety"] as string[]) : staffStep === "OpenPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ConfirmPrivacyRequest" ? (["admin"] as string[]) : staffStep === "ReplayPrivacy" ? (["admin"] as string[]) : staffStep === "ReadHeldRelay" ? (["safety"] as string[]) : staffStep === "DecideHeldRelay" ? (["safety"] as string[]) : staffStep === "ResolveInboundTurn" ? (["admin"] as string[]) : staffStep === "ReadTurnWatch" ? (["admin"] as string[]) : staffStep === "DecideReviewItem" ? (["reviewer"] as string[]) : staffStep === "DecideSafetyCase" ? (["safety"] as string[]) : staffStep === "ReadJudgedReviews" ? (["reviewer", "safety"] as string[]) : staffStep === "StopApprovedReview" ? (["reviewer", "safety"] as string[]) : staffStep === "ReadVenues" ? (["safety"] as string[]) : staffStep === "UpdateVenueStatus" ? (["safety"] as string[]) : staffStep === "ReadExternalEvents" ? (["reviewer"] as string[]) : staffStep === "ReviewExternalEvent" ? (["reviewer"] as string[]) : staffStep === "ReadMatchmakers" ? (["safety"] as string[]) : staffStep === "UpdateMatchmakerStatus" ? (["safety"] as string[]) : (["admin"] as string[]);
 }
 
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
 //@ pure
 export function staffStepEveryApp(staffStep: StaffStep): boolean {
-  return staffStep === "OpenPrivacyRequest" ? true : staffStep === "ConfirmPrivacyRequest" ? true : staffStep === "ReplayPrivacy" ? true : staffStep === "ResolveInboundTurn" ? true : staffStep === "ReadTurnWatch" ? true : false;
+  return staffStep === "OpenPrivacyRequest" ? true : staffStep === "ConfirmPrivacyRequest" ? true : staffStep === "ReplayPrivacy" ? true : staffStep === "ResolveInboundTurn" ? true : staffStep === "ReadTurnWatch" ? true : staffStep === "ReadCityOps" ? true : false;
 }
 
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
 //@ pure
 export function staffStepOffered(staffStep: StaffStep, appName: string): boolean {
-  return staffStep === "ReadPostings" ? appName === "peon" : staffStep === "SavePosting" ? appName === "peon" : staffStep === "ClosePosting" ? appName === "peon" : staffStep === "VerifyEmployer" ? appName === "peon" : true;
+  return staffStep === "ReadPostings" ? appName === "peon" : staffStep === "SavePosting" ? appName === "peon" : staffStep === "ClosePosting" ? appName === "peon" : staffStep === "VerifyEmployer" ? appName === "peon" : staffStep === "ReadMatchmakers" ? appName !== "peon" : staffStep === "UpdateMatchmakerStatus" ? appName !== "peon" : true;
 }
 
 /** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
@@ -194,6 +194,13 @@ export function lawStepWithoutAppRoleRefused(staffStep: StaffStep, appName: stri
 export function lawEmployerVerificationOnlyOnPeon(appName: string, appRoles: string[], globalRoles: string[]): boolean {
   //@ ensures \result === true
   return !staffStepAdmitted("VerifyEmployer", appName, appRoles, globalRoles) || appName === "peon";
+}
+
+/** Story: Take a gate or safety step in the console as myself / Each console staff step needs the role that its staff route needs (spec/staffPermissions.md) */
+//@ pure
+export function lawMatchmakerStepsRefusedOnPeon(appRoles: string[], globalRoles: string[]): boolean {
+  //@ ensures \result === true
+  return !staffStepAdmitted("ReadMatchmakers", "peon", appRoles, globalRoles) && !staffStepAdmitted("UpdateMatchmakerStatus", "peon", appRoles, globalRoles);
 }
 
 /** Story: Take a gate or safety step in the console as myself / The staff API takes a step that needs a person only from a named person (spec/staffPermissions.md) */

@@ -129,6 +129,7 @@ create table if not exists marketing.humans (
   city                 text not null default 'nyc',
   neighborhood         text,
   email                text,
+  phone_hash           text,
   handle               text,
   profile_url          text,
   age_years            smallint check (age_years is null or (age_years >= 0 and age_years <= 120)),
@@ -156,6 +157,10 @@ create index if not exists marketing_humans_stopped_idx
   on marketing.humans (stopped) where stopped = true;
 create index if not exists marketing_humans_banned_idx
   on marketing.humans (banned) where banned = true;
+alter table marketing.humans
+  add column if not exists phone_hash text;
+create index if not exists marketing_humans_phone_hash_idx
+  on marketing.humans (phone_hash) where phone_hash is not null;
 
 -- 6. Tasks (street fliering shifts, event activations, creator videos, agency bookings, print orders, OSS dev bounties)
 create table if not exists marketing.tasks (
@@ -643,6 +648,169 @@ begin
   end if;
 end $$;
 
+-- Pass 4: Apollo enrichment cache, credit ledger, 10-platform interactions, and quality intake tables (idempotent)
+create table if not exists marketing.enrichment_cache (
+  cache_key      text primary key check (length(btrim(cache_key)) > 0),
+  provider       text not null default 'apollo' check (length(btrim(provider)) > 0),
+  operation      text not null check (operation in ('people_search', 'people_match', 'org_enrich')),
+  contact_hash   text,
+  payload        jsonb not null default '{}'::jsonb,
+  verified_email boolean not null default false,
+  credits_spent  integer not null default 0 check (credits_spent >= 0),
+  fetched_at     timestamptz not null default now(),
+  expires_at     timestamptz not null
+);
+create index if not exists idx_enrichment_cache_contact_hash
+  on marketing.enrichment_cache (contact_hash) where contact_hash is not null;
+create index if not exists idx_enrichment_cache_expires_at
+  on marketing.enrichment_cache (expires_at);
+
+create table if not exists marketing.apollo_credit_ledger (
+  id              bigserial primary key,
+  campaign_id     text references marketing.campaigns (id) on delete set null,
+  operation       text not null check (operation in ('people_search', 'people_match', 'people_bulk_match', 'org_enrich')),
+  credits         integer not null default 0 check (credits >= 0),
+  cost_cents      integer not null default 0 check (cost_cents >= 0),
+  cache_hit       boolean not null default false,
+  dry_run         boolean not null default true,
+  idempotency_key text not null unique check (length(btrim(idempotency_key)) > 0),
+  created_at      timestamptz not null default now()
+);
+create index if not exists idx_apollo_credit_ledger_created
+  on marketing.apollo_credit_ledger (created_at desc);
+
+create table if not exists marketing.platform_interactions (
+  id                 text primary key default gen_random_uuid()::text,
+  campaign_id        text references marketing.campaigns (id) on delete set null,
+  platform           text not null
+                     check (platform in ('reddit', 'x', 'linkedin', 'tinder', 'bumble', 'hinge', 'meetup', 'eventbrite', 'luma', 'partiful', 'email')),
+  channel_account_id text references marketing.channels_and_accounts (id) on delete set null,
+  contact_hash       text not null check (length(btrim(contact_hash)) > 0),
+  direction          text not null default 'outbound' check (direction in ('outbound', 'inbound')),
+  interaction_kind   text not null check (length(btrim(interaction_kind)) > 0),
+  report_risk_score  smallint not null default 0 check (report_risk_score between 0 and 100),
+  outcome            text not null default 'sent'
+                     check (outcome in ('dry_run', 'sent', 'replied_positive', 'declined', 'unmatched', 'stopped', 'reported', 'blocked_risk', 'blocked_policy')),
+  created_at         timestamptz not null default now()
+);
+create index if not exists idx_platform_interactions_platform_created
+  on marketing.platform_interactions (platform, channel_account_id, created_at desc);
+create index if not exists idx_platform_interactions_contact
+  on marketing.platform_interactions (contact_hash, created_at desc);
+
+create table if not exists marketing.intake_candidates (
+  id                       text primary key default gen_random_uuid()::text,
+  campaign_id              text references marketing.campaigns (id) on delete set null,
+  city                     text not null default 'nyc',
+  target_app_id            text not null check (target_app_id in ('slop', 'peon', 'friends', 'ntwrk')),
+  desire_lane              text,
+  source_platform          text not null check (length(btrim(source_platform)) > 0),
+  contact_hash             text not null unique check (length(btrim(contact_hash)) > 0),
+  stated_age               smallint check (stated_age is null or (stated_age between 0 and 120)),
+  quality_score            smallint not null default 0 check (quality_score between 0 and 100),
+  score_breakdown          jsonb not null default '{}'::jsonb,
+  value_delivered          boolean not null default false,
+  explicit_positive_signal boolean not null default false,
+  invite_attempts          smallint not null default 0 check (invite_attempts >= 0),
+  status                   text not null default 'spotted'
+                           check (status in ('spotted', 'value_delivered', 'qualified', 'invited', 'admitted', 'rejected_slop', 'suppressed')),
+  created_at               timestamptz not null default now(),
+  updated_at               timestamptz not null default now()
+);
+create index if not exists idx_intake_candidates_campaign_status
+  on marketing.intake_candidates (campaign_id, status, quality_score desc);
+
+-- Pass 4 idempotent CHECK constraint upgrades for 10 canonical platforms, apollo source, city_packs stages, and touchpoint surfaces
+do $$
+declare
+  v_con text;
+  v_def text;
+begin
+  select c.conname, pg_get_constraintdef(c.oid) into v_con, v_def
+  from pg_constraint c
+  where c.conrelid = to_regclass('marketing.channels_and_accounts')
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%platform%';
+  if v_con is not null and v_def not like '%partiful%' then
+    execute format('alter table marketing.channels_and_accounts drop constraint %I', v_con);
+    alter table marketing.channels_and_accounts
+      add constraint chk_channels_platform check (
+        platform in (
+          'x', 'instagram', 'tiktok', 'youtube', 'reddit', 'linkedin',
+          'tinder', 'bumble', 'hinge', 'meetup', 'eventbrite', 'luma', 'partiful',
+          'email', 'craigslist', 'rentahuman', 'backstage', 'trusted_herd',
+          'collabstr', 'passionfroot', 'dub', 'print', 'venue', 'sms_opted_in', 'apollo', 'other'
+        )
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_con, v_def
+  from pg_constraint c
+  where c.conrelid = to_regclass('marketing.humans')
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%source_channel%';
+  if v_con is not null and v_def not like '%apollo%' then
+    execute format('alter table marketing.humans drop constraint %I', v_con);
+    alter table marketing.humans
+      add constraint chk_humans_source_channel check (
+        source_channel in (
+          'craigslist', 'rentahuman', 'backstage', 'trusted_herd', 'collabstr', 'passionfroot',
+          'agency_email', 'youtube', 'tiktok', 'instagram', 'x', 'reddit', 'linkedin',
+          'tinder', 'bumble', 'hinge', 'meetup', 'eventbrite', 'luma', 'partiful',
+          'apollo', 'nyc_open_data', 'nys_sla', 'hn', 'github', 'arxiv', 'email',
+          'venue', 'sms_opted_in', 'referral', 'other'
+        )
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_con, v_def
+  from pg_constraint c
+  where c.conrelid = to_regclass('marketing.outreach_messages')
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%channel%';
+  if v_con is not null and v_def not like '%partiful%' then
+    execute format('alter table marketing.outreach_messages drop constraint %I', v_con);
+    alter table marketing.outreach_messages
+      add constraint chk_outreach_channel check (
+        channel in (
+          'email', 'craigslist', 'craigslist_relay', 'rentahuman', 'backstage', 'collabstr',
+          'passionfroot', 'youtube', 'tiktok', 'instagram', 'x', 'x_dm', 'ig_dm',
+          'reddit', 'linkedin', 'tinder', 'bumble', 'hinge', 'meetup', 'eventbrite', 'luma', 'partiful',
+          'venue', 'sms_opted_in', 'eliza_deliver', 'other'
+        )
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_con, v_def
+  from pg_constraint c
+  where c.conrelid = to_regclass('marketing.contact_touchpoints')
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%surface%';
+  if v_con is not null and v_def not like '%platform%' then
+    execute format('alter table marketing.contact_touchpoints drop constraint %I', v_con);
+    alter table marketing.contact_touchpoints
+      add constraint chk_contact_touchpoints_surface check (
+        surface in ('outreach', 'vip', 'bd', 'agent', 'platform', 'intake')
+      );
+  end if;
+
+  select c.conname, pg_get_constraintdef(c.oid) into v_con, v_def
+  from pg_constraint c
+  where c.conrelid = to_regclass('marketing.city_packs')
+    and c.contype = 'c'
+    and pg_get_constraintdef(c.oid) like '%stage%';
+  if v_con is not null and v_def not like '%waitlist_kindling%' then
+    execute format('alter table marketing.city_packs drop constraint %I', v_con);
+    alter table marketing.city_packs
+      add constraint chk_city_packs_stage check (
+        stage in (
+          'scout', 'seed_waitlist', 'soft_launch', 'density_growth', 'mature',
+          'researching', 'waitlist_kindling', 'liquidity_seeding', 'live_matching', 'scaling'
+        )
+      );
+  end if;
+end $$;
+
 -- Guarded least-privilege SECURITY DEFINER bridge RPCs inside marketing schema (Pass 3).
 -- Only created/updated when shared platform.* + network.* tables exist AND caller holds owner role.
 do $$
@@ -702,6 +870,25 @@ begin
       if v_hash is not null then
         v_banned := exists (select 1 from platform.bans b where b.phone_hash = v_hash)
           or exists (select 1 from platform.suppression s where s.phone_hash = v_hash);
+      end if;
+
+      if v_hash is not null and to_regclass('platform.external_prospect_suppressions') is not null then
+        declare
+          v_ext_reason text := null;
+        begin
+          execute 'select reason from platform.external_prospect_suppressions where (dedupe_hash = $1 or phone_hash = $1) and (permanent = true or suppress_until is null or suppress_until > now()) limit 1'
+            into v_ext_reason
+            using v_hash;
+          if v_ext_reason is not null then
+            if v_ext_reason = 'underage' then
+              v_minor := true;
+            elsif v_ext_reason = 'stopped' then
+              v_stopped := true;
+            else
+              v_banned := true;
+            end if;
+          end if;
+        end;
       end if;
 
       if not v_banned and v_e164 is not null then

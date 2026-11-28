@@ -157,17 +157,17 @@ export function parsePosting(body: string): PostingDraft {
     d.area = area ? slug(area) : "";
     if (area) {
       const resolved = resolveCity(area);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     }
   } else {
     const area = AREAS.find(a => lower.includes(` ${a} `));
     if (area) {
       d.area = slug(area);
       const resolved = resolveCity(area);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     } else {
       const resolved = resolveCity(t);
-      if (resolved) d.city = resolved;
+      if (resolved && isCity(resolved)) d.city = resolved;
     }
   }
   const list = (s: string) => s.split(/,|\band\b|\/|;/i).map(x => x.trim().toLowerCase()).filter(x => x && x.length <= 40 && !/^(?:a|an|the|some)$/.test(x));
@@ -562,6 +562,12 @@ export const SEAT_COPY = {
     `Confirmed: you and ${other} are set for a cofounder video intro on ${when}. Reply here if you need to reschedule.`,
   cofounderRelayIntro: (other: string) =>
     `Good news: you and ${other} both said yes to a cofounder intro. Write here and I'll pass it on, or ask me to share your number.`,
+  workWarmEmailIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to an intro. I sent a warm email intro so you can take it from there.`,
+  workVideoSlotIntro: (other: string, when: string) =>
+    `Confirmed: you and ${other} are set for a video intro on ${when}. Reply here if you need to reschedule.`,
+  workRelayIntro: (other: string) =>
+    `Good news: you and ${other} both said yes to an intro. Write here and I'll pass it on, or ask me to share your number.`,
   workBounceCheck: (j: SeatJob, other: string) =>
     `Quick check: did the intro with ${other} about ${j.title} come through cleanly?`,
   workOutcomeCheckIn: (j: SeatJob, other: string) =>

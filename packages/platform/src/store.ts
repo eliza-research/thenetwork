@@ -9,7 +9,7 @@ import { lockedPhoneMoveAllowed, pendingWindowOpen } from "../../core/src/genera
 import { appLeaveBindingCurrent, appLeaveMemberCurrent, hasAgeToPreserve, phoneErasureAllowed } from "../../core/src/generated/accountPrivacy.ts";
 import { includeLockedBanPhone, staffBanEnrollmentAllowed } from "../../core/src/generated/staffSafetyService.ts";
 import { unboundSessionEnds, unboundSessionTakesNewPerson } from "../../core/src/generated/webSession.ts";
-import type { AppId } from "./apps.ts";
+import { APP_TO_DOMAIN, DOMAIN_IDS, DOMAIN_TO_APP, type AppId, type DomainId } from "./apps.ts";
 import type { ConsentEvent, ConsentLast } from "./consent.ts";
 import { lastEvents } from "./consent.ts";
 import { type AgeReading, type AgeStanding, ageWrite, createdFirstExact, createdReadings, effectiveAgeAt, floorAfterErasure, mergedFloors, movedPersonAge, verifiedBrowserBirthWrite, type TeenBarReason } from "./age.ts";
@@ -41,6 +41,22 @@ export interface Membership {
   profile: Record<string, unknown>;
   joinedAt: number | null;
   leftAt: number | null;
+}
+export interface MemberDomainRecord {
+  domain: DomainId;
+  enabled: boolean;
+  originBrand: AppId;
+  source: string;
+  enabledAt: number;
+  disabledAt?: number;
+}
+export interface SetMemberDomainInput {
+  personId: string;
+  domain: DomainId;
+  enabled: boolean;
+  originBrand?: AppId;
+  source?: string;
+  at?: number;
 }
 export interface AppLeaveInput {
   app: AppId; e164: string; personId: string | null; expectedMemberId?: string;
@@ -134,6 +150,10 @@ export interface PeopleStore {
   /** Commit the exact member, opt-in and session binding if current ownership and bans allow enrollment. */
   admitMembership(m: Membership, consent: ConsentEvent, phoneHash: string, joiningSession?: string | null): Promise<boolean>;
   restrictBannedMemberships(personId: string): Promise<void>;
+
+  listMemberDomains(personId: string): Promise<MemberDomainRecord[]>;
+  setMemberDomain(input: SetMemberDomainInput): Promise<MemberDomainRecord>;
+  disableMemberDomains(personId: string, domains: readonly DomainId[], source: string, at?: number): Promise<void>;
 
   /**
    * Append an event. False when an event with the same (e164, ref) is already there (a retried message).
@@ -239,6 +259,7 @@ export class MemoryPeopleStore implements PeopleStore {
   readonly people = new Map<string, Person>();
   readonly phones = new Map<string, PhoneIdentity>();
   readonly members = new Map<string, Membership>(); // key `${app}:${personId}`
+  readonly memberDomains = new Map<string, MemberDomainRecord>(); // key `${personId}:${domain}`
   readonly consent: ConsentEvent[] = [];
   readonly grants = new Map<string, ShareGrant>();
   readonly blocks = new Map<string, { from: string; to: string; originApp: AppId; at: number }>();
@@ -376,6 +397,73 @@ export class MemoryPeopleStore implements PeopleStore {
   }
   async restrictBannedMemberships(personId: string): Promise<void> {
     for (const m of this.members.values()) if (m.personId === personId && m.state !== "invited" && m.state !== "removed") m.state = "restricted";
+  }
+
+  async listMemberDomains(personId: string): Promise<MemberDomainRecord[]> {
+    const stored: MemberDomainRecord[] = [];
+    for (const domain of DOMAIN_IDS) {
+      const rec = this.memberDomains.get(`${personId}:${domain}`);
+      if (rec) stored.push({ ...rec });
+    }
+    if (stored.length) return stored;
+    const derived = new Map<DomainId, MemberDomainRecord>();
+    let ntwrkMembership: Membership | undefined;
+    for (const m of this.members.values()) {
+      if (m.personId !== personId || (m.state !== "active" && m.state !== "onboarding" && m.state !== "paused")) continue;
+      if (m.app === "ntwrk") { ntwrkMembership = m; continue; }
+      const domain = APP_TO_DOMAIN[m.app];
+      if (!domain) continue;
+      const enabled = m.state !== "paused";
+      const enabledAt = m.joinedAt ?? 0;
+      derived.set(domain, {
+        domain, enabled, originBrand: m.app, source: "membership_fallback", enabledAt,
+        ...(enabled ? {} : { disabledAt: enabledAt }),
+      });
+    }
+    if (!derived.size && ntwrkMembership) {
+      const enabled = ntwrkMembership.state !== "paused";
+      const enabledAt = ntwrkMembership.joinedAt ?? 0;
+      derived.set("friendship", {
+        domain: "friendship", enabled, originBrand: "ntwrk", source: "membership_fallback", enabledAt,
+        ...(enabled ? {} : { disabledAt: enabledAt }),
+      });
+    }
+    return DOMAIN_IDS.flatMap(d => { const r = derived.get(d); return r ? [r] : []; });
+  }
+
+  async setMemberDomain(input: SetMemberDomainInput): Promise<MemberDomainRecord> {
+    const key = `${input.personId}:${input.domain}`;
+    const existing = this.memberDomains.get(key);
+    const at = input.at ?? Date.now();
+    const record: MemberDomainRecord = {
+      domain: input.domain,
+      enabled: input.enabled,
+      originBrand: input.originBrand ?? existing?.originBrand ?? "ntwrk",
+      source: input.source ?? existing?.source ?? "onboarding",
+      enabledAt: input.enabled ? (existing?.enabled ? existing.enabledAt : at) : (existing?.enabledAt ?? at),
+      ...(input.enabled ? {} : { disabledAt: at }),
+    };
+    this.memberDomains.set(key, record);
+    return { ...record };
+  }
+
+  async disableMemberDomains(personId: string, domains: readonly DomainId[], source: string, at = Date.now()): Promise<void> {
+    for (const domain of new Set(domains)) {
+      const key = `${personId}:${domain}`;
+      const existing = this.memberDomains.get(key);
+      if (existing) {
+        if (existing.enabled) {
+          this.memberDomains.set(key, { ...existing, enabled: false, source, disabledAt: at });
+        }
+        continue;
+      }
+      const backing = this.members.get(`${DOMAIN_TO_APP[domain]}:${personId}`);
+      if (backing && (backing.state === "active" || backing.state === "onboarding" || backing.state === "paused")) {
+        this.memberDomains.set(key, {
+          domain, enabled: false, originBrand: backing.app, source, enabledAt: backing.joinedAt ?? at, disabledAt: at,
+        });
+      }
+    }
   }
 
   async addConsent(e: ConsentEvent, personId?: string) {
@@ -630,6 +718,7 @@ export class MemoryPeopleStore implements PeopleStore {
     for (const [k, s] of this.sessions) if (s.e164 === target || (personId && s.personId === personId)) this.sessions.delete(k);
     if (personId) {
       for (const [k, m] of this.members) if (m.personId === personId) this.members.delete(k);
+      for (const domain of DOMAIN_IDS) this.memberDomains.delete(`${personId}:${domain}`);
       for (const [k, g] of this.grants) if (g.personId === personId) this.grants.delete(k);
       // Blocks stay (a safety fact): the tombstone keeps them, and a new join by this phone revives it.
       for (const [k, ph] of this.phones) if (ph.personId === personId) this.phones.delete(k);

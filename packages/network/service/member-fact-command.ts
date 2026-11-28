@@ -30,13 +30,24 @@ export interface MemberFactView {
   provenance?: Provenance | null;
 }
 
-const PREFIX = /^(?:show[ \t]+my[ \t]+facts|correct[ \t]+fact|remove[ \t]+fact|set[ \t]+fact[ \t]+scope|confirm[ \t]+fact[ \t]+edit|cancel[ \t]+fact[ \t]+edit)\b/i;
+const PREFIX = /^(?:show[ \t]+my[ \t]+facts|(?:correct|edit)[ \t]+fact|(?:remove|delete)[ \t]+fact|set[ \t]+fact[ \t]+scope|confirm[ \t]+fact[ \t]+edit|cancel[ \t]+fact[ \t]+edit)\b/i;
 const LIST = /^show[ \t]+my[ \t]+facts(?:[ \t]+page[ \t]+([1-9]\d{0,15}))?$/i;
-const ALIAS = /^what[ \t]+do[ \t]+you[ \t]+know[ \t]+about[ \t]+me\?$/i;
-const CORRECT = /^correct[ \t]+fact[ \t]+(pfr_[a-p]{32})[ \t]+to[ \t]+(.+)$/i;
-const REMOVE = /^remove[ \t]+fact[ \t]+(pfr_[a-p]{32})$/i;
-const SCOPE = /^set[ \t]+fact[ \t]+scope[ \t]+(pfr_[a-p]{32})[ \t]+to[ \t]+(agent_private|matchable|shareable)$/i;
+const ALIAS = /^what[ \t]+do[ \t]+you[ \t]+know[ \t]+about[ \t]+me\??$/i;
+const REF_TOKEN = "(pfr_[a-p]{32}|#?[1-9]\\d{0,3})";
+const CORRECT = new RegExp(`^(?:correct|edit)[ \\t]+fact[ \\t]+${REF_TOKEN}[ \\t]+to[ \\t]+(.+)$`, "i");
+const REMOVE = new RegExp(`^(?:remove|delete)[ \\t]+fact[ \\t]+${REF_TOKEN}$`, "i");
+const SCOPE = new RegExp(`^set[ \\t]+fact[ \\t]+scope[ \\t]+${REF_TOKEN}[ \\t]+to[ \\t]+(agent_private|private|matchable|matching|shareable)$`, "i");
 const CHOOSE = /^(confirm|cancel)[ \t]+fact[ \t]+edit[ \t]+(pfc_[a-p]{32})$/i;
+
+const SCOPE_ALIASES: Record<string, EditableMemberFactScope> = {
+  agent_private: "agent_private",
+  private: "agent_private",
+  matchable: "matchable",
+  matching: "matchable",
+  shareable: "shareable",
+};
+
+const normalizeRef = (token: string): string => (token.startsWith("#") ? token.slice(1) : token.toLowerCase());
 
 export function memberFactCommand(text: string): MemberFactCommand | undefined {
   const line = text.trim();
@@ -51,13 +62,16 @@ export function memberFactCommand(text: string): MemberFactCommand | undefined {
   if (correct) {
     const value = correct[2]!.trim();
     return value.length > 0 && value.length <= MEMBER_FACT_VALUE_LIMIT && !unsafeText.test(value)
-      ? { kind: "correct", ref: correct[1]!.toLowerCase(), value }
+      ? { kind: "correct", ref: normalizeRef(correct[1]!), value }
       : { kind: "invalid" };
   }
   const remove = REMOVE.exec(line);
-  if (remove) return { kind: "remove", ref: remove[1]!.toLowerCase() };
+  if (remove) return { kind: "remove", ref: normalizeRef(remove[1]!) };
   const scope = SCOPE.exec(line);
-  if (scope) return { kind: "scope", ref: scope[1]!.toLowerCase(), scope: scope[2]!.toLowerCase() as EditableMemberFactScope };
+  if (scope) {
+    const mapped = SCOPE_ALIASES[scope[2]!.toLowerCase()];
+    return mapped ? { kind: "scope", ref: normalizeRef(scope[1]!), scope: mapped } : { kind: "invalid" };
+  }
   const choose = CHOOSE.exec(line);
   if (choose) return { kind: choose[1]!.toLowerCase() === "confirm" ? "confirm" : "cancel", draft: choose[2]!.toLowerCase() };
   return { kind: "invalid" };
@@ -109,9 +123,11 @@ export function memberFactReply(outcome: keyof typeof replies): string { return 
 export function memberFactListText({ page, hasMore, facts }: { page: number; hasMore: boolean; facts: readonly MemberFactView[] }): string {
   if (!Number.isSafeInteger(page) || page < 1 || page > LAST_PAGE) return replies.unavailable;
   const groups = new Map<FacetKind, string[]>();
-  for (const fact of facts.slice(0, MEMBER_FACT_PAGE_SIZE)) {
+  const baseIndex = (page - 1) * MEMBER_FACT_PAGE_SIZE;
+  for (const [idx, fact] of facts.slice(0, MEMBER_FACT_PAGE_SIZE).entries()) {
     if (!REFERENCE.test(fact.reference) || !Object.hasOwn(kindLabel, fact.kind) || !Object.hasOwn(scopeLabel, fact.scope)) return replies.unavailable;
-    const line = `${fact.reference} · ${preview(fact.value)} · Source: ${sourceOf(fact)} · Scope: ${scopeLabel[fact.scope]}`;
+    const itemNum = baseIndex + idx + 1;
+    const line = `${itemNum}. ${fact.reference} · ${preview(fact.value)} · Source: ${sourceOf(fact)} · Scope: ${scopeLabel[fact.scope]}`;
     const group = groups.get(fact.kind);
     if (group) group.push(line);
     else groups.set(fact.kind, [line]);
@@ -120,7 +136,7 @@ export function memberFactListText({ page, hasMore, facts }: { page: number; has
   const body = [
     "Your saved facts",
     ...[...groups].flatMap(([kind, lines]) => [kindLabel[kind], ...lines]),
-    "Edit with CORRECT FACT <ref> TO <text>, REMOVE FACT <ref>, or SET FACT SCOPE <ref> TO agent_private, matchable or shareable.",
+    "Edit with CORRECT FACT <number or ref> TO <text>, REMOVE FACT <number or ref>, or SET FACT SCOPE <number or ref> TO private (agent_private), matching (matchable) or shareable.",
     `Page ${page}`,
     ...((hasMore || facts.length > MEMBER_FACT_PAGE_SIZE) && page < LAST_PAGE ? [`Next page: SHOW MY FACTS PAGE ${page + 1}`] : []),
   ].join("\n");

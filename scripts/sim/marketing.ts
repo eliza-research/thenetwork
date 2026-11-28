@@ -46,6 +46,12 @@ export async function marketingBlock(b: Block, opts: { quick: boolean }): Promis
   const bpIgnoredTotal = sumAdv((r) => r.adversarial.backpressureIgnoredSends);
   const allHysteresisHeld = runs.every((r) => r.adversarial.backpressureHysteresisHeld);
   const allStopLocked = runs.every((r) => r.adversarial.stopSpikeAutoLockdownTriggered);
+  const apolloViolationsTotal = sumAdv((r) => r.adversarial.apolloCapOrSafetyViolations);
+  const apolloCacheHitsTotal = sumAdv((r) => r.adversarial.apolloCacheHits);
+  const platformViolationsTotal = sumAdv((r) => r.adversarial.platformRiskOrBreakerViolations);
+  const platformBreakersTotal = sumAdv((r) => r.adversarial.platformCircuitBreakersTripped);
+  const intakeViolationsTotal = sumAdv((r) => r.adversarial.intakeQualityOrAirGapViolations);
+  const intakeConvertedTotal = sumAdv((r) => r.adversarial.intakeQualifiedConverted);
   const allLiquidityReached = runs.every(
     (r) => r.metrics.citiesReadyCount === r.cities.length,
   );
@@ -124,6 +130,21 @@ export async function marketingBlock(b: Block, opts: { quick: boolean }): Promis
     avgBanditLift > 0,
     `bandit=$${(avgBlendedCpa / 100).toFixed(2)} vs uniform=$${(avgUniformCpa / 100).toFixed(2)} (+${avgBanditLift}%)`,
     !opts.quick,
+  );
+  b.gate(
+    "0 Apollo credit-cap, minor, or suppression violations (cache hits active)",
+    apolloViolationsTotal === 0 && apolloCacheHitsTotal >= runs.length,
+    `violations=${apolloViolationsTotal}, cacheHits=${apolloCacheHitsTotal}`,
+  );
+  b.gate(
+    "0 platform report-risk, quiet-hours, or suspended-breaker violations",
+    platformViolationsTotal === 0 && platformBreakersTotal >= runs.length,
+    `violations=${platformViolationsTotal}, breakersTripped=${platformBreakersTotal}`,
+  );
+  b.gate(
+    "0 intake slop, air-gap, queue-pause, or duplicate-invite violations",
+    intakeViolationsTotal === 0 && intakeConvertedTotal >= runs.length,
+    `violations=${intakeViolationsTotal}, converted=${intakeConvertedTotal}`,
   );
   await b.run("deterministic replay digest & multi-city liquidity reached", () => {
     expect(replaySeed1.digest).toBe(runs[0]!.digest);

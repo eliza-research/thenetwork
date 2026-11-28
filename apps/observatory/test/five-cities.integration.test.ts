@@ -88,7 +88,7 @@ describe.skipIf(!pgAvailable)("Observatory five-city seed, RealSource, roles and
     await obs?.stop();
     await sql?.close();
     await dropTestDb();
-    await rm(dir, { recursive: true, force: true });
+    if (dir) await rm(dir, { recursive: true, force: true });
   });
 
   test("console roles can select platform.venues and platform.cities but not platform.venue_api_cache", async () => {
@@ -112,6 +112,13 @@ describe.skipIf(!pgAvailable)("Observatory five-city seed, RealSource, roles and
     expect(venueRows.map(r => r.city).sort()).toEqual([...CITY_IDS].sort());
     expect(venueRows.reduce((a, r) => a + r.n, 0)).toBe(ALL_SEED_VENUES.length);
     expect(venueRows.every(r => r.visited > 0)).toBe(true);
+
+    const adultVenues = await sql<{ id: string; age_min: number; all_ages: boolean; is_alcohol_centric: boolean; safety_score: number; transit_score: number }[]>`
+      select id, age_min, all_ages, is_alcohol_centric, safety_score, transit_score
+      from platform.venues
+      where age_min >= 21 or is_bar_only = true or category in ('brewery', 'brewery_garden', 'wine_bar', 'cocktail_bar', 'cocktail_lounge', 'wine_beer_patio')`;
+    expect(adultVenues.length).toBeGreaterThan(0);
+    expect(adultVenues.every(v => v.all_ages === false && v.is_alcohol_centric === true)).toBe(true);
 
     const visits = (await sql<{ n: number }[]>`select count(*)::int as n from network.venue_visits`)[0]!.n;
     const rejections = (await sql<{ n: number }[]>`select count(*)::int as n from network.venue_rejections`)[0]!.n;
@@ -195,7 +202,7 @@ describe.skipIf(!pgAvailable)("Observatory five-city seed, RealSource, roles and
     const miami = await miamiRes.json() as { city: string; venues: ObsVenue[] };
     expect(miami.city).toBe("miami");
     expect(miami.venues.length).toBeGreaterThanOrEqual(12);
-    expect(miami.venues.every(v => v.city === "miami" && v.status === "Active" && v.groupScore > 0)).toBe(true);
+    expect(miami.venues.every(v => v.city === "miami" && v.status === "active" && v.groupScore > 0)).toBe(true);
 
     const badRes = await fetch(`${obs.url}/api/venues?city=atlantis`, { headers: AUTH });
     expect(badRes.status).toBe(400);

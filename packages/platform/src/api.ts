@@ -27,7 +27,7 @@ import {
 import { productionCloudDelegation } from "./cloud-delegation.ts";
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
 import { type AccountHooks, Accounts, type HomeInput, type MemberHookContext, parseHome, parseJoin, publicMembership, type Who } from "./accounts.ts";
-import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
+import { APPS, type AppId, type AppInfo, appForHost, DEFAULT_HOST_MAP, DEV_HOST_MAP, type DomainId, isDomainId, publicAppInfo, siteHosts, stagingSiteOrigins } from "./apps.ts";
 import { devShortcutsAllowed, type Env } from "./env.ts";
 import { type OtpProvider, OtpService, type OtpLimits } from "./otp.ts";
 import { maskPhone, normalizePhone } from "./phone.ts";
@@ -628,6 +628,9 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
           const participation = live && o.participation ? await o.participation({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
           const home = live && o.home && (who.personId === null || who.personId === live.personId)
             ? await o.home({ app, personId: live.personId, memberId: live.memberId, e164: who.e164 }) : null;
+          const memberDomains = live && c.person && c.reason !== "review"
+            ? await accounts.memberDomains(c.person.id, who.e164)
+            : undefined;
           const receipt = req.headers.get("x-ntwrk-join-receipt");
           const carry = appId === "peon" && receipt ? unseal("cloud-join-prefill", cookies.get(joinPrefillName)) : null;
           const receiptMatches = !!carry && receipt === carry.receipt;
@@ -641,6 +644,7 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
             canJoin: c.canJoin, ...(c.reason && c.reason !== "member" ? { reason: c.reason } : {}),
             ...(participation ? { participation } : {}),
             ...(home ? { home } : {}),
+            ...(memberDomains ? { enabledDomains: memberDomains.enabledDomains, availableDomains: memberDomains.availableDomains } : {}),
             ...(joinPrefill ? { joinPrefill } : {}),
           });
           if (receiptMatches) {
@@ -648,6 +652,62 @@ export function createPublicApi(o: PublicApiOptions): PublicApi {
             rotatedCookies(response, authenticated);
           }
           return response;
+        });
+
+      case "POST /api/me/domains":
+        return withSession(async who => {
+          const allowedKeys = new Set(["enable", "disable", "app"]);
+          if (Object.keys(b).some(k => !allowedKeys.has(k))) return json(400, { ok: false, error: "invalid" });
+          if (b.enable === undefined && b.disable === undefined) return json(400, { ok: false, error: "invalid" });
+          const parseDomains = (v: unknown): DomainId[] | undefined => {
+            if (v === undefined) return [];
+            if (!Array.isArray(v) || v.some(x => !isDomainId(x))) return undefined;
+            return [...new Set(v as DomainId[])];
+          };
+          const enable = parseDomains(b.enable);
+          const disable = parseDomains(b.disable);
+          if (!enable || !disable) return json(400, { ok: false, error: "invalid_domain" });
+          const held = await accounts.held(who.e164);
+          const person = held ? undefined : await accounts.personFor(who.e164);
+          const banned = await accounts.banned(who.e164, person);
+          if (held || banned) {
+            const reason = banned ? "banned" : "held";
+            return json(403, {
+              ok: false,
+              error: banned ? "domain_not_allowed" : "review",
+              ...(held ? { message: REVIEW_MESSAGE } : {}),
+              blocked: [...enable, ...disable].map(domain => ({ domain, reason })),
+              enabledDomains: [],
+              availableDomains: [],
+            });
+          }
+          if (!person) return json(403, { ok: false, error: "not_member" });
+          if (who.personId !== null && who.personId !== person.id) return json(401, { ok: false, error: "unauthorized" });
+          const result = await accounts.updateDomains({
+            personId: person.id,
+            e164: who.e164,
+            enable,
+            disable,
+            originBrand: appId,
+            source: "api",
+            banned: false,
+            held: false,
+          });
+          if (result.blocked.length > 0 && result.applied.enabled.length === 0 && result.applied.disabled.length === 0) {
+            return json(403, {
+              ok: false,
+              error: "domain_not_allowed",
+              blocked: result.blocked,
+              enabledDomains: result.enabledDomains,
+              availableDomains: result.availableDomains,
+            });
+          }
+          return json(200, {
+            ok: true,
+            enabledDomains: result.enabledDomains,
+            availableDomains: result.availableDomains,
+            blocked: result.blocked,
+          });
         });
 
       case "POST /api/me/home":

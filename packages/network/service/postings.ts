@@ -17,7 +17,7 @@
 //                    the same checks run as for a text (an adult, active, opted-in peon member) and a closed
 //                    posting ends its open seat items at once. Each call writes network.staff_audit.
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { Facet, Intent, MemberId } from "@thenetwork/core";
+import { isBusinessDomain, type Facet, type Intent, type MemberId } from "@thenetwork/core";
 import { peonCompanyKey } from "../../engine/src/packs/peon/schema.ts";
 import { postingFacts, postingFromFacts, postingProblem, type JobPosting } from "../src/jobs.ts";
 import type { AuditEntry, StaffRole, StaffUser } from "../../../apps/observatory/src/types.ts";
@@ -119,7 +119,7 @@ export function jobPostingRoutes(deps: PostingRouteDeps): (req: Request, path: s
     const close = path.match(/^\/postings\/([^/]+)\/close$/);
     const verify = path.match(/^\/employers\/([^/]+)\/verify$/);
     if (path !== "/postings" && !close && !verify) return undefined;
-    if (rt.app.id !== "peon") return json({ ok: false, error: "not_found" }, 404);
+    if (!isBusinessDomain(rt.app.id)) return json({ ok: false, error: "not_found" }, 404);
     if (req.method === "GET" && path === "/postings") {
       const no = deps.need(["admin", "reviewer"]); if (no) return no;
       const managerId = new URL(req.url).searchParams.get("managerId") ?? undefined;

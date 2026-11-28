@@ -1,5 +1,15 @@
 import { fileAt } from "../../packages/core/src/runtime/files.ts";
-import { findLeaks } from "../../packages/core/src/index.ts";
+import { DAY, findLeaks } from "../../packages/core/src/index.ts";
+import {
+  lawNewcomerNeverThrottledWithoutPitch, vampireAllowedTarget, vampireTier, vampireWeeklyCap,
+} from "../../packages/core/src/generated/qualityAndLeague.ts";
+import { resolveConfig } from "../../packages/engine/src/config.ts";
+import { localEmbed } from "../../packages/engine/src/embed.ts";
+import { memberVampireTierOf, pairLeagueAndVampireReason } from "../../packages/engine/src/filters.ts";
+import { checkMemberFacing } from "../../packages/engine/src/judgeCommon.ts";
+import { networkPack } from "../../packages/engine/src/packs/network/index.ts";
+import { baseMember, emptyInput } from "../../packages/engine/src/testkit.ts";
+import { World as EngineWorld } from "../../packages/engine/src/world.ts";
 import { appearanceLeak } from "../../packages/engine/src/packs/slop/appearance.ts";
 import { SLOP_PROBE_PHOTO_LINE, slopProbeMessage, slopProbeText } from "../../packages/engine/src/packs/slop/copy.ts";
 import { probePhotoRefs } from "../../packages/engine/src/packs/slop/plan.ts";
@@ -306,7 +316,7 @@ function fakeClef(pick: (message: string) => FakeAnswers | "timeout" | "error") 
   const fetch: ClefFetch = async (url, init) => {
     const body = JSON.parse(init.body) as { state: string; questions: Record<string, unknown> };
     calls.push({ url, state: body.state, questions: Object.keys(body.questions).length });
-    const msg = /<<<MESSAGE\n([\s\S]*)\nMESSAGE>>>/.exec(body.state)?.[1] ?? "";
+    const msg = /<<<UNTRUSTED MESSAGE [0-9a-f]+>>>\n([\s\S]*?)\n<<<END UNTRUSTED [0-9a-f]+>>>/.exec(body.state)?.[1] ?? "";
     const a = pick(msg);
     if (a === "timeout") return new Promise((_, rej) => init.signal?.addEventListener("abort", () => rej(new Error("aborted"))));
     if (a === "error") return { ok: false, status: 500, json: async () => ({ success: false, errors: [{ message: "internal" }] }) };
@@ -714,6 +724,134 @@ async function deskGates(b: Block): Promise<void> {
     const h = fakeHost(), d = new RelayDesk(h);
     h.match = { ...h.match, status: "mutual", metAt: NOW - 8 * 86_400_000 };
     expect((await d.request({ itemId: "p1", from: "a", kind: "text", text: "want to get dinner again next week?" }, { hook: simulatedRelayClassifier })).decision).toBe("sent");
+  });
+
+  await b.run("relay desk: arrival-window safety ([-30, +45]m) and panic exit immediately halt relays and cancel pending swaps", async () => {
+    const h = fakeHost(), d = new RelayDesk(h);
+    const startMs = NOW + 20 * 60_000;
+    const baseArrival = {
+      matchId: "op1", senderId: "a", recipientId: "b",
+      senderConfirmed: true, recipientConfirmed: true,
+      startMs, alreadyMet: false, passedSafetyAndLeakCheck: true,
+    };
+    // Inside [-30, +45]m arrival window (T-20m, T+0m, T+40m) -> allowed
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    h.t = startMs;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    h.t = startMs + 40 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(true);
+    // Outside arrival window (T-31m, T+46m) -> blocked
+    h.t = startMs - 31 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    h.t = startMs + 46 * 60_000;
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    // Back inside window: minor, unconfirmed, or failed leak check -> blocked
+    h.t = startMs - 10 * 60_000;
+    expect(d.canRelayArrivalSafe({ ...baseArrival, anyMinorInEvent: true })).toBe(false);
+    expect(d.canRelayArrivalSafe({ ...baseArrival, senderConfirmed: false })).toBe(false);
+    expect(d.canRelayArrivalSafe({ ...baseArrival, passedSafetyAndLeakCheck: false })).toBe(false);
+    // Queue a pending contact swap, then trigger panic exit
+    expect((await d.request({ itemId: "pw1", from: "a", kind: "contact_share" }, { contactOf, hook: simulatedRelayClassifier })).decision).toBe("waiting");
+    const sentBeforePanic = h.sent.length;
+    const panic = d.triggerPanicExit("a", "op1");
+    expect(panic.haltedMatches).toContain("op1");
+    expect(panic.cancelledSwaps).toBeGreaterThanOrEqual(1);
+    expect(panic.notice).toMatch(/911/);
+    expect(d.isPanicTriggered("a", "op1")).toBe(true);
+    expect(d.canRelayArrivalSafe(baseArrival)).toBe(false);
+    // Both sides are immediately halted for subsequent texts and swaps
+    const rA = await d.request({ itemId: "pa1", from: "a", kind: "text", text: "still here?" }, { hook: simulatedRelayClassifier });
+    const rB = await d.request({ itemId: "pb1", from: "b", kind: "text", text: "where are you?" }, { hook: simulatedRelayClassifier });
+    expect([rA.decision, rB.decision]).toEqual(["refused", "refused"]);
+    expect(h.sent.length).toBe(sentBeforePanic);
+  });
+
+  await b.run("vampire_pitch_slap_defense: pitch-slaps block, internal ranking leaks block, newcomers stay clean, and vampire tiers throttle/quarantine", () => {
+    for (const pitch of [
+      "Hey, book a free discovery call with me this week!",
+      "Check out my startup and join our waitlist!",
+      "Use my promo code for 20% off today.",
+      "You should hire my agency for growth.",
+      "Can I send you my pitch deck before we meet?",
+      "We help founders scale and generate leads fast.",
+    ]) {
+      const r = relayItem(text(pitch), baseCtx());
+      expect([pitch, r.decision, r.rendered]).toEqual([pitch, "block", ""]);
+      expect(r.reasons).toContain("promo:pitch_slap");
+    }
+    for (const okText of [
+      "I'm building a small tools startup and love bouldering.",
+      "I run a design studio in Brooklyn, want to grab coffee Thursday?",
+      "Would love to hear what you're working on this month.",
+    ]) {
+      expect([okText, relayItem(text(okText), baseCtx()).decision]).toEqual([okText, "pass"]);
+    }
+
+    for (const leak of [
+      "You're out of your league with this person.",
+      "Their status score is 88.",
+      "Your wealth tier doesn't match theirs.",
+      "Looks rating 8/10 on our internal scale.",
+      "This account is in vampire tier.",
+      "High extraction risk score flagged.",
+      "SpringRank standing is 92.",
+    ]) {
+      const coreLeaks = findLeaks(leak, {});
+      expect([leak, coreLeaks.includes("internal:ranking")]).toEqual([leak, true]);
+      const judgeCheck = checkMemberFacing(leak, new Set());
+      expect([leak, judgeCheck.ok, judgeCheck.reasons.includes("internal_ranking_leak")]).toEqual([leak, false, true]);
+    }
+    for (const benign of [
+      "Do you play in a weekend soccer league?",
+      "Your membership status is paused until Friday.",
+      "We were standing in line at the coffee shop.",
+    ]) {
+      expect([benign, findLeaks(benign, {})]).toEqual([benign, []]);
+      expect([benign, checkMemberFacing(benign, new Set()).ok]).toEqual([benign, true]);
+    }
+
+    expect(lawNewcomerNeverThrottledWithoutPitch(2, 0, 2)).toBe(true);
+    expect(vampireTier(2, 0, 2, 0, 0)).toBe("VampireClean");
+    expect(vampireTier(0, 0, 0, 1, 0)).toBe("VampireWatch");
+    expect(vampireWeeklyCap("VampireWatch", 4)).toBe(2);
+    expect(vampireAllowedTarget("VampireWatch", true, false)).toBe(false);
+    expect(vampireAllowedTarget("VampireWatch", false, false)).toBe(true);
+
+    expect(vampireTier(0, 0, 0, 2, 0)).toBe("VampireThrottled");
+    expect(vampireTier(0, 0, 0, 0, 1)).toBe("VampireThrottled");
+    expect(vampireWeeklyCap("VampireThrottled", 4)).toBe(1);
+    expect(vampireAllowedTarget("VampireThrottled", true, false)).toBe(false);
+    expect(vampireAllowedTarget("VampireThrottled", false, true)).toBe(false);
+    expect(vampireAllowedTarget("VampireThrottled", false, false)).toBe(true);
+
+    expect(vampireTier(0, 0, 0, 0, 2)).toBe("VampireQuarantined");
+    expect(vampireTier(0, 0, 0, 4, 0)).toBe("VampireQuarantined");
+    expect(vampireWeeklyCap("VampireQuarantined", 4)).toBe(0);
+    expect(vampireAllowedTarget("VampireQuarantined", false, false)).toBe(false);
+
+    const w = new EngineWorld({
+      ...emptyInput(NOW),
+      members: [
+        baseMember("watch", { age: 31, homeCity: "nyc", joinedAt: NOW - 40 * DAY }),
+        baseMember("throttled", { age: 31, homeCity: "nyc", joinedAt: NOW - 40 * DAY }),
+        baseMember("quarantined", { age: 31, homeCity: "nyc", joinedAt: NOW - 40 * DAY }),
+        baseMember("vip", { age: 35, homeCity: "nyc", joinedAt: NOW - 90 * DAY }),
+        baseMember("newbie", { age: 27, homeCity: "nyc", joinedAt: NOW - 3 * DAY }),
+        baseMember("regular", { age: 30, homeCity: "nyc", joinedAt: NOW - 60 * DAY }),
+      ],
+      vampireByMember: {
+        watch: { introsReceived90d: 1, positiveCounterpartVotes90d: 0, asymmetricNegativeVotes90d: 0, pitchSignals90d: 1, distinctSelfPromoReports90d: 0 },
+        throttled: { introsReceived90d: 2, positiveCounterpartVotes90d: 0, asymmetricNegativeVotes90d: 1, pitchSignals90d: 2, distinctSelfPromoReports90d: 1 },
+        quarantined: { introsReceived90d: 4, positiveCounterpartVotes90d: 0, asymmetricNegativeVotes90d: 3, pitchSignals90d: 4, distinctSelfPromoReports90d: 2 },
+      },
+    }, resolveConfig({ cities: ["nyc"] }), localEmbed, networkPack);
+
+    expect(memberVampireTierOf(w, "watch")).toBe("VampireWatch");
+    expect(memberVampireTierOf(w, "throttled")).toBe("VampireThrottled");
+    expect(memberVampireTierOf(w, "quarantined")).toBe("VampireQuarantined");
+    expect(pairLeagueAndVampireReason(w, "watch", "vip", "Intro", 50, 88)).toBe("vampire_target_blocked");
+    expect(pairLeagueAndVampireReason(w, "throttled", "newbie", "Intro", 50, 50)).toBe("vampire_target_blocked");
+    expect(pairLeagueAndVampireReason(w, "quarantined", "regular", "Intro", 50, 50)).toBe("vampire_quarantine");
   });
 
   await b.run("photo ids: every platform-issued id is opaque; phone-number-like ids still fail", () => {

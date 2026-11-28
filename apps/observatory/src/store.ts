@@ -104,7 +104,8 @@ export class Store {
   touchOpp(id: string) { if (this.opps.has(id)) this.dirtyOpps.add(id); }
 
   pushFeed(item: Omit<ObsFeedItem, "seq">) {
-    const full = { seq: ++this.feedSeq, ...item };
+    const domain = item.domain ?? (item.opportunityId ? this.opps.get(item.opportunityId)?.domain : undefined);
+    const full = { seq: ++this.feedSeq, ...item, ...(domain ? { domain } : {}) };
     this.feed.push(full);
     if (this.feed.length > FEED_LIMIT * 1.25) this.feed = this.feed.slice(-FEED_LIMIT);
     this.newFeed.push(full);

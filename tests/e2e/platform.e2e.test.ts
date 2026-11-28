@@ -1130,8 +1130,18 @@ describe.skipIf(!pgAvailable)("the platform end to end (sites -> router -> backe
       const tools = (await rpc(st, "peon", "/mcp", "tools/list")).body!.result.tools as { name: string; inputSchema: { properties: Record<string, unknown> } }[];
       // submit_profile also takes the person's own approved text ("about"), which refuses phone numbers and codes;
       // get_updates takes an update reference (T-XXXXXX), never a verification code.
-      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(t.name === "submit_profile" ? ["app", "about"] : t.name === "get_updates" ? ["app", "update_token"] : t.name === "pause_looking_for" || t.name === "resume_looking_for" ? ["app", "ref"] : ["app"]);
-      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_updates", "list_looking_for", "pause_looking_for", "read_profile", "resume_looking_for", "start_signup", "submit_profile"]);
+      const expectedProps: Record<string, string[]> = {
+        submit_profile: ["app", "about"],
+        get_updates: ["app", "update_token"],
+        get_context: ["app", "include", "update_token"],
+        set_availability: ["app", "days", "windows", "quietHours", "timezone", "notes"],
+        set_red_lines: ["app", "redLines", "mode"],
+        manage_domains: ["app", "enable", "disable"],
+        pause_looking_for: ["app", "ref"],
+        resume_looking_for: ["app", "ref"],
+      };
+      for (const t of tools) expect(Object.keys(t.inputSchema.properties ?? {})).toEqual(expectedProps[t.name] ?? ["app"]);
+      expect(tools.map(t => t.name).sort()).toEqual(["app_info", "check_status", "get_context", "get_updates", "list_looking_for", "manage_domains", "pause_looking_for", "read_profile", "resume_looking_for", "set_availability", "set_red_lines", "start_signup", "submit_profile"]);
       for (const t of tools) expect(JSON.stringify(t.inputSchema), t.name).not.toMatch(/phone|code|otp|birth/i);
     });
   });

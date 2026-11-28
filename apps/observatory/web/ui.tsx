@@ -80,7 +80,7 @@ export function componentRows(c: ScoreComponents): MeterRow[] {
 }
 
 /** The generated filter key of each store filter. */
-export const NAV_FILTER: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey" };
+export const NAV_FILTER: Record<FilterKey, NavFilterKey> = { range: "RangeKey", borough: "BoroughKey", members: "MembersKey", origin: "OriginKey", stateGroup: "StateKey", domains: "DomainsKey" };
 
 /** The console navigation state of the store, for the generated consoleNavigation decisions. */
 export function consoleNav(s = store): ConsoleNav {

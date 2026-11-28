@@ -16,6 +16,7 @@ import type { City } from "../../core/src/types.ts";
 import type { McpAppId, Surface } from "./apps.ts";
 
 export type Scope = "apps:read" | "membership:read" | "profile:write" | "profile:read" | "photos:use";
+export const FINISH_SIGNUP_REDIRECT_URI = "urn:thenetwork:finish-signup";
 export const DEFAULT_SCOPES = defaultScopes.map(scope => scopeName(scope) as Scope);
 export const SCOPES = connectorScopes.map(scope => scopeName(scope) as Scope);
 export const scopesOn = (app: McpAppId): Scope[] => connectorScopes.filter(scope => scopeOfferedOn(scope, app === "slop")).map(scope => scopeName(scope) as Scope);
@@ -190,6 +191,8 @@ export interface OAuthStore {
   updateAuthRequest(id: string, patch: Partial<Pick<AuthRequest, "e164" | "personId" | "step">>): Promise<void>;
   /** Move exactly the still-live page that started this operation. */
   advanceAuthRequest(previous: AuthRequest, next: AuthRequestPage, now: () => number): Promise<boolean>;
+  /** Atomically claim an unbound single-use step-up request and bind it to one browser hash. */
+  claimAuthRequestBrowser?(id: string, browserHash: string, at: number): Promise<AuthRequest | undefined>;
   /** Check the current approval, then consume it and persist the grant, code and audit together.
    * False leaves no issuance. The callback must inspect the approval only. */
   commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites): Promise<boolean>;
@@ -198,6 +201,8 @@ export interface OAuthStore {
 
   putGrant(g: Grant): Promise<void>;
   getGrant(id: string): Promise<Grant | undefined>;
+  /** Attach a newly created personId to an existing live, non-cloud grant for the same phoneKey after step-up signup. */
+  attachGrantPerson?(grantId: string, personId: string, expectedPhoneKey: string, at: number): Promise<boolean>;
   /** The live grants of a phone in one app (the person's consent page). */
   grantsFor(phoneKey: string, app: McpAppId, at: number): Promise<Grant[]>;
   /** Live grants and clients for the person's assistant, optionally limited to one app. */
@@ -325,6 +330,13 @@ export class MemoryOAuthStore implements OAuthStore {
     this.requests.set(previous.id, { ...kept, e164: next.e164, personId: next.personId, step: next.step, ...(next.handoff ? { handoff: next.handoff } : {}) });
     return true;
   }
+  async claimAuthRequestBrowser(id: string, browserHash: string, at: number) {
+    const saved = this.requests.get(id);
+    if (!saved || saved.browserHash !== "" || saved.expiresAt <= at) return undefined;
+    const bound: AuthRequest = { ...saved, browserHash };
+    this.requests.set(id, bound);
+    return structuredClone(bound);
+  }
   async commitConsentGrant(id: string, at: number, confirm: (approval: AuthRequest) => Promise<boolean>, writes: ConsentGrantWrites) {
     const pending = this.requests.get(id);
     if (!pending || (pending.step !== "consent" && pending.step !== "enrolled") || !pending.e164 || pending.expiresAt <= at) return false;
@@ -350,6 +362,15 @@ export class MemoryOAuthStore implements OAuthStore {
     this.grants.set(g.id, structuredClone(g));
   }
   async getGrant(id: string) { return copy(this.grants.get(id)); }
+  async attachGrantPerson(grantId: string, personId: string, expectedPhoneKey: string, at: number) {
+    const g = this.grants.get(grantId);
+    if (!g || g.revokedAt !== null || g.expiresAt <= at || g.phoneKey !== expectedPhoneKey) return false;
+    if (g.personId === personId) return true;
+    if (g.personId !== null) return false;
+    if (g.id.startsWith("grant_cloud_") || g.cloudAuthority != null) return false;
+    g.personId = personId;
+    return true;
+  }
   async grantsFor(phoneKey: string, app: McpAppId, at: number) {
     return [...this.grants.values()].filter(g => g.phoneKey === phoneKey && g.app === app && g.revokedAt === null && g.expiresAt > at).map(g => structuredClone(g));
   }

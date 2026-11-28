@@ -17,14 +17,14 @@
 //    network-service-2).
 //  - Nothing here reads another app's rows; the person cap across apps (service.ts) goes through a
 //    SECURITY DEFINER function that returns ids only.
-import { CITY_TZ, DAY, isCity, LeakGuard } from "@thenetwork/core";
+import { CITY_TZ, DAY, isBusinessDomain, isCity, isDatingDomain, LeakGuard } from "@thenetwork/core";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { calendarBridgeOwnerAllowed, calendarSchedulingPurpose } from "../../core/src/generated/calendarFreeBusy.ts";
 import type { CalendarSchedulingObservation, CalendarSchedulingOwner } from "../../core/src/svc/calendar-scheduling.ts";
 import { schedulingCalendarMembers, type CalendarSchedulingBridge, type CalendarSchedulingTarget } from "./calendar-scheduling.ts";
 import type { SQL } from "../../core/src/runtime/postgres.ts";
-import type { City, Clock, MemberId, WorldSnapshot } from "@thenetwork/core";
+import type { City, CityId, Clock, MemberId, VenueRecord, WorldSnapshot } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
 import type { InitialInviteReceipt, NetworkContext, SimMessage } from "@thenetwork/core";
 import { matchingDisabledByRegistry, startupPlan, tickRepairsProjection, tickRunsFollowup } from "../../core/src/generated/runtimeUnit.ts";
@@ -95,6 +95,10 @@ import { summarizeRun } from "../../../apps/observatory/src/engineCapture.ts";
 import type { JobPosting } from "../src/jobs.ts";
 import { JOB_INTENT } from "@thenetwork/engine/src/packs/peon/schema.ts";
 import { savePosting } from "./postings.ts";
+import {
+  PgMeetupStore, recordVenueRejection, recordVenueVisit, reserveVenueConcurrentHold, upsertMeetupArrival,
+  type MeetupArrivalInput, type MemberVenueHistory,
+} from "./meetup-store.ts";
 
 type Row = Record<string, unknown>;
 interface GatheringRepeatMessage { id: string; opportunity_id: string; type: string; body: string }
@@ -151,13 +155,18 @@ export interface Unit {
   teenBars: { memberId: MemberId; reason: "older_than_stated"; at: number }[];
   teenPairs: [MemberId, MemberId][];
   recordedAges?: (RecordedMemberAge & { memberId: MemberId })[];
+  venueVisits: { venueId: string; memberId: MemberId; opportunityId: string | null; visitedAt: number; sentiment?: string; issues?: string[]; closedReport?: boolean }[];
+  venueRejections: { venueId: string; memberId: MemberId; reason: string; rejectedAt: number }[];
+  venueHolds: { venueId: string; opportunityId: string; headcount: number; windowStart: number; windowEnd: number }[];
+  meetupArrivals: MeetupArrivalInput[];
 }
 type StatedAge = { memberId: MemberId; age: number; birthDate?: number };
-const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [] });
+const newUnit = (): Unit => ({ standingIntents: [], sends: [], events: [], blocks: [], runs: [], capital: [], optOut: new Map(), forget: new Set(), collected: new Set(), postings: [], ages: [], minorSignals: [], teenBars: [], teenPairs: [], venueVisits: [], venueRejections: [], venueHolds: [], meetupArrivals: [] });
 
 /** What the service gives each runtime: the shared connection and clock, and the checks that span apps. */
 export interface RuntimeHost {
   sql: SQL;
+  meetup?: PgMeetupStore;
   clock: Clock;
   instance: string;
   log: (line: string) => void;
@@ -199,7 +208,7 @@ export interface RuntimeOptions {
    * The homes whose conversations this network owns (runtimeForHome). Matching stays in the network's
    * own city unless the app's wiring sets its markets: owning a conversation is not a matching market.
    */
-  cities: readonly City[];
+  cities: readonly CityId[];
   matchingAllowed: boolean;
   network?: Omit<NetworkOptions, "store" | "onEngineRun" | "app">;
   calendarScheduling?: CalendarSchedulingBridge;
@@ -210,9 +219,10 @@ export class NetworkRuntime {
   readonly id: string;
   readonly app: AppInfo;
   readonly city: string;
-  readonly cities: readonly City[];
+  readonly cities: readonly CityId[];
   readonly net: ConsentNetwork;
   readonly pg: PgStore;
+  readonly meetup: PgMeetupStore;
   readonly store: NetworkStore;
   readonly view: StateView;
   readonly adapter: ChannelAdapter;
@@ -225,10 +235,14 @@ export class NetworkRuntime {
   private readonly calendarScheduling?: CalendarSchedulingBridge;
   private readonly calendarViews = new AsyncLocalStorage<ReadonlyMap<MemberId, CalendarSchedulingObservation>>();
   private snap?: WorldSnapshot;
+  private activeVenues: VenueRecord[] = [];
+  private memberVenueHistory = new Map<MemberId, MemberVenueHistory>();
+  private concurrentHeadcounts: Record<string, number> = {};
   private joinedInviteeNames = new Map<string, string>();
   private initialInviteReceipts = new Map<string, InitialInviteReceipt>();
   private addrToMember = new Map<string, MemberId>();
   private memberToAddr = new Map<MemberId, string>();
+  private memberToEmail = new Map<MemberId, string>();
   /** The unit being built. The service adds system sends (keyword confirmations) to it. */
   unit = newUnit();
   /** Sends committed with their state, waiting to be delivered (in commit order). */
@@ -262,17 +276,20 @@ export class NetworkRuntime {
   constructor(private readonly host: RuntimeHost, o: RuntimeOptions) {
     this.id = o.id; this.app = o.app; this.city = o.city; this.cities = o.cities; this.matchingAllowed = o.matchingAllowed;
     this.pg = new PgStore(host.sql, o.id);
+    this.meetup = host.meetup ?? new PgMeetupStore(host.sql);
     this.view = new StateView(o.id);
     this.store = this.serviceStore();
-    this.wiring = appWiring(o.app.id, isCity(o.city) ? o.city : "nyc");
+    this.wiring = appWiring(o.app.id, isCity(o.city) ? o.city : "nyc", { venues: () => this.activeVenues });
     this.calendarScheduling = o.network?.calendarFreeBusy ? undefined : o.calendarScheduling;
     const w = this.wiring;
-    this.engineConfig = { cities: o.cities.filter(c => c === o.city), ...w.engine, ...o.network?.engine };
+    const engineCities = o.cities.filter((c): c is City => c === o.city && isCity(c));
+    this.engineConfig = { cities: engineCities, ...w.engine, ...o.network?.engine };
     this.net = new ConsentNetwork({
       matchingEnabled: false,
       // The app's pack and the engine config it was tuned with (options may override single fields).
       ...(w.pack ? { pack: w.pack } : {}), ...(w.hooks ? { hooks: w.hooks } : {}), ...(w.plansConfig ? { plansConfig: w.plansConfig } : {}), ...(w.plans !== undefined ? { plans: w.plans } : {}),
       ...o.network,
+      workIntroEmailOf: o.network?.workIntroEmailOf ?? (id => this.emailOf(id)),
       ...(this.calendarScheduling ? { calendarFreeBusy: scope => scope.app === this.app.id && scope.purpose === calendarSchedulingPurpose ? this.calendarViews.getStore()?.get(scope.memberId) : undefined } : {}),
       engine: this.engineConfig,
       app: o.app, city: o.city, inlineJudge: undefined, store: this.store,
@@ -422,10 +439,20 @@ export class NetworkRuntime {
     const receipts = new Map<MemberId, number>();
     const roster = [...new Set(opp.participants)].filter(id => opp.bookedAt?.[id] !== undefined
       && opp.status.some(([member, status]) => member === id && status === "yes"));
-    for (const id of roster) {
-      const receipt = await currentBookingReceipt(tx, this.app.id, opp.id, id, opp.scheduleRevision ?? 0, opp.lane ?? null);
+    if (roster.length === 0) return receipts;
+    const revision = opp.scheduleRevision ?? 0;
+    const lane = opp.lane ?? null;
+    const batch = await currentBookingReceipts(
+      tx,
+      this.app.id,
+      roster.map(memberId => ({ oppId: opp.id, memberId, revision, lane })),
+    );
+    for (let i = 0; i < roster.length; i++) {
+      const receipt = batch.get(i);
       const sentAt = receipt?.sent_at?.getTime();
-      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) receipts.set(id, sentAt);
+      if (receipt && sentAt !== undefined && bookingNoticeReceived(receipt.status, sentAt, now)) {
+        receipts.set(roster[i]!, sentAt);
+      }
     }
     return receipts;
   }
@@ -515,14 +542,14 @@ export class NetworkRuntime {
   }
 
   async peonHireAdmission(tx: SQL, row: Pick<QueueRow, "id" | "app" | "memberId" | "oppId" | "text">): Promise<RecipientCheck> {
-    if (this.app.id !== "peon" || row.app !== "peon" || !row.memberId || !row.oppId) return { ok: true };
+    if (!isBusinessDomain(this.app.id) || !isBusinessDomain(row.app) || !row.memberId || !row.oppId) return { ok: true };
     const [contact] = await this.peonHireContacts(tx, row.memberId, [row.id]);
     const current = !contact || (contact.opportunity_id === row.oppId && await this.peonHireContactCurrent(tx, contact, row.memberId, row.text));
     return current ? { ok: true } : { ok: false, reason: "peon_search_changed" };
   }
 
   async peonHireRepliesCurrent(tx: SQL, memberId: MemberId, ids: readonly string[], bodies: readonly string[]): Promise<boolean> {
-    if (this.app.id !== "peon" || !ids.length) return true;
+    if (!isBusinessDomain(this.app.id) || !ids.length) return true;
     for (const contact of await this.peonHireContacts(tx, memberId, ids)) {
       await lockPeerOpportunityContact(tx, this.app.id, this.pg.id, memberId, contact.id);
       if (!await this.peonHireContactCurrent(tx, contact, memberId, bodies[ids.indexOf(contact.id)] ?? "")) return false;
@@ -531,7 +558,7 @@ export class NetworkRuntime {
   }
 
   private async slopContact(tx: SQL, row: QueueRow) {
-    if (this.app.id !== "slop" || row.app !== this.app.id || !row.oppId || !row.memberId) return;
+    if (!isDatingDomain(this.app.id) || row.app !== this.app.id || !row.oppId || !row.memberId) return;
     const [contact] = await tx<{ type: "probe" | "proposal"; body: string }[]>`select msg.type,msg.body from network.messages msg
       where msg.app_id=${row.app} and msg.id=${row.id} and msg.opportunity_id=${row.oppId}
         and msg.member_id=${row.memberId} and msg.direction='outbound' and msg.type in ('probe','proposal')`;
@@ -873,6 +900,7 @@ export class NetworkRuntime {
       load: async () => {
         this.unit = newUnit();
         await this.refresh();
+        await this.hydrateVenueContext().catch(e => this.host.log(`[meetup] venue context hydration skipped (${this.id}): ${(e as Error).message}`));
         const state = await this.loadState(true);
         await this.scoped(tx => this.view.load(tx));
         this.net.setGatheringRepeatSources([]);
@@ -974,8 +1002,8 @@ export class NetworkRuntime {
     const exactReplies = new Map<string, { key: string; memberId: MemberId; oppId: string | null;
       type: "scheduling" | "reminder" | "feedback_request" | "crew_offer" }>();
     const now = this.clock.now();
-    if ((this.app.id === "slop" || this.app.id === "peon") && state) {
-      const introductions = this.app.id === "slop" ? pendingSlopIntroductions(state.opps, state.interactions)
+    if ((isDatingDomain(this.app.id) || isBusinessDomain(this.app.id)) && state) {
+      const introductions = isDatingDomain(this.app.id) ? pendingSlopIntroductions(state.opps, state.interactions)
         : state.opps.filter(opp => opp.seat && opp.seatAcceptedAt === undefined && opp.meetingAt !== undefined
           && (opp.stage === "scheduled" || (opp.stage === "done" && !opp.finalized)));
       const originalNotices = introductions.flatMap(opp =>
@@ -1065,6 +1093,36 @@ export class NetworkRuntime {
     }
   }
 
+  /** Hydrate active venues, member visit/rejection history, and cross-app concurrent holds for this unit. */
+  async hydrateVenueContext(windowStart?: number, windowEnd?: number): Promise<{
+    venues: readonly VenueRecord[];
+    memberVenueHistory: ReadonlyMap<MemberId, MemberVenueHistory>;
+    concurrentHeadcountByVenue: Record<string, number>;
+  }> {
+    const now = this.clock.now();
+    const start = windowStart ?? now;
+    const end = windowEnd ?? now + 4 * 3_600_000;
+    const memberIds = this.snap?.members.map(m => m.id) ?? [];
+    const [venues, history] = await Promise.all([
+      this.meetup.listActiveVenues(this.city),
+      memberIds.length ? this.meetup.listMemberVenueHistory(this.app.id, memberIds) : Promise.resolve(new Map<string, MemberVenueHistory>()),
+    ]);
+    const headcounts = venues.length
+      ? await this.meetup.activeVenueConcurrentHeadcounts(venues.map(v => v.id), start, end)
+      : {};
+    this.activeVenues = venues;
+    this.memberVenueHistory = history;
+    this.concurrentHeadcounts = headcounts;
+    const mapped = new Map<MemberId, { visited: readonly string[]; rejected: readonly string[] }>();
+    for (const [id, h] of history) mapped.set(id, { visited: h.visitedVenueIds, rejected: h.rejectedVenueIds });
+    this.net.setVenueRuntimeContext({
+      venues,
+      memberVenueHistory: mapped,
+      concurrentHeadcountByVenue: headcounts,
+    });
+    return { venues, memberVenueHistory: history, concurrentHeadcountByVenue: headcounts };
+  }
+
   /** The snapshot and the address book, read fresh for every unit (inside the lock), in one app-scoped transaction. */
   private async refresh() {
     const app = this.app.id, now = this.clock.now(), homes = this.cities;
@@ -1095,7 +1153,7 @@ export class NetworkRuntime {
    * platform keep their channel_identities rows (one per app and address).
    */
   async identities() {
-    const [legacy, platform] = await this.scoped(async tx => [
+    const [legacy, platform, emails] = await this.scoped(async tx => [
       await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
         join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
         where ci.app_id = ${this.app.id} and ci.channel in ('imessage', 'sms') and m.person_id is null
@@ -1104,8 +1162,12 @@ export class NetworkRuntime {
       // A number on hold (it may have a new owner) is nobody's address until staff decide.
       await tx`select m.id as member_id, ph.e164 as address, m.home_city from network.members m join platform.phone_identities ph on ph.person_id = m.person_id
         where m.app_id = ${this.app.id} and m.account_status not in ('invited', 'removed') and ph.hold is null order by m.id`,
+      await tx`select ci.member_id, ci.address, m.home_city from network.channel_identities ci
+        join network.members m on m.app_id = ci.app_id and m.id = ci.member_id
+        where ci.app_id = ${this.app.id} and ci.channel = 'email'
+          and m.account_status not in ('invited', 'removed') order by ci.is_primary desc, ci.member_id`,
     ]);
-    this.addrToMember.clear(); this.memberToAddr.clear();
+    this.addrToMember.clear(); this.memberToAddr.clear(); this.memberToEmail.clear();
     for (const r of [...platform, ...legacy] as any[]) {
       if (!this.cities.includes(r.home_city)) continue;
       const a = normalizeAddress(r.address);
@@ -1113,11 +1175,17 @@ export class NetworkRuntime {
       if (!this.addrToMember.has(a)) this.addrToMember.set(a, r.member_id);
       if (!this.memberToAddr.has(r.member_id)) this.memberToAddr.set(r.member_id, a);
     }
+    for (const r of emails as any[]) {
+      if (!this.cities.includes(r.home_city)) continue;
+      const email = typeof r.address === "string" ? r.address.trim() : "";
+      if (email.includes("@") && !this.memberToEmail.has(r.member_id)) this.memberToEmail.set(r.member_id, email);
+    }
   }
 
   /** Address to member of this app (E.164 or Apple ID, normalized), from the last refresh. */
   memberOf = (address: string): MemberId | undefined => this.addrToMember.get(normalizeAddress(address));
   addressOf = (id: MemberId): string | undefined => this.memberToAddr.get(id);
+  emailOf = (id: MemberId): string | undefined => this.memberToEmail.get(id);
 
   signedMemberTurn(memberId: MemberId, messageId?: string): boolean {
     const turn = this.host.inboundTurn?.();
@@ -1190,8 +1258,28 @@ export class NetworkRuntime {
     return `${key}:${this.nonce}${++this.seq}`;
   }
 
+  private replyGuardCache = new Map<string, LeakGuard>();
+
+  private cachedReplyGuard(memberId: MemberId): LeakGuard {
+    const src = this.net.leakSources([memberId]);
+    const key = JSON.stringify([memberId, src.forbidden ?? [], src.facts ?? [], src.canaries ?? []]);
+    const hit = this.replyGuardCache.get(key);
+    if (hit) {
+      this.replyGuardCache.delete(key);
+      this.replyGuardCache.set(key, hit);
+      return hit;
+    }
+    const guard = new LeakGuard({ ...src, canaryShapes: true, contacts: true });
+    if (this.replyGuardCache.size >= 128) {
+      const oldest = this.replyGuardCache.keys().next().value;
+      if (oldest !== undefined) this.replyGuardCache.delete(oldest);
+    }
+    this.replyGuardCache.set(key, guard);
+    return guard;
+  }
+
   guardedSystemReply(memberId: MemberId, id: string, body: string, type: string): boolean {
-    if (new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body).length) {
+    if (this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true }).length) {
       this.host.log(`[alert] a ${type} text failed the leak guard (${this.id}, ${id})`);
       return false;
     }
@@ -1205,7 +1293,7 @@ export class NetworkRuntime {
     const turn = this.host.inboundTurn?.();
     if (turn?.app !== this.app.id || turn.memberId !== memberId
       || normalizeAddress(this.addressOf(memberId) ?? "") !== normalizeAddress(turn.from)) return;
-    const reasons = new LeakGuard({ ...this.net.leakSources([memberId]), canaryShapes: true }).check(body, { contactAllow: publicLinks });
+    const reasons = this.cachedReplyGuard(memberId).check(body, { exceptOwner: memberId, contacts: true, contactAllow: publicLinks });
     if (reasons.length) {
       this.host.log(`[alert] a ${type} reply failed the leak guard (${this.id}, ${id})`);
       return;
@@ -1315,7 +1403,8 @@ export class NetworkRuntime {
       for (const row of rows as Row[]) personIds.set(row.member_id as string, row.id as string);
     }
     const named = new Set<string>([...u.sends.map(s => s.memberId), ...(u.inbound ? [u.inbound.member_id as string] : []),
-      ...u.standingIntents.map(change => change.memberId), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId)]);
+      ...u.standingIntents.map(change => change.memberId), ...u.blocks.flat(), ...u.optOut.keys(), ...u.postings.map(p => p.managerId),
+      ...u.venueVisits.map(v => v.memberId), ...u.venueRejections.map(r => r.memberId), ...u.meetupArrivals.map(a => a.memberId)]);
     const known = new Set<string>();
     if (named.size) for (const r of await tx`select id from network.members where app_id = ${app} and id in ${tx([...named])}`) known.add(r.id);
     const ok = (id: string) => known.has(id) && !u.forget.has(id);
@@ -1439,6 +1528,31 @@ export class NetworkRuntime {
     for (const r of u.runs) await tx`insert into network.matching_runs ${tx(r)} on conflict (id) do nothing`;
     // Job postings: the intent and its tagged facets on the manager (postings.ts); never for a member this unit forgets.
     for (const p of u.postings) if (ok(p.managerId)) await savePosting(tx, app, p);
+    for (const visit of u.venueVisits) {
+      if (ok(visit.memberId)) {
+        await recordVenueVisit(tx, app, visit.venueId, visit.memberId, visit.opportunityId, visit.visitedAt, {
+          ...(visit.sentiment ? { sentiment: visit.sentiment } : {}),
+          ...(visit.issues ? { issues: visit.issues } : {}),
+          ...(visit.closedReport !== undefined ? { closedReport: visit.closedReport } : {}),
+        });
+      }
+    }
+    for (const rej of u.venueRejections) {
+      if (ok(rej.memberId)) await recordVenueRejection(tx, app, rej.venueId, rej.memberId, rej.reason, rej.rejectedAt);
+    }
+    for (const hold of u.venueHolds) {
+      await reserveVenueConcurrentHold(tx, {
+        venueId: hold.venueId,
+        appId: app,
+        opportunityId: hold.opportunityId,
+        headcount: hold.headcount,
+        windowStart: hold.windowStart,
+        windowEnd: hold.windowEnd,
+      });
+    }
+    for (const arrival of u.meetupArrivals) {
+      if (ok(arrival.memberId)) await upsertMeetupArrival(tx, app, arrival);
+    }
     for (const [id, out] of u.optOut) if (ok(id)) {
       await tx`update network.members set opted_out = ${out} where app_id = ${app} and id = ${id}`;
       if (out) await this.host.homeHelpRecipientStopped?.(tx, app, id);
@@ -1471,6 +1585,9 @@ export class NetworkRuntime {
       await tx`delete from platform.profile_suggestion_batches where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.intents where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.presence where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.venue_visits where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.venue_rejections where app_id = ${app} and member_id = ${id}`;
+      await tx`delete from network.meetup_arrivals where app_id = ${app} and member_id = ${id}`;
       await tx`delete from network.edges where app_id = ${app} and (from_id = ${id} or to_id = ${id})`;
       await tx`delete from network.channel_identities where app_id = ${app} and member_id = ${id}`;
       await tx`delete from platform.member_invitations where app_id=${app} and (inviter_member_id=${id} or redeemed_member_id=${id})`;
@@ -1784,9 +1901,12 @@ export class NetworkRuntime {
       const matchingOpen = present && (this.matchingAllowed || this.city === "nyc");
       const ageEligible = canBeMatched(await accounts.lowestAge(e164, binding.person));
       await this.importStored();
-      const minor = this.net.exportState().members.find(m => m.id === memberId)?.minor === true;
+      const storedState = this.net.exportState();
+      const minor = storedState.members.find(m => m.id === memberId)?.minor === true;
+      const tz = CITY_TZ[isCity(this.city) ? this.city : "nyc"];
+      const dayFmt = new Intl.DateTimeFormat("en-US", { timeZone: tz, month: "short", day: "numeric" });
       const live = this.net.relayLiveMatches(memberId as MemberId).map(x => ({ ...x,
-        day: `${x.meeting ? "meeting" : "introduced"} ${new Intl.DateTimeFormat("en-US", { timeZone: CITY_TZ[this.city as City], month: "short", day: "numeric" }).format(x.match.at)}` }));
+        day: `${x.meeting ? "meeting" : "introduced"} ${dayFmt.format(x.match.at)}` }));
       const shown = live.flatMap(({ match, otherFirstName, day }) => {
         const sameName = live.filter(x => x.otherFirstName.toLowerCase() === otherFirstName.toLowerCase());
         const label = contextItemLabel(sameName.length, sameName.filter(x => x.day === day).length);
@@ -1795,6 +1915,25 @@ export class NetworkRuntime {
         const itemSafe = (text: string) => turnBaseSafe(text) && !leakIdx.otherNamesLeak(text, memberId as MemberId, firstName, otherFirstName);
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });
+      const listedIds = new Set(shown.map(item => item.id));
+      for (const opp of storedState.opps) {
+        if (listedIds.has(opp.id) || !opp.participants.includes(memberId as MemberId)) continue;
+        if (!this.net.teenItemListed(opp.id, ageEligible) || !turnBaseSafe(opp.id)) continue;
+        const statusEntry = opp.status.find(([id]) => id === memberId);
+        if (opp.stage === "probing" && opp.contacted.includes(memberId as MemberId) && statusEntry?.[1] === "probing") {
+          const summary = "Pending introduction waiting for your reply";
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "probe", summary });
+            listedIds.add(opp.id);
+          }
+        } else if (opp.stage === "scheduled" && opp.meetingAt !== undefined && opp.meetingAt > snapshot.now && statusEntry?.[1] === "yes") {
+          const summary = `Upcoming meetup (${dayFmt.format(opp.meetingAt)})`;
+          if (safe(summary)) {
+            shown.push({ id: opp.id, kind: "booking", summary });
+            listedIds.add(opp.id);
+          }
+        }
+      }
       const activeItems = shown.slice(0, contextActiveItemCount(shown.length));
       return {
         firstName, city: member.homeCity, state, stateFrom: participation.active?participation.window!.from:null, stateUntil: participation.active?participation.window!.until:null, facets,

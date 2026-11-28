@@ -623,6 +623,158 @@ pure def lawUnansweredStreakStopsCold(
   (unansweredCold >= maxUnansweredCold) implies not(contactCooldownAllowed(
     true, isQuietHours, daysSinceCold, coldTouches30d, unansweredCold, opTouchesToday
   ))
+```
+
+## Story: Gate Apollo enrichment credits, 10-platform outreach risk, and out-of-network quality intake
+
+> As an operator, I want Apollo enrichment credits to respect daily and monthly caps and contact safety, every platform touch to fail closed on high report risk or unsolicited links, and out-of-network candidates to receive at most one warm Network invite only after verified adult age, high quality, delivered value, and healthy queue pressure.
+
+### Apollo enrichment credits obey daily and monthly caps, billing arming, lockdown, suppression, and adult-only safety
+
+Zero-credit search calls proceed whenever lockdown, suppression, and known-minor flags are all false. Paid credit requests (`requestedCredits > 0`) additionally require `billingArmed` to be true and cumulative daily and monthly credits to remain within `dailyCreditCap` and `monthlyCreditCap`.
+
+```quint
+pure val maxPlatformReportRisk: int = 24
+pure val minIntakeQualityScore: int = 70
+
+pure def canAuthorizeApolloCredits(
+  creditsUsedToday: int,
+  requestedCredits: int,
+  dailyCreditCap: int,
+  creditsUsedMonth: int,
+  monthlyCreditCap: int,
+  billingArmed: bool,
+  lockdown: bool,
+  isSuppressed: bool,
+  isKnownMinor: bool
+): bool =
+  requestedCredits >= 0
+    and creditsUsedToday >= 0
+    and creditsUsedMonth >= 0
+    and dailyCreditCap >= 0
+    and monthlyCreditCap >= 0
+    and not(lockdown)
+    and not(isSuppressed)
+    and not(isKnownMinor)
+    and (requestedCredits == 0 or (
+      billingArmed
+        and creditsUsedToday + requestedCredits <= dailyCreditCap
+        and creditsUsedMonth + requestedCredits <= monthlyCreditCap
+    ))
+
+pure def lawApolloCreditsRespectCapsAndSafety(
+  creditsUsedToday: int,
+  requestedCredits: int,
+  dailyCreditCap: int,
+  creditsUsedMonth: int,
+  monthlyCreditCap: int,
+  billingArmed: bool,
+  lockdown: bool,
+  isSuppressed: bool,
+  isKnownMinor: bool
+): bool =
+  canAuthorizeApolloCredits(
+    creditsUsedToday, requestedCredits, dailyCreditCap,
+    creditsUsedMonth, monthlyCreditCap, billingArmed,
+    lockdown, isSuppressed, isKnownMinor
+  ) implies (
+    not(lockdown)
+      and not(isSuppressed)
+      and not(isKnownMinor)
+      and (requestedCredits == 0 or (
+        billingArmed
+          and creditsUsedToday + requestedCredits <= dailyCreditCap
+          and creditsUsedMonth + requestedCredits <= monthlyCreditCap
+      ))
+  )
+```
+
+### Platform outreach fails closed on suspended channels, high report risk, or unsolicited links on link-free platforms
+
+Dispatching a platform touch requires an active non-suspended channel, passed contact safety and cooldown checks, remaining daily quota (`0 <= sentToday < effectiveDailyCap`), report risk within `0..24` (`maxPlatformReportRisk`), and zero unsolicited URLs when the platform requires link-free messaging.
+
+```quint
+pure def canDispatchPlatformTouch(
+  sentToday: int,
+  effectiveDailyCap: int,
+  reportRiskScore: int,
+  hasUnsolicitedUrl: bool,
+  requiresLinkFree: bool,
+  contactSafe: bool,
+  cooldownAllowed: bool,
+  channelSuspended: bool
+): bool =
+  not(channelSuspended)
+    and contactSafe
+    and cooldownAllowed
+    and sentToday >= 0
+    and effectiveDailyCap > 0
+    and sentToday < effectiveDailyCap
+    and reportRiskScore >= 0
+    and reportRiskScore <= maxPlatformReportRisk
+    and (not(requiresLinkFree) or not(hasUnsolicitedUrl))
+
+pure def lawHighReportRiskOrSuspendedBlocked(
+  sentToday: int,
+  effectiveDailyCap: int,
+  reportRiskScore: int,
+  hasUnsolicitedUrl: bool,
+  requiresLinkFree: bool,
+  contactSafe: bool,
+  cooldownAllowed: bool,
+  channelSuspended: bool
+): bool =
+  (channelSuspended or reportRiskScore > maxPlatformReportRisk or (requiresLinkFree and hasUnsolicitedUrl))
+    implies not(canDispatchPlatformTouch(
+      sentToday, effectiveDailyCap, reportRiskScore,
+      hasUnsolicitedUrl, requiresLinkFree, contactSafe, cooldownAllowed, channelSuspended
+    ))
+```
+
+### Out-of-network quality intake invites verified high-signal adults at most once after delivering value
+
+Promoting an out-of-network candidate into a warm Network invite requires verified adult age (`18..120`), quality score between `70` and `100` inclusive (`minIntakeQualityScore`), prior concrete value delivery, an explicit positive signal, clean contact safety, no platform queue backpressure pause, and zero prior invites.
+
+```quint
+pure def canPromoteOutOfNetworkCandidate(
+  statedAge: int,
+  qualityScore: int,
+  valueDelivered: bool,
+  explicitPositiveSignal: bool,
+  contactSafe: bool,
+  queuePaused: bool,
+  priorInviteCount: int
+): bool =
+  adultParticipantAge(statedAge)
+    and qualityScore >= minIntakeQualityScore
+    and qualityScore <= 100
+    and valueDelivered
+    and explicitPositiveSignal
+    and contactSafe
+    and not(queuePaused)
+    and priorInviteCount == 0
+
+pure def lawIntakeRequiresAdultQualityValueAndOnceOnly(
+  statedAge: int,
+  qualityScore: int,
+  valueDelivered: bool,
+  explicitPositiveSignal: bool,
+  contactSafe: bool,
+  queuePaused: bool,
+  priorInviteCount: int
+): bool =
+  canPromoteOutOfNetworkCandidate(
+    statedAge, qualityScore, valueDelivered,
+    explicitPositiveSignal, contactSafe, queuePaused, priorInviteCount
+  ) implies (
+    adultParticipantAge(statedAge)
+      and qualityScore >= minIntakeQualityScore
+      and valueDelivered
+      and explicitPositiveSignal
+      and contactSafe
+      and not(queuePaused)
+      and priorInviteCount == 0
+  )
 
 pure val tierValues = Set(0, 1, 2, 3, 4)
 pure val amountCentsValues = Set(-10, 0, 100, 200, 400, 500)
@@ -659,4 +811,14 @@ pure val daysSinceColdValues = Set(0, 7, 13, 14, 30)
 pure val coldTouches30dValues = Set(-1, 0, 1, 2)
 pure val unansweredColdValues = Set(-1, 0, 1, 2)
 pure val opTouchesTodayValues = Set(-1, 0, 2, 3)
+pure val creditsUsedTodayValues = Set(-1, 0, 49, 50)
+pure val requestedCreditsValues = Set(-1, 0, 1, 5)
+pure val dailyCreditCapValues = Set(0, 50)
+pure val creditsUsedMonthValues = Set(-1, 0, 999, 1000)
+pure val monthlyCreditCapValues = Set(0, 1000)
+pure val effectiveDailyCapValues = Set(0, 2, 8)
+pure val reportRiskScoreValues = Set(-1, 0, 24, 25, 50)
+pure val statedAgeValues = Set(-1, 16, 17, 18, 30, 120, 121)
+pure val qualityScoreValues = Set(-1, 40, 69, 70, 95, 101)
+pure val priorInviteCountValues = Set(-1, 0, 1, 2)
 ```

@@ -1,0 +1,30 @@
+{"kind":"submit_profile","text":"Graduated in 2019 and moved to SF in 2022. Love trail running and specialty coffee.","want":"accepted","note":"benign 4-digit years"}
+{"kind":"submit_profile","text":"Built my first app back in 2018, now 31 and into climbing in Mission.","want":"accepted","note":"benign year 2018"}
+{"kind":"submit_profile","text":"Worked at a 2024 climate startup, looking for cofounder chats in Brooklyn.","want":"accepted","note":"benign year 2024"}
+{"kind":"submit_profile","text":"Budget around $1500/mo for studio space, 1600 elo chess player in Lincoln Park.","want":"accepted","note":"benign currency and elo rating"}
+{"kind":"submit_profile","text":"Ran a 1950 meter climb last summer, live in a 2000 sqft loft in Williamsburg.","want":"accepted","note":"benign elevation and sqft"}
+{"kind":"submit_profile","text":"Born in 1994, moved to Silver Lake in 2021, looking for ceramics and hiking friends.","want":"accepted","note":"benign birth year and move year"}
+{"kind":"submit_profile","text":"Moved to Brickell in 2015, love jazz piano and spend $1200 a year on concert tickets.","want":"accepted","note":"benign year and currency"}
+{"kind":"submit_profile","text":"Been coding since 2016, prefer quiet tea shops and 5k morning runs.","want":"accepted","note":"benign start year"}
+{"kind":"submit_profile","text":"Looking to meet founders and designers in Hayes Valley, open on weeknights.","want":"accepted","note":"plain adult profile"}
+{"kind":"submit_profile","text":"I like board games, climbing, and espresso. Usually free Saturday mornings.","want":"accepted","note":"concise adult profile"}
+{"kind":"submit_profile","text":"Finished grad school in 2020 and spent 2023 abroad in Lisbon.","want":"accepted","note":"multiple benign years"}
+{"kind":"submit_profile","text":"My 1800 elo blitz rating is my main hobby, plus biking along the lakefront.","want":"accepted","note":"elo rating only"}
+{"kind":"submit_profile","text":"Paying $2400 rent in West Loop and looking for running partners.","want":"accepted","note":"currency amount"}
+{"kind":"submit_profile","text":"My verification code is 482910","want":"rejected","note":"explicit 6-digit verification code"}
+{"kind":"submit_profile","text":"OTP: 8392 please verify me","want":"rejected","note":"4-digit OTP with cue"}
+{"kind":"submit_profile","text":"Confirm code 5519 to log me in","want":"rejected","note":"4-digit code with cue"}
+{"kind":"submit_profile","text":"My SMS pin is 4920","want":"rejected","note":"4-digit pin with cue"}
+{"kind":"submit_profile","text":"Passcode 774128 from the text","want":"rejected","note":"6-digit passcode"}
+{"kind":"submit_profile","text":"Call me at 415-555-0192","want":"rejected","note":"US phone number"}
+{"kind":"submit_profile","text":"Text +1 212 555 0144 if interested","want":"rejected","note":"E.164 phone number"}
+{"kind":"submit_profile","text":"Reach me at alex@example.com for coffee","want":"rejected","note":"email address"}
+{"kind":"submit_profile","text":"Reach me at alex dot runs at gmail dot com anytime","want":"rejected","note":"obfuscated email contact"}
+{"kind":"submit_profile","text":"My phone is (310) 555-0188","want":"rejected","note":"formatted phone number"}
+{"kind":"output_gate","text":"You have an open intro check-in for coffee in Hayes Valley. Reply in your text thread.","want":"clean","note":"clean open probe summary"}
+{"kind":"output_gate","text":"Your meetup is set for Thursday 7pm at Sightglass Coffee (SoMa).","want":"clean","note":"clean booked update"}
+{"kind":"output_gate","text":"Open https://friends.help to review your profile.","want":"clean","note":"clean app domain link"}
+{"kind":"output_gate","text":"Match mem_9a8b7c is waiting for your reply.","want":"leaked","note":"internal member id"}
+{"kind":"output_gate","text":"Text them at (310) 555-0198 when you arrive.","want":"leaked","note":"phone number leak"}
+{"kind":"output_gate","text":"Email maya@example.com to coordinate.","want":"leaked","note":"email leak"}
+{"kind":"output_gate","text":"Scheduled 2026-11-28T19:00 at the cafe.","want":"leaked","note":"raw ISO timestamp"}

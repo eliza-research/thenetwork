@@ -15,6 +15,8 @@
 //    to someone is refused, the consent history and the age floor move with the person, and the old
 //    number's sessions end. The phone_changes row (keyed hashes only) is the audit record.
 import { randomUUID } from "node:crypto";
+import type { SQL } from "../../core/src/runtime/postgres.ts";
+import { resolveCity } from "../../core/src/cities.ts";
 import { isCity, LAUNCH_CITIES, type City } from "../../core/src/types.ts";
 import { DAY } from "../../core/src/clock.ts";
 import {
@@ -26,9 +28,10 @@ import {
 import { declineEndsUnboundAccess, joinAgeFieldsValid, joinConsentEvidenceAllowed, joinFailureForgetsMembership, profileJoinAge, signupAccountViewMatches, step as stepEnrollment, typedJoinEntry, type Enrollment } from "../../core/src/generated/siteEnrollment.ts";
 import { browserSignupMemberAllowed } from "../../core/src/generated/oauthBrowserAuthorization.ts";
 import { adultAge, verifiedBrowserBirthMayBeKept } from "../../core/src/generated/memberAge.ts";
-import { canJoin, validAge } from "../../core/src/policy.ts";
+import { canEnableDomain } from "../../core/src/generated/memberDomains.ts";
+import { canJoin, MIN_MEMBER_AGE, validAge } from "../../core/src/policy.ts";
 import { type AgeReading, type AgeRecord, ageRecordOf, canJoinApp, effectiveAgeAt, joinAgeCheck, joinBirthDateUsable, lowestAge, readingAge, signupEligibilityAt, type TeenBarReason } from "./age.ts";
-import type { AppId, AppInfo } from "./apps.ts";
+import { availableDomainsForAge, defaultDomainsForBrand, DOMAIN_IDS, DOMAIN_TO_APP, toMemberDomain, type AppId, type AppInfo, type DomainId } from "./apps.ts";
 import { type ConsentEvent, resolveConsent } from "./consent.ts";
 import { InvitationUnavailable, type ReferralJoin } from "./invite-links.ts";
 import type { SeedInvitationReferral } from "./seed-invitations.ts";
@@ -81,8 +84,12 @@ const HOME_CITY_ALIASES: Record<string, City> = {
 export function homeCityOf(value: unknown): City | undefined {
   if (typeof value !== "string") return undefined;
   const city = value.normalize("NFKC").trim().toLowerCase().replace(/\s+/g, " ");
+  if (!city) return undefined;
   if (isCity(city) && LAUNCH_CITIES.includes(city)) return city;
-  return HOME_CITY_ALIASES[city];
+  const aliased = HOME_CITY_ALIASES[city];
+  if (aliased) return aliased;
+  const resolved = resolveCity(city);
+  return isCity(resolved) ? resolved : undefined;
 }
 
 export interface HomeInput { homeCity: City; neighborhood?: string }
@@ -100,6 +107,79 @@ export function parseHome(body: Record<string, unknown>): HomeInput | undefined 
 
 export type JoinInput = JoinProfile & ({ age: number; birthDate?: undefined } | { birthDate: number; age?: undefined });
 
+export const VOIP_LINE_TYPES: ReadonlySet<string> = new Set([
+  "voip", "non_fixed_voip", "nonfixedvoip", "virtual", "burner", "toll_free", "tollfree",
+]);
+
+export function isVoipLineType(lineType: string | null | undefined): boolean {
+  if (!lineType) return false;
+  const norm = lineType.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return VOIP_LINE_TYPES.has(norm) || norm.includes("voip");
+}
+
+export interface SafetyQuarantineRecord {
+  readonly personId: string;
+  readonly reason: string;
+  readonly originApp: string;
+  readonly originRef: string | null;
+  readonly active: boolean;
+  readonly createdAt: number;
+  readonly clearedAt: number | null;
+}
+
+export type BoundarySignalKind = "post_meet_block" | "checkin_concern" | "self_promotion";
+
+export interface BoundarySignalInput {
+  readonly subjectPersonId?: string | null;
+  readonly subjectPhoneHash: string;
+  readonly reporterHash: string;
+  readonly appId: AppId;
+  readonly kind: BoundarySignalKind;
+  readonly at?: number;
+}
+
+export interface StoredBoundarySignal {
+  readonly subjectPersonId: string | null;
+  readonly subjectPhoneHash: string;
+  readonly reporterHash: string;
+  readonly appId: string;
+  readonly kind: BoundarySignalKind;
+  readonly createdAt: number;
+}
+
+export interface MemberReliabilityInput {
+  readonly personId: string;
+  readonly phoneHash: string;
+  readonly strikes: number;
+  readonly lateCancels4h?: number;
+  readonly lateCancels24h?: number;
+  readonly rescheduleChurn?: number;
+  readonly cleanStreak?: number;
+  readonly resolved90d?: number;
+  readonly completed90d?: number;
+  readonly provisionalNoShow?: boolean;
+  readonly at?: number;
+}
+
+export interface StoredMemberReliability {
+  readonly personId: string;
+  readonly phoneHash: string;
+  readonly strikes: number;
+  readonly lateCancels4h: number;
+  readonly lateCancels24h: number;
+  readonly rescheduleChurn: number;
+  readonly cleanStreak: number;
+  readonly resolved90d: number;
+  readonly completed90d: number;
+  readonly provisionalNoShow: boolean;
+  readonly updatedAt: number;
+}
+
+function isMissingRelation(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return code === "42P01" || code === "42703";
+}
+
 interface JoinProfile {
   firstName: string;
   homeCity?: City;
@@ -107,6 +187,7 @@ interface JoinProfile {
   zip?: string;
   interests?: string[];
   about?: string;
+  phoneLineType?: string;
   /** The person ticked the box next to the app's opt-in text: the client sends that text, or its version. */
   consent: { sms: true; wording?: string; version?: string };
 }
@@ -170,6 +251,7 @@ export function parseJoin(body: unknown): JoinInput | undefined {
     out.interests = list as string[];
   }
   if (b.about !== undefined) { const v = str(b.about, 1000); if (!v) return undefined; out.about = v; }
+  if (b.phoneLineType !== undefined) { const v = str(b.phoneLineType, 32); if (!v) return undefined; out.phoneLineType = v.toLowerCase(); }
   return out;
 }
 
@@ -214,6 +296,8 @@ export interface AccountHooks {
   onAgeLowered?(ctx: { personId: string; age: number }): Promise<void> | void;
   /** The ages a profile text states about the person (the Network's own reader). The join's age check counts them. */
   profileAges?(text: string): number[];
+  /** True when the person currently has an active safety hold or quarantine in any app. */
+  hasActiveSafetyHold?(personId: string): Promise<boolean> | boolean;
 }
 
 /** `session`: the token hash of the web session that acts (a web join binds only that session to the person). */
@@ -223,15 +307,142 @@ export interface Who { e164: string; personId: string | null; session?: string }
 export const publicMembership = (m: Membership | undefined) =>
   m && m.state !== "removed" ? { state: m.state, joinedAt: m.joinedAt === null ? null : new Date(m.joinedAt).toISOString(), firstName: m.firstName } : null;
 
+export type DomainBlockReason = "minor_restricted" | "under_13" | "banned" | "held";
+
+export interface BlockedDomain {
+  domain: DomainId;
+  reason: DomainBlockReason;
+}
+
+export interface UpdateMemberDomainsInput {
+  store: PeopleStore;
+  personId: string;
+  enable?: readonly DomainId[];
+  disable?: readonly DomainId[];
+  originBrand?: AppId;
+  source?: string;
+  now?: number;
+  banned?: boolean;
+  held?: boolean;
+  onProvisionMembership?: (membership: Membership) => Promise<void> | void;
+}
+
+export interface UpdateMemberDomainsResult {
+  enabledDomains: DomainId[];
+  availableDomains: DomainId[];
+  blocked: BlockedDomain[];
+  applied: { enabled: DomainId[]; disabled: DomainId[] };
+}
+
+export async function updateMemberDomains(input: UpdateMemberDomainsInput): Promise<UpdateMemberDomainsResult> {
+  const { store, personId } = input;
+  const at = input.now ?? Date.now();
+  const source = input.source ?? "member_update";
+  const person = await store.getPerson(personId);
+  const phoneHashes = await store.phoneHashesOf(personId);
+  const banned = input.banned ?? (
+    (await Promise.all(phoneHashes.map(h => store.isBanned(h, personId)))).some(Boolean)
+    || await store.isBanned("", personId)
+  );
+  const held = input.held ?? (
+    !person || person.deletedAt !== null || (await store.heldPhones()).some(p => p.personId === personId)
+  );
+  const age = effectiveAgeAt(await store.ageStanding(personId, phoneHashes[0] ?? null), at);
+  const availableDomains = banned || held ? [] : availableDomainsForAge(age);
+  const enableList = [...new Set(input.enable ?? [])];
+  const disableList = [...new Set(input.disable ?? [])];
+  const blocked: BlockedDomain[] = [];
+  const applied: { enabled: DomainId[]; disabled: DomainId[] } = { enabled: [], disabled: [] };
+
+  const existingMemberships = await store.memberships(personId);
+  const existingFirstName = existingMemberships.find(m => m.state !== "removed" && m.firstName)?.firstName ?? null;
+
+  // Materialize any fallback-derived enabled domains before inserting new rows so fallback domains are preserved.
+  const currentDomains = await store.listMemberDomains(personId);
+  for (const row of currentDomains) {
+    if (row.source === "membership_fallback" && row.enabled && !disableList.includes(row.domain)) {
+      await store.setMemberDomain({
+        personId,
+        domain: row.domain,
+        enabled: true,
+        originBrand: row.originBrand,
+        source: "membership_backfill",
+        at: row.enabledAt || at,
+      });
+    }
+  }
+
+  for (const domain of enableList) {
+    const allowed = canEnableDomain(toMemberDomain(domain), age ?? 0, banned, held);
+    if (!allowed) {
+      const reason: DomainBlockReason = banned
+        ? "banned"
+        : held
+          ? "held"
+          : (age === undefined || age < MIN_MEMBER_AGE ? "under_13" : "minor_restricted");
+      blocked.push({ domain, reason });
+      continue;
+    }
+    await store.setMemberDomain({ personId, domain, enabled: true, originBrand: input.originBrand, source, at });
+    const backingApp = DOMAIN_TO_APP[domain];
+    const current = await store.getMembership(personId, backingApp);
+    if (!current || current.state === "removed" || current.state === "invited") {
+      const provisioned: Membership = {
+        app: backingApp,
+        personId,
+        memberId: current?.state === "invited" ? current.memberId : `${backingApp}_${randomUUID()}`,
+        state: "active",
+        review: null,
+        firstName: existingFirstName,
+        profile: {},
+        joinedAt: at,
+        leftAt: null,
+      };
+      await store.putMembership(provisioned);
+      await input.onProvisionMembership?.(provisioned);
+    } else if (current.state === "paused") {
+      const resumed: Membership = { ...current, state: "active" };
+      await store.putMembership(resumed);
+      await input.onProvisionMembership?.(resumed);
+    }
+    applied.enabled.push(domain);
+  }
+
+  for (const domain of disableList) {
+    if (banned || held) {
+      blocked.push({ domain, reason: banned ? "banned" : "held" });
+      continue;
+    }
+    await store.setMemberDomain({ personId, domain, enabled: false, originBrand: input.originBrand, source, at });
+    const backingApp = DOMAIN_TO_APP[domain];
+    const current = await store.getMembership(personId, backingApp);
+    if (current && (current.state === "active" || current.state === "onboarding")) {
+      await store.putMembership({ ...current, state: "paused" });
+    }
+    applied.disabled.push(domain);
+  }
+
+  const rows = await store.listMemberDomains(personId);
+  const enabledDomains = rows.filter(r => r.enabled && availableDomains.includes(r.domain)).map(r => r.domain);
+  return { enabledDomains, availableDomains, blocked, applied };
+}
+
 export class Accounts {
   private readonly phoneListeners: ((ctx: { personId: string }) => Promise<unknown> | unknown)[] = [];
   private ageListener: ((phoneHash: string) => Promise<unknown> | unknown) | undefined;
+  private readonly memQuarantines = new Map<string, SafetyQuarantineRecord>();
+  private readonly memBoundarySignals = new Map<string, StoredBoundarySignal>();
+  private readonly memReliabilityByPerson = new Map<string, StoredMemberReliability>();
+  private readonly memReliabilityByPhone = new Map<string, StoredMemberReliability>();
   constructor(
     readonly store: PeopleStore,
-    private readonly opts: { hashKey: string; now?: () => number; hooks?: AccountHooks; apps: (id: AppId) => AppInfo },
+    private readonly opts: { hashKey: string; now?: () => number; hooks?: AccountHooks; apps: (id: AppId) => AppInfo; sql?: SQL },
   ) {}
   private now() { return (this.opts.now ?? Date.now)(); }
   private get hooks() { return this.opts.hooks ?? {}; }
+  private get sql(): SQL | undefined {
+    return this.opts.sql ?? (this.store as unknown as { sql?: SQL }).sql;
+  }
   phoneHash(e164: string) { return keyedHash(this.opts.hashKey, `phone:${e164}`); }
   /** The key of the number's one-time Eliza notice row (platform.eliza_notices). */
   noticeHash(e164: string) { return keyedHash(this.opts.hashKey, `eliza_notice:${e164}`); }
@@ -330,6 +541,237 @@ export class Accounts {
     return { ownership: "OwnedPhone" as const, person };
   }
 
+  async recordSafetyQuarantine(personId: string, reason: string, originApp: AppId, originRef: string | null = null, at = this.now()): Promise<void> {
+    const rec: SafetyQuarantineRecord = { personId, reason, originApp, originRef, active: true, createdAt: at, clearedAt: null };
+    this.memQuarantines.set(personId, rec);
+    const sql = this.sql;
+    if (!sql) return;
+    try {
+      await sql`insert into platform.person_safety_quarantine (person_id, reason, origin_app, origin_ref, active, created_at, cleared_at)
+        values (${personId}, ${reason}, ${originApp}, ${originRef}, true, ${at}, null)
+        on conflict (person_id) do update set reason = excluded.reason, origin_app = excluded.origin_app,
+          origin_ref = excluded.origin_ref, active = true, created_at = excluded.created_at, cleared_at = null`;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+  }
+
+  async clearSafetyQuarantine(personId: string, at = this.now()): Promise<void> {
+    const prev = this.memQuarantines.get(personId);
+    if (prev) this.memQuarantines.set(personId, { ...prev, active: false, clearedAt: at });
+    const sql = this.sql;
+    if (!sql) return;
+    try {
+      await sql`update platform.person_safety_quarantine set active = false, cleared_at = ${at} where person_id = ${personId} and active = true`;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+  }
+
+  async activeSafetyQuarantine(personId: string): Promise<SafetyQuarantineRecord | undefined> {
+    const sql = this.sql;
+    if (sql) {
+      try {
+        const [r] = await sql<{ person_id: string; reason: string; origin_app: string; origin_ref: string | null; active: boolean; created_at: string | number; cleared_at: string | number | null }[]>`
+          select person_id, reason, origin_app, origin_ref, active, created_at, cleared_at
+          from platform.person_safety_quarantine
+          where person_id = ${personId} and active = true`;
+        if (r) {
+          return {
+            personId: r.person_id, reason: r.reason, originApp: r.origin_app, originRef: r.origin_ref,
+            active: r.active, createdAt: Number(r.created_at), clearedAt: r.cleared_at === null ? null : Number(r.cleared_at),
+          };
+        }
+        return undefined;
+      } catch (e) {
+        if (!isMissingRelation(e)) throw e;
+      }
+    }
+    const mem = this.memQuarantines.get(personId);
+    return mem?.active ? mem : undefined;
+  }
+
+  async hasActiveSafetyHoldOrQuarantine(personId: string): Promise<boolean> {
+    if (await this.hooks.hasActiveSafetyHold?.(personId)) return true;
+    if (await this.activeSafetyQuarantine(personId)) return true;
+    const sql = this.sql;
+    if (!sql) return false;
+    try {
+      const [staffHold] = await sql<{ hit: number }[]>`
+        select 1 as hit from platform.staff_safety_holds
+        where person_id = ${personId}::uuid
+        limit 1`;
+      if (staffHold) return true;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+    try {
+      const [reportHold] = await sql<{ hit: number }[]>`
+        select 1 as hit from platform.report_safety_carryovers
+        where person_id = ${personId}::uuid
+        limit 1`;
+      if (reportHold) return true;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+    return false;
+  }
+
+  async recordBoundarySignal(input: BoundarySignalInput): Promise<void> {
+    const at = input.at ?? this.now();
+    const key = `${input.subjectPhoneHash}|${input.reporterHash}|${input.appId}|${input.kind}`;
+    this.memBoundarySignals.set(key, {
+      subjectPersonId: input.subjectPersonId ?? null,
+      subjectPhoneHash: input.subjectPhoneHash,
+      reporterHash: input.reporterHash,
+      appId: input.appId,
+      kind: input.kind,
+      createdAt: at,
+    });
+    const sql = this.sql;
+    if (!sql) return;
+    try {
+      await sql`insert into platform.person_boundary_signals (subject_person_id, subject_phone_hash, reporter_hash, app_id, kind, created_at)
+        values (${input.subjectPersonId ?? null}, ${input.subjectPhoneHash}, ${input.reporterHash}, ${input.appId}, ${input.kind}, ${at})
+        on conflict (subject_phone_hash, reporter_hash, app_id, kind) do update
+          set subject_person_id = coalesce(excluded.subject_person_id, platform.person_boundary_signals.subject_person_id),
+              created_at = greatest(platform.person_boundary_signals.created_at, excluded.created_at)`;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+  }
+
+  async boundarySignalsForPhone(subjectPhoneHash: string, sinceMs = 0): Promise<StoredBoundarySignal[]> {
+    const sql = this.sql;
+    if (sql) {
+      try {
+        const rows = await sql<{ subject_person_id: string | null; subject_phone_hash: string; reporter_hash: string; app_id: string; kind: BoundarySignalKind; created_at: string | number }[]>`
+          select subject_person_id, subject_phone_hash, reporter_hash, app_id, kind, created_at
+          from platform.person_boundary_signals
+          where subject_phone_hash = ${subjectPhoneHash} and created_at >= ${sinceMs}
+          order by created_at desc`;
+        return rows.map(r => ({
+          subjectPersonId: r.subject_person_id, subjectPhoneHash: r.subject_phone_hash,
+          reporterHash: r.reporter_hash, appId: r.app_id, kind: r.kind, createdAt: Number(r.created_at),
+        }));
+      } catch (e) {
+        if (!isMissingRelation(e)) throw e;
+      }
+    }
+    return [...this.memBoundarySignals.values()]
+      .filter(s => s.subjectPhoneHash === subjectPhoneHash && s.createdAt >= sinceMs)
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  async upsertMemberReliability(input: MemberReliabilityInput): Promise<void> {
+    const at = input.at ?? this.now();
+    const rec: StoredMemberReliability = {
+      personId: input.personId,
+      phoneHash: input.phoneHash,
+      strikes: Math.max(0, Math.round(input.strikes)),
+      lateCancels4h: Math.max(0, Math.round(input.lateCancels4h ?? 0)),
+      lateCancels24h: Math.max(0, Math.round(input.lateCancels24h ?? 0)),
+      rescheduleChurn: Math.max(0, Math.round(input.rescheduleChurn ?? 0)),
+      cleanStreak: Math.max(0, Math.round(input.cleanStreak ?? 0)),
+      resolved90d: Math.max(0, Math.round(input.resolved90d ?? 0)),
+      completed90d: Math.max(0, Math.round(input.completed90d ?? 0)),
+      provisionalNoShow: input.provisionalNoShow === true,
+      updatedAt: at,
+    };
+    this.memReliabilityByPerson.set(rec.personId, rec);
+    this.memReliabilityByPhone.set(rec.phoneHash, rec);
+    const sql = this.sql;
+    if (!sql) return;
+    try {
+      await sql`insert into platform.member_reliability
+          (person_id, phone_hash, strikes, late_cancels_4h, late_cancels_24h, reschedule_churn, clean_streak, resolved_90d, completed_90d, provisional_no_show, updated_at)
+        values (${rec.personId}, ${rec.phoneHash}, ${rec.strikes}, ${rec.lateCancels4h}, ${rec.lateCancels24h}, ${rec.rescheduleChurn}, ${rec.cleanStreak}, ${rec.resolved90d}, ${rec.completed90d}, ${rec.provisionalNoShow}, ${rec.updatedAt})
+        on conflict (person_id) do update set
+          phone_hash = excluded.phone_hash,
+          strikes = excluded.strikes,
+          late_cancels_4h = excluded.late_cancels_4h,
+          late_cancels_24h = excluded.late_cancels_24h,
+          reschedule_churn = excluded.reschedule_churn,
+          clean_streak = excluded.clean_streak,
+          resolved_90d = excluded.resolved_90d,
+          completed_90d = excluded.completed_90d,
+          provisional_no_show = excluded.provisional_no_show,
+          updated_at = excluded.updated_at`;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+  }
+
+  async getMemberReliability(personId: string, phoneHash?: string): Promise<StoredMemberReliability | undefined> {
+    const sql = this.sql;
+    if (sql) {
+      try {
+        const rows = phoneHash
+          ? await sql<Record<string, any>[]>`
+              select * from platform.member_reliability
+              where person_id = ${personId} or phone_hash = ${phoneHash}
+              order by case when person_id = ${personId} then 0 else 1 end, updated_at desc limit 1`
+          : await sql<Record<string, any>[]>`
+              select * from platform.member_reliability where person_id = ${personId} limit 1`;
+        const r = rows[0];
+        if (!r) return undefined;
+        return {
+          personId: String(r.person_id), phoneHash: String(r.phone_hash),
+          strikes: Number(r.strikes), lateCancels4h: Number(r.late_cancels_4h),
+          lateCancels24h: Number(r.late_cancels_24h), rescheduleChurn: Number(r.reschedule_churn),
+          cleanStreak: Number(r.clean_streak), resolved90d: Number(r.resolved_90d),
+          completed90d: Number(r.completed_90d), provisionalNoShow: Boolean(r.provisional_no_show),
+          updatedAt: Number(r.updated_at),
+        };
+      } catch (e) {
+        if (!isMissingRelation(e)) throw e;
+      }
+    }
+    return this.memReliabilityByPerson.get(personId) ?? (phoneHash ? this.memReliabilityByPhone.get(phoneHash) : undefined);
+  }
+
+  private async relinkPhoneSignalsOnRejoin(personId: string, phoneHash: string): Promise<void> {
+    const memRel = this.memReliabilityByPhone.get(phoneHash);
+    if (memRel && memRel.personId !== personId) {
+      const moved = { ...memRel, personId };
+      this.memReliabilityByPerson.set(personId, moved);
+      this.memReliabilityByPhone.set(phoneHash, moved);
+    }
+    for (const [k, s] of this.memBoundarySignals) {
+      if (s.subjectPhoneHash === phoneHash && s.subjectPersonId !== personId) {
+        this.memBoundarySignals.set(k, { ...s, subjectPersonId: personId });
+      }
+    }
+    const sql = this.sql;
+    if (!sql) return;
+    try {
+      await sql`update platform.person_boundary_signals set subject_person_id = ${personId}
+        where subject_phone_hash = ${phoneHash} and subject_person_id is distinct from ${personId}`;
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+    try {
+      const [existing] = await sql<Record<string, any>[]>`select * from platform.member_reliability
+        where phone_hash = ${phoneHash} and person_id <> ${personId} order by updated_at desc limit 1`;
+      if (existing) {
+        await sql`insert into platform.member_reliability
+            (person_id, phone_hash, strikes, late_cancels_4h, late_cancels_24h, reschedule_churn, clean_streak, resolved_90d, completed_90d, provisional_no_show, updated_at)
+          values (${personId}, ${phoneHash}, ${Number(existing.strikes)}, ${Number(existing.late_cancels_4h)}, ${Number(existing.late_cancels_24h)},
+            ${Number(existing.reschedule_churn)}, ${Number(existing.clean_streak)}, ${Number(existing.resolved_90d)}, ${Number(existing.completed_90d)},
+            ${Boolean(existing.provisional_no_show)}, ${Number(existing.updated_at)})
+          on conflict (person_id) do update set
+            strikes = greatest(platform.member_reliability.strikes, excluded.strikes),
+            late_cancels_4h = greatest(platform.member_reliability.late_cancels_4h, excluded.late_cancels_4h),
+            late_cancels_24h = greatest(platform.member_reliability.late_cancels_24h, excluded.late_cancels_24h),
+            reschedule_churn = greatest(platform.member_reliability.reschedule_churn, excluded.reschedule_churn),
+            provisional_no_show = platform.member_reliability.provisional_no_show or excluded.provisional_no_show,
+            updated_at = greatest(platform.member_reliability.updated_at, excluded.updated_at)`;
+      }
+    } catch (e) {
+      if (!isMissingRelation(e)) throw e;
+    }
+  }
+
   async startNumberChange(app: AppInfo, who: Who, newE164: string, freshSignIn: boolean, sendCode: () => Promise<boolean>): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> {
     const at = this.now();
     const request = stepPhoneChange(phoneChangeInitial, { type: "requestChallenge", freshSignIn, sameNumber: newE164 === who.e164 });
@@ -337,8 +779,8 @@ export class Accounts {
     const { ownership, person } = await this.currentPhoneForChange(who, at);
     const current = stepPhoneChange(request, { type: "checkCurrentPhone", ownership });
     if (current.phase !== "CheckingStartPolicy" || !person) return numberChangeRefused(current.failure);
-    // A banned person or number never moves: a new number would escape a ban by phone.
-    const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !await this.banned(who.e164, person) });
+    const blocked = (await this.banned(who.e164, person)) || (await this.hasActiveSafetyHoldOrQuarantine(person.id));
+    const policy = stepPhoneChange(current, { type: "checkStartPolicy", oldNumberAllowed: !blocked });
     if (policy.phase !== "AwaitingRateLimit") return numberChangeRefused(policy.failure);
     const slot = await this.store.hit(`phone-change:${this.phoneHash(`person:${person.id}`)}`, phoneChangeWindowMs, at, { limit: NUMBER_CHANGES_PER_DAY });
     const rated = stepPhoneChange(policy, { type: "checkStartRate", slotGranted: slot.ok, startsBefore: slot.count - 1 });
@@ -372,7 +814,9 @@ export class Accounts {
     if (verified.phase !== "AwaitingMovePolicy") return numberChangeRefused(verified.failure);
     // One lock, on the new number (a join of that number waits): withLock never nests.
     const r = await this.store.withLock(`join:${newE164}`, async (): Promise<{ ok: true } | { ok: false; error: NumberChangeError }> => {
-      const blocked = await this.banned(who.e164, person) || await this.store.isBanned(this.phoneHash(newE164));
+      const blocked = await this.banned(who.e164, person)
+        || await this.store.isBanned(this.phoneHash(newE164))
+        || await this.hasActiveSafetyHoldOrQuarantine(person.id);
       const policy = blocked ? "MoveBlocked" : await this.store.findPhone(newE164) ? "NumberTaken" : "MoveAllowed";
       const allowed = stepPhoneChange(verified, { type: "checkMovePolicy", policy });
       if (allowed.phase !== "AwaitingMove") return numberChangeRefused(allowed.failure);
@@ -389,7 +833,10 @@ export class Accounts {
     if (!r.ok) return r;
     if (await this.store.ageFloorRecord(this.phoneHash(newE164))) {
       const age = await this.lowestAge(newE164, await this.store.getPerson(person.id));
-      if (age !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age });
+      if (age !== undefined) {
+        await this.revokeRestrictedDomainsForAge(person.id, age);
+        await this.hooks.onAgeLowered?.({ personId: person.id, age });
+      }
     }
     await this.ageRecorded(this.phoneHash(newE164));
     for (const fn of this.phoneListeners) await Promise.resolve().then(() => fn({ personId: person.id })).catch(() => {});
@@ -432,10 +879,45 @@ export class Accounts {
     await this.recordReading(e164, person, { kind: "birthDate", birthDate: birthKey });
   }
 
+  private async revokeRestrictedDomainsForAge(personId: string, age: number, at = this.now()): Promise<void> {
+    if (age < MIN_MEMBER_AGE) {
+      await this.store.disableMemberDomains(personId, DOMAIN_IDS, "age_lowered", at);
+    } else if (age < adultAge) {
+      await this.store.disableMemberDomains(personId, ["dating", "business"], "age_lowered", at);
+    }
+  }
+
+  async memberDomains(personId: string, e164?: string): Promise<{ enabledDomains: DomainId[]; availableDomains: DomainId[] }> {
+    const person = await this.store.getPerson(personId);
+    const age = e164
+      ? await this.lowestAge(e164, person)
+      : effectiveAgeAt(await this.store.ageStanding(personId, null), this.now());
+    const availableDomains = availableDomainsForAge(age);
+    const rows = await this.store.listMemberDomains(personId);
+    const enabledDomains = rows.filter(r => r.enabled && availableDomains.includes(r.domain)).map(r => r.domain);
+    return { enabledDomains, availableDomains };
+  }
+
+  async updateDomains(input: Omit<UpdateMemberDomainsInput, "store" | "now"> & { e164?: string }): Promise<UpdateMemberDomainsResult> {
+    const person = await this.store.getPerson(input.personId);
+    const banned = input.banned ?? (input.e164 ? await this.banned(input.e164, person) : undefined);
+    const held = input.held ?? (input.e164 ? await this.held(input.e164) : undefined);
+    return updateMemberDomains({
+      ...input,
+      store: this.store,
+      now: this.now(),
+      ...(banned !== undefined ? { banned } : {}),
+      ...(held !== undefined ? { held } : {}),
+    });
+  }
+
   private async recordReading(e164: string, person: Person | undefined, reading: AgeReading): Promise<void> {
     const phoneHash = this.phoneHash(e164);
     const after = await this.store.recordAgeReading(person?.id ?? null, phoneHash, reading, this.now());
-    if (person && after !== undefined) await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+    if (person && after !== undefined) {
+      await this.revokeRestrictedDomainsForAge(person.id, after);
+      await this.hooks.onAgeLowered?.({ personId: person.id, age: after });
+    }
     await this.ageRecorded(phoneHash);
   }
 
@@ -457,6 +939,7 @@ export class Accounts {
   async projectRecordedAge(recorded: RecordedMemberAge): Promise<void> {
     const person = recorded.personId ? await this.store.getPerson(recorded.personId) : undefined;
     if (person?.deletedAt === null && validAge(person.lowestAge)) {
+      await this.revokeRestrictedDomainsForAge(person.id, person.lowestAge);
       await this.hooks.onAgeLowered?.({ personId: person.id, age: person.lowestAge });
     }
     await this.ageRecorded(recorded.phoneHash);
@@ -599,12 +1082,13 @@ export class Accounts {
       app: app.id, personId: person.id, memberId: membershipCheck.invited && existing ? existing.memberId : `${app.id}_${randomUUID()}`,
       state: app.joinMode === "waitlist" ? "onboarding" : "active", review: null,
       firstName: input.firstName,
-      profile: Object.fromEntries(Object.entries({ homeCity: input.homeCity, neighborhood: input.neighborhood, zip: input.zip, interests: input.interests, about: input.about }).filter(([, v]) => v !== undefined)),
+      profile: Object.fromEntries(Object.entries({ homeCity: input.homeCity, neighborhood: input.neighborhood, zip: input.zip, interests: input.interests, about: input.about, phoneLineType: input.phoneLineType }).filter(([, v]) => v !== undefined)),
       joinedAt: at, leftAt: null,
     };
     const referredJoin = ageCheck.referred && referral;
     const commitBrowserSignup = signupBirth && this.hooks.commitBrowserSignup;
     const phoneHash = this.phoneHash(who.e164);
+    await this.relinkPhoneSignalsOnRejoin(person.id, phoneHash);
     const suppressed = !referredJoin && !commitBrowserSignup && await this.store.isSuppressed(phoneHash);
     const optIn: ConsentEvent = { e164: who.e164, app: app.id, state: "opted_in", source: "web_form", wording: app.consent.text, wordingVersion: app.consent.version, at };
     if (!referredJoin && !commitBrowserSignup) {
@@ -621,6 +1105,12 @@ export class Accounts {
     const result = stepEnrollment(ageCheck, { type: "finishJoin", hookSucceeded: hook.ok });
     if (result.phase === "JoinHookFailed" && !hook.ok) return this.undoFailedJoin(app, who.e164, person.id, membership.memberId, at, hook.error, !!referredJoin || !!commitBrowserSignup, suppressed);
     if (result.phase !== "Created") return { ok: false, error: "invalid" };
+    const joinAge = age.effective ?? statedAge;
+    if (joinAge < adultAge) await this.revokeRestrictedDomainsForAge(person.id, joinAge, at);
+    const defaults = defaultDomainsForBrand(app.id, joinAge);
+    for (const domain of defaults) {
+      await this.store.setMemberDomain({ personId: person.id, domain, enabled: true, originBrand: app.id, source: "onboarding", at });
+    }
     return { ok: true, membership, created: true };
   }
 
@@ -671,6 +1161,7 @@ export class Accounts {
     await this.store.deletePending(this.phoneHash(e164), "join");
     if (!person) return;
     const at = this.now();
+    await this.revokeRestrictedDomainsForAge(person.id, lowest, at);
     for (const m of await this.store.memberships(person.id)) {
       if (m.state === "removed") continue;
       await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: person.id, memberId: m.memberId, e164 }, "account_erasure");
@@ -716,6 +1207,9 @@ export class Accounts {
     const ownerChecked = stepPrivacy(request, { type: "checkErasureOwner", authorityCurrent: current });
     if (ownerChecked.phase !== "AwaitingAccountCleanup") return false;
     if (who.personId) {
+      if (await this.hasActiveSafetyHoldOrQuarantine(who.personId) && !(await this.activeSafetyQuarantine(who.personId))) {
+        await this.recordSafetyQuarantine(who.personId, "erasure_hold_carryover", "ntwrk", null, at);
+      }
       for (const m of await this.store.memberships(who.personId)) {
         if (hasScopedMembership(true, true, m.state === "removed"))
           await this.hooks.onForget?.({ app: this.opts.apps(m.app), personId: who.personId, memberId: m.memberId, e164: who.e164 }, "account_erasure");

@@ -1,13 +1,13 @@
 // The public facts about each app that the MCP server may tell an agent (app_info, start_signup).
 // Nothing here is about a person. The join mode and the ages come from the platform registry
 // (packages/platform/src/apps.ts) when it has the app, so the server and the sites cannot drift.
-import { APPS as PLATFORM_APPS, PAGES_PROJECT, SUPPORT_EMAIL } from "@thenetwork/platform";
-import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, type AppId as McpAppId } from "../../core/src/types.ts";
+import { APPS as PLATFORM_APPS, DOMAIN_IDS, isDomainId, PAGES_PROJECT, SUPPORT_EMAIL, type DomainId } from "@thenetwork/platform";
+import { APP_IDS as MCP_APP_IDS, isAppId as isMcpAppId, LAUNCH_CITIES, type AppId as McpAppId, type CityId } from "../../core/src/types.ts";
 import { type AppId as ConnectorApp, type Surface as ConnectorSurface, appListed, appOffered, hostBindsApp } from "../../core/src/generated/connectorTools.ts";
 import { appEndpointPath, appOpenAiEndpointPath } from "../../core/src/generated/agentEntry.ts";
 import { teenFriendApp } from "../../core/src/generated/matchLane.ts";
 
-export { MCP_APP_IDS, isMcpAppId, type McpAppId };
+export { DOMAIN_IDS, isDomainId, MCP_APP_IDS, isMcpAppId, type DomainId, type McpAppId };
 
 export type Surface = "full" | "openai";
 
@@ -29,6 +29,8 @@ export interface McpApp {
   ages: { join: number; match: number };
   /** Rules that apply to adults only, in plain words. */
   adultsOnly: string[];
+  consent: { text: string; version: string };
+  cities: readonly CityId[];
   links: { site: string; join: string; privacy: string; terms: string; smsTerms: string | null; support: string };
   openai: boolean;
 }
@@ -45,6 +47,8 @@ function app(id: McpAppId, name: string, domain: string, what: string, keyword: 
     joinMode: p.joinMode,
     ages: { join: p.minJoinAge, match: p.minMatchAge },
     adultsOnly: [teenFriendApp(id) ? TEEN_FRIEND_RULE : DATING_AGE_RULE, ...(extra.adultsOnly ?? [])],
+    consent: { text: p.consent.text, version: p.consent.version },
+    cities: LAUNCH_CITIES,
     links: {
       site, join: `${site}/join`, privacy: `${site}/privacy`, terms: `${site}/terms`,
       smsTerms: extra.smsTerms === false ? null : `${site}/terms#sms`,
@@ -62,13 +66,19 @@ export function defaultApps(): Record<McpAppId, McpApp> {
       adultsOnly: ["Photos and any rating of looks are for adults (18+) only; the stated age counts (no ID check). They are never asked of, stored for or shown to anyone under 18."],
     }),
     peon: app("peon", "peon.biz", "peon.biz", "Work and hiring by text message. It introduces people looking for work to people hiring, and a person makes every decision.", "peon", {}),
-    friends: app("friends", "friends.help", "friends.help", "Friends and plans in New York City by text message, in small groups at public places.", "friends", {}),
+    friends: app("friends", "friends.help", "friends.help", "Friends and plans in NYC, SF, LA, Chicago and Miami by text message, in small groups at public places.", "friends", {}),
   };
 }
 
 /** The apps that a connection to one app's endpoint on a surface may name, in registry order (spec/connectorTools.md:16). */
 export const appsOn = (apps: Record<McpAppId, McpApp>, surface: Surface, host: McpAppId): McpApp[] =>
   MCP_APP_IDS.map(id => apps[id]).filter(a => a && appListed(connectorSurface[surface], connectorApp[host], connectorApp[a.id]));
+
+/** The matching domains that a connection on a surface may advertise or manage (never dating on non-dating OpenAI surfaces). */
+export const domainsOn = (surface: Surface, host: McpAppId): DomainId[] =>
+  appListed(connectorSurface[surface], connectorApp[host], connectorApp.slop)
+    ? [...DOMAIN_IDS]
+    : DOMAIN_IDS.filter(d => d !== "dating");
 
 /** The default Host header map: each domain, its www name and its Pages name. Dev ports are added by the caller. */
 export function defaultHostMap(apps: Record<McpAppId, McpApp>): Record<string, McpAppId> {

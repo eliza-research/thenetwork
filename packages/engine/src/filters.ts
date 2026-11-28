@@ -1,14 +1,21 @@
 // Hard filters (Section 33.5). Hard constraints are never traded for score (33.1): a candidate
 // failing any of these is dropped before scoring, and the reason is counted in the run funnel.
 import type { Category, Member, MemberId } from "@thenetwork/core";
-import { ADULT_AGE as CORE_ADULT_AGE, ageSideOf, canBeMatched, DAY, HOUR, latestDayKeyOf, type AgeSide } from "@thenetwork/core";
+import { ADULT_AGE as CORE_ADULT_AGE, ageSideOf, canBeMatched, DAY, HOUR, isBusinessDomain, isDatingDomain, isFriendshipDomain, latestDayKeyOf, type AgeSide } from "@thenetwork/core";
 import { candidateBackfillAllowed, initial, step, type CheckPhase } from "../../core/src/generated/candidateScreening.ts";
 import {
   groupAgeAllowed, rosterHasMinor, teenFriendCandidate, teenFriendFormat, teenFriendRole, teenIntroShape, teenRosterSizeAllowed, viaAllowedForRoster,
 } from "../../core/src/generated/friendIntroAge.ts";
 import { laneSidesCompatible, teenFriendCategory, teenFriendLane, teenGenerator, teenGroupPlanApp, type MatchLane } from "../../core/src/generated/matchLane.ts";
 import { publicEventMemberAllowsMatch } from "../../core/src/generated/publicEventCatalog.ts";
+import {
+  firstNoShowStrikes, lateCancel24hStrikes, lateCancel4hStrikes, leaguePairAllowed, memberQualityBand,
+  reliabilityEffectiveStrikes, reliabilityTier, repeatNoShowStrikes, rescheduleChurnStrikes,
+  vampireAllowedTarget, vampireTier,
+  type LeagueAxisProfile, type LeagueLane, type QualityBand, type ReliabilityTier, type VampireTier,
+} from "../../core/src/generated/qualityAndLeague.ts";
 import type { EngineConfig } from "./config.ts";
+import { humanVectorOf } from "./humanVector.ts";
 import type { MatchProfile } from "./match/profile.ts";
 import type { Candidate } from "./types.ts";
 import { pairKey, type MemberIndex, type World } from "./world.ts";
@@ -25,7 +32,9 @@ export type FilterReason =
   | "blocked" | "negative_feedback_cooldown" | "pair_cooldown" | "active_duplicate"
   | "romance_incompatible" | "dealbreaker" | "high_risk" | "home_entry_rule"
   | "no_presence_overlap" | "group_size" | "romance_group" | "duplicate_participant"
-  | "no_lane" | "no_pair_value" | (string & {});
+  | "no_lane" | "no_pair_value"
+  | "quality_quarantine" | "vampire_quarantine" | "vampire_target_blocked" | "league_gap_uncompensated"
+  | (string & {});
 
 import type { MemberCheck } from "./pack.ts";
 export type { MemberCheck };
@@ -47,8 +56,13 @@ export function involvedMembers(c: Pick<Candidate, "participants" | "alternates"
   return [...c.participants, ...(c.alternates ?? []), ...(c.via ? [c.via] : [])];
 }
 
-const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean =>
-  teenFriendCategory(w.pack.id, category) && (lane === undefined || teenFriendLane(w.pack.id, lane));
+const packAppOf = (w: World): string =>
+  isDatingDomain(w.pack.id) ? "slop" : isBusinessDomain(w.pack.id) ? "peon" : isFriendshipDomain(w.pack.id) ? "friends" : w.pack.id;
+
+const friendshipLaneOf = (w: World, category: Category, lane: MatchLane | undefined): boolean => {
+  const app = packAppOf(w);
+  return teenFriendCategory(app, category) && (lane === undefined || teenFriendLane(app, lane));
+};
 
 const belowMatchAge = (w: World, age: number): boolean =>
   isMinorAge(age) || !(age >= w.cfg.ageMin) || !(age >= w.pack.eligibility.minMatchAge);
@@ -57,7 +71,7 @@ export function teenCandidateIn(w: World, id: MemberId, category: Category): boo
   const mi = w.get(id);
   if (!mi) return false;
   const side = ageSideOf(mi.m);
-  return teenFriendCandidate(side.adult, side.ready, side.birthKey, w.minDay, w.maxDay, w.teenIntros, teenFriendCategory(w.pack.id, category));
+  return teenFriendCandidate(side.adult, side.ready, side.birthKey, w.minDay, w.maxDay, w.teenIntros, teenFriendCategory(packAppOf(w), category));
 }
 
 const ageSidesOf = (w: World, ids: readonly MemberId[]): AgeSide[] =>
@@ -86,7 +100,7 @@ export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage"
   const { roles, format, generator } = c;
   if (roles === undefined || format === undefined || generator === undefined) return "underage";
   const everyRoleTeen = roster.every(id => { const role = roles[id]; return role !== undefined && teenFriendRole(role); });
-  return teenGenerator(w.pack.id, generator)
+  return teenGenerator(packAppOf(w), generator)
     && teenIntroShape(friendshipLane, format, everyRoleTeen, c.via !== undefined, c.anchor?.type === "event")
     && teenRosterSizeAllowed(true, roster.length) ? null : "underage";
 }
@@ -94,8 +108,9 @@ export function candidateAgeReason(w: World, c: AgeCheckedCandidate): "underage"
 export function teenGroupReason(w: World, ids: readonly MemberId[], category: Category, meetingEnd: number): "underage" | null {
   const roster = [...new Set(ids)];
   if (!rosterHasMinor(ageSidesOf(w, roster))) return null;
-  if (!teenGroupPlanApp(w.pack.id) || !teenRosterSizeAllowed(true, roster.length)) return "underage";
-  return rosterAgeReason(w, roster, teenFriendCategory(w.pack.id, category), meetingMaxDay(w, [meetingEnd]));
+  const app = packAppOf(w);
+  if (!teenGroupPlanApp(app) || !teenRosterSizeAllowed(true, roster.length)) return "underage";
+  return rosterAgeReason(w, roster, teenFriendCategory(app, category), meetingMaxDay(w, [meetingEnd]));
 }
 
 const teenSeat = (w: World, id: MemberId, c: Pick<MemberCheck, "category" | "lane" | "role" | "format">): boolean =>
@@ -127,8 +142,187 @@ export function romanceMutual(w: World, a: MemberId, b: MemberId): boolean {
   return admits(A, B) && admits(B, A);
 }
 
+export function memberReliabilityTier(w: World, id: MemberId): ReliabilityTier {
+  const rel = w.reliability[id];
+  if (!rel) return "RelOk";
+  const legacyNoShowStrikes = rel.noShows <= 0 ? 0
+    : firstNoShowStrikes + Math.max(0, rel.noShows - 1) * repeatNoShowStrikes;
+  const computedStrikes = legacyNoShowStrikes
+    + Math.max(0, Math.round(rel.lateCancels4h ?? 0)) * lateCancel4hStrikes
+    + Math.max(0, Math.round(rel.lateCancels24h ?? 0)) * lateCancel24hStrikes
+    + Math.max(0, Math.round(rel.rescheduleChurn ?? 0)) * rescheduleChurnStrikes;
+  const rawStrikes = rel.strikes !== undefined ? Math.max(0, Math.round(rel.strikes)) : computedStrikes;
+  const effective = reliabilityEffectiveStrikes(rawStrikes, Math.max(0, Math.round(rel.completedSinceLastNoShow)));
+  return reliabilityTier(effective, rel.provisionalNoShow === true);
+}
+
+export function memberQualityBandOf(w: World, id: MemberId): QualityBand {
+  const q = w.input.qualityByMember?.[id];
+  if (q) {
+    return memberQualityBand(
+      Math.round(q.provenanceScore),
+      Math.round(q.specificityScore),
+      Math.round(q.hygieneScore),
+      Math.round(q.completionScore),
+      q.voipOrPumping,
+      q.sybilFlagged,
+      q.chronicLowEffort,
+      q.unverifiedHype,
+    );
+  }
+  const mi = w.get(id);
+  if (mi?.tags.has("hv:hype:pitch")) return "Q1Probationary";
+  return "Q2Standard";
+}
+
+export function memberVampireTierOf(w: World, id: MemberId): VampireTier {
+  if (w.minors.has(id) || isMinor(w, id)) return "VampireClean";
+  const v = w.input.vampireByMember?.[id];
+  if (v) {
+    return vampireTier(
+      Math.max(0, Math.round(v.introsReceived90d)),
+      Math.max(0, Math.round(v.positiveCounterpartVotes90d)),
+      Math.max(0, Math.round(v.asymmetricNegativeVotes90d)),
+      Math.max(0, Math.round(v.pitchSignals90d)),
+      Math.max(0, Math.round(v.distinctSelfPromoReports90d)),
+    );
+  }
+  if (w.get(id)?.tags.has("hv:hype:pitch")) return vampireTier(0, 0, 0, 1, 0);
+  return "VampireClean";
+}
+
+const LEAGUE_LANE_MAP: Readonly<Record<MatchLane, LeagueLane>> = {
+  Friend: "LeagueFriend",
+  Date: "LeagueDate",
+  Hire: "LeagueHire",
+  Cofounder: "LeagueCofounder",
+  Mentor: "LeagueMentor",
+  Invest: "LeagueInvest",
+  Intro: "LeagueIntro",
+};
+
+export function toLeagueLane(lane: MatchLane): LeagueLane {
+  return LEAGUE_LANE_MAP[lane];
+}
+
+function clamp100(x: number): number {
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(100, Math.round(x)));
+}
+
+export function memberLeagueProfileOf(
+  w: World,
+  id: MemberId,
+  lane: MatchLane,
+  standing?: number,
+): { profile: LeagueAxisProfile; explicit: boolean; highStatus: boolean; guilds: readonly string[] } {
+  const hv = humanVectorOf(w, id);
+  const q = w.input.qualityByMember?.[id];
+  const vTier = memberVampireTierOf(w, id);
+  const mi = w.get(id);
+  if (!hv) {
+    return {
+      profile: {
+        economic: 50, socialCapital: 50, domainRung: clamp100(standing ?? 50),
+        aesthetic: lane === "Date" ? clamp100(standing ?? 50) : 0,
+        discretion: 85, extractionRisk: 0, publicity: 15,
+        verifiedEvidence: false, trajectory: 50, crossCapitalOpen: false, sharedGuild: false,
+      },
+      explicit: false,
+      highStatus: false,
+      guilds: [],
+    };
+  }
+  const economic = clamp100(hv.capital.economic.value * 100);
+  const socialCapital = clamp100(((hv.capital.social.vouchQuality.value + hv.capital.social.brokerage.value + hv.capital.symbolic.peerPrestige.value) / 3) * 100);
+  const rungs = Object.values(hv.capital.domainRungs).map(r => r.value * 10);
+  const domainRung = rungs.length > 0 ? clamp100(Math.max(...rungs)) : clamp100(standing ?? 50);
+  const aesthetic = lane === "Date"
+    ? (hv.capital.aestheticSlopOnly ? clamp100(hv.capital.aestheticSlopOnly.overall.value * 100) : clamp100(standing ?? 50))
+    : 0;
+  const discretion = clamp100(hv.behavioral.discretionVouchScore * 100);
+  const baseExtraction = clamp100(hv.behavioral.extractionRiskScore * 100);
+  const extractionRisk = vTier === "VampireQuarantined" ? Math.max(baseExtraction, 80)
+    : vTier === "VampireThrottled" ? Math.max(baseExtraction, 45)
+    : vTier === "VampireWatch" ? Math.max(baseExtraction, 30)
+    : baseExtraction;
+  const publicity = clamp100(hv.capital.symbolic.publicityTier.value * 100);
+  const hasTrustedRung = Object.values(hv.capital.domainRungs).some(r => r.provenance === "connected_source" || r.provenance === "vouched");
+  const hasConnectedSource = mi?.m.connectedSources?.some(s => s.status === "connected" || s.status === "confirmed") ?? false;
+  const verifiedEvidence = q
+    ? (q.provenanceScore >= 20 && !q.unverifiedHype && !q.sybilFlagged)
+    : (hasTrustedRung || hasConnectedSource || hv.capital.social.vouchQuality.value >= 0.7);
+  const trajectory = clamp100(
+    Math.max(
+      domainRung,
+      hv.capital.cultural.embodied.value * 85,
+      hv.capital.symbolic.peerPrestige.value * 95,
+      q ? q.specificityScore * 3.5 : 0,
+    ),
+  );
+  const crossCapitalOpen = hv.exchange.crossCapitalOpenness.length > 0;
+  const explicit = hv.explicitSignals.spendTier
+    || hv.explicitSignals.domainRungs
+    || hv.explicitSignals.hypeOrExtraction
+    || q !== undefined
+    || w.input.vampireByMember?.[id] !== undefined;
+  const highStatus = economic >= 80 || publicity >= 65 || socialCapital >= 80 || (standing !== undefined && standing >= 80);
+  return {
+    profile: {
+      economic, socialCapital, domainRung, aesthetic, discretion, extractionRisk, publicity,
+      verifiedEvidence, trajectory, crossCapitalOpen, sharedGuild: false,
+    },
+    explicit,
+    highStatus,
+    guilds: hv.exchange.guilds,
+  };
+}
+
+export function pairLeagueAndVampireReason(
+  w: World,
+  a: MemberId,
+  b: MemberId,
+  lane: MatchLane,
+  standingA?: number,
+  standingB?: number,
+): FilterReason | null {
+  if (w.minors.has(a) || w.minors.has(b) || isMinor(w, a) || isMinor(w, b)) return null;
+  if (memberQualityBandOf(w, a) === "Q0Quarantine" || memberQualityBandOf(w, b) === "Q0Quarantine") {
+    return "quality_quarantine";
+  }
+  const vtA = memberVampireTierOf(w, a);
+  const vtB = memberVampireTierOf(w, b);
+  if (vtA === "VampireQuarantined" || vtB === "VampireQuarantined") return "vampire_quarantine";
+  const infoA = memberLeagueProfileOf(w, a, lane, standingA);
+  const infoB = memberLeagueProfileOf(w, b, lane, standingB);
+  const newA = w.get(a)?.newcomer === true;
+  const newB = w.get(b)?.newcomer === true;
+  if (!vampireAllowedTarget(vtA, infoB.highStatus, newB) || !vampireAllowedTarget(vtB, infoA.highStatus, newA)) {
+    return "vampire_target_blocked";
+  }
+  if (infoA.explicit || infoB.explicit) {
+    const guildSetA = new Set(infoA.guilds);
+    const sharedGuild = infoB.guilds.some(g => guildSetA.has(g));
+    const allowed = leaguePairAllowed(
+      toLeagueLane(lane),
+      false,
+      { ...infoA.profile, sharedGuild },
+      { ...infoB.profile, sharedGuild },
+    );
+    if (!allowed) return "league_gap_uncompensated";
+  }
+  return null;
+}
+
 /** Pair-level hard constraints. Completed / positive history never blocks (ME-005). */
-export function pairReason(w: World, a: MemberId, b: MemberId, category: Category, lane?: MatchLane): FilterReason | null {
+export function pairReason(
+  w: World,
+  a: MemberId,
+  b: MemberId,
+  category: Category,
+  lane?: MatchLane,
+  standings?: readonly [number, number],
+): FilterReason | null {
   if (a === b) return "duplicate_participant";
   if (rosterAgeReason(w, [a, b], friendshipLaneOf(w, category, lane))) return "underage";
   // Core prefix: blocks win (either direction).
@@ -140,6 +334,10 @@ export function pairReason(w: World, a: MemberId, b: MemberId, category: Categor
   for (const r of w.pack.eligibility.pairRules) {
     const reason = r.check(w, a, b, category, ma, mb, lane);
     if (reason) return reason;
+  }
+  if (lane !== undefined) {
+    const leagueOrVampire = pairLeagueAndVampireReason(w, a, b, lane, standings?.[0], standings?.[1]);
+    if (leagueOrVampire) return leagueOrVampire;
   }
   // Optional geo hard filter (radius packs: mutual radius). Absent for networkPack.
   return w.pack.geo.pairReason?.(w, a, b, lane) ?? null;
@@ -416,7 +614,7 @@ export function sendTimeReason(w: World, id: MemberId, others: MemberId[] = [], 
   if (!mi) return "unknown_member";
   if (!(category !== undefined && teenCandidateIn(w, id, category)) && belowMatchAge(w, mi.m.age)) return "underage";
   const roster = others.filter(o => o !== id);
-  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(w.pack.id, category))) return "underage";
+  if (roster.length > 0 && rosterAgeReason(w, [id, ...roster], category !== undefined && teenFriendCategory(packAppOf(w), category))) return "underage";
   if (w.holds.has(id)) return "safety_hold";
   if (mi.m.state === "paused") return "state_paused";
   if (optedOut?.(id)) return "opted_out";

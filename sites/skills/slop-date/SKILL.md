@@ -44,10 +44,11 @@ it does not mean introductions have started.
    Only if this client cannot add a remote connector at all, or the person cannot
    add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
    profile. Use the client's supported authorization flow.
-2. Read the public app facts at `https://slop.date/api/app` without credentials. <!-- agentSignup: readAppFacts -->
-   Confirm `id` is `slop`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
-   and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
-   these facts.
+2. Read the public app facts at `https://slop.date/api/app` without credentials <!-- agentSignup: readAppFacts -->
+   (or call `app_info` with `app: "slop"`, which returns the same `cities`, `ages`,
+   and exact current `consent.text` and `consent.version`). Confirm `id` is `slop`.
+   Use this app's `joinMode`, `minJoinAge`, `minMatchAge`, and exact current
+   `consent.text` and `consent.version`. Stop if you cannot confirm these facts.
 3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
    to explain what they get. Use the lowest age that any statement gives. Never send a
    birthday or an age through a tool; the person types their birthday on the app's
@@ -56,10 +57,13 @@ it does not mean introductions have started.
    with answers, public events and plans for themselves. Friendship introductions for
    people under 18 happen on friends.help and ntwrk.party. Never promise them an introduction.
    Draft their confirmed first name and home region.
-   Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
-   separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
-   or ZIP code or pick an incorrect region.
-   For adults, draft the profile with interests, availability, the relationship they
+   Confirm their home city — New York City (`nyc`), San Francisco / Bay Area (`sf`),
+   Los Angeles (`la`), Chicago (`chicago`), or Miami (`miami`) — and keep their
+   neighborhood separate. Ask if the region is ambiguous. Do not guess it from a
+   neighborhood or ZIP code or pick an incorrect region.
+   For adults, draft the profile with interests, availability, any venue red lines
+   (dietary, alcohol-free/sober, severe allergies, wheelchair accessibility, or
+   low-noise/daytime preferences), the relationship they
    want and preferences they explicitly choose to share. Adult age ranges and travel
    distance are optional. For ages 13–17, draft only a basic personal profile.
    Collect no dating preferences and no photos.
@@ -87,12 +91,13 @@ it does not mean introductions have started.
    connector. An existing membership goes to the status check below. If the
    person changed the approved details, cannot confirm signup or authorization,
    or sees a refusal, stop and report the actual result.
-7. Use the authorized connector's `check_status` and confirm its app is slop. <!-- agentSignup: checkSiteStatus -->
+7. Use the authorized connector's `check_status` (or `get_context`) and confirm its app is slop. <!-- agentSignup: checkSiteStatus -->
    If the browser recognized an existing membership, report its current status.
    Do not enroll them again or replace their profile. Stop for
    `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app, and tell the
-   person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
-   it again and choose **Finish signup** on the connection page. For a new
+   person the returned `next_step`: for `not_joined` or `invited`, give the
+   returned `finish_signup_url` so the person can open **Finish signup** directly
+   in their browser without disconnecting or reconnecting. For a new
    signup confirmed in the browser, only `onboarding` or `active` allows the
    approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
@@ -104,12 +109,18 @@ it does not mean introductions have started.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
-10. To show what slop.date is looking for for the person, call `list_looking_for`.
-   Sending a profile only adds; leaving something out never removes it. If the
-   person asks to pause one thing, call `pause_looking_for` with its ref; to
-   turn a paused thing back on, call `resume_looking_for` with its ref; to
-   close it for good they reply CLOSE to the text they get. Never pause or
-   resume anything the person did not ask about.
+10. To inspect status and unseen updates in one call (plus saved profile and
+    active searches when `profile:read` is granted), call `get_context`. To save
+    recurring availability, windows, quiet hours or timezone, call
+    `set_availability`. To save private venue red lines (`strict_sober`,
+    `non_drinker`, `halal`, `kosher`, `gluten_free`, `vegetarian`, `vegan`,
+    `severe_allergen`, `wheelchair`, `smoke_free`, `low_noise`, `daytime_only`),
+    call `set_red_lines`. To show what slop.date is looking for for the person,
+    call `list_looking_for`. Sending a profile only adds; leaving something out
+    never removes it. If the person asks to pause one thing, call
+    `pause_looking_for` with its ref; to turn a paused thing back on, call
+    `resume_looking_for` with its ref; to close it for good they reply CLOSE to
+    the text they get. Never pause or resume anything the person did not ask about.
 
 ## Photos with a match
 

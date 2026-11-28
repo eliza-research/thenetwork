@@ -237,3 +237,38 @@
 {"text":"discord is great","want":"clean","note":"a description of the service"}
 {"text":"my instagram is broken","want":"clean","note":"a service state"}
 {"text":"find me on Instagram, oakclover","want":"contact","note":"a plain handle attached to a direct invitation"}
+{"text":"we skipped pork because Sam keeps halal","facts":["halal"],"contacts":false,"want":"leak","note":"meetup red-line 1-word halal"}
+{"text":"picked a spot that is strictly kosher for them","facts":["kosher"],"contacts":false,"want":"leak","note":"meetup red-line 1-word kosher"}
+{"text":"avoiding bakeries since they have celiac","facts":["celiac"],"contacts":false,"want":"leak","note":"meetup red-line 1-word celiac"}
+{"text":"no Thai food due to a severe peanut allergy","facts":["peanut allergy"],"contacts":false,"want":"leak","note":"meetup red-line peanut allergy"}
+{"text":"skipping seafood because of a shellfish allergy","facts":["shellfish"],"contacts":false,"want":"leak","note":"meetup red-line 1-word shellfish"}
+{"text":"they carry an epi-pen for anaphylaxis risk","facts":["anaphylaxis"],"contacts":false,"want":"leak","note":"meetup red-line anaphylaxis"}
+{"text":"they have an allergy so we avoided nuts","facts":["allergy"],"contacts":false,"want":"leak","note":"meetup red-line 1-word allergy"}
+{"text":"she is allergic to peanuts","facts":["allergic","peanuts"],"contacts":false,"want":"leak","note":"meetup red-line allergic peanuts"}
+{"text":"chose a ground-floor spot for their wheelchair","facts":["wheelchair"],"contacts":false,"want":"leak","note":"meetup red-line 1-word wheelchair"}
+{"text":"skipped bars since he goes to AA every Thursday","facts":["goes to AA"],"contacts":false,"want":"leak","note":"meetup red-line AA"}
+{"text":"no drinks because they are in recovery","facts":["in recovery"],"contacts":false,"want":"leak","note":"meetup red-line in recovery"}
+{"text":"coffee only because of their sobriety","facts":["sobriety"],"contacts":false,"want":"leak","note":"meetup red-line sobriety"}
+{"text":"quiet tea house since Sam keeps h4lal","facts":["halal"],"contacts":false,"want":"leak","note":"meetup red-line leetspeak halal"}
+{"text":"chosen because they eat k0sher only","facts":["kosher"],"contacts":false,"want":"leak","note":"meetup red-line leetspeak kosher"}
+{"text":"avoiding gluten for c3liac reasons","facts":["celiac"],"contacts":false,"want":"leak","note":"meetup red-line leetspeak celiac"}
+{"text":"step-free entrance for wh33lchair access","facts":["wheelchair"],"contacts":false,"want":"leak","note":"meetup red-line leetspeak wheelchair"}
+{"text":"tea spot because they keep hаlal","facts":["halal"],"contacts":false,"want":"leak","note":"meetup red-line homoglyph halal"}
+{"text":"deli skipped because he is kоsher","facts":["kosher"],"contacts":false,"want":"leak","note":"meetup red-line homoglyph kosher"}
+{"text":"cafe picked since she is ѕober","facts":["sober"],"contacts":false,"want":"leak","note":"meetup red-line homoglyph sober"}
+{"text":"strictly h a l a l kitchen needed","facts":["halal"],"contacts":false,"want":"leak","note":"meetup red-line spaced halal"}
+{"text":"You're both in: meet Sam Thursday 7 PM at Té Company in West Village. Works for you, or want to swap the spot?","facts":["halal","kosher","celiac","peanut allergy","shellfish","wheelchair","goes to AA","in recovery","sober"],"contacts":false,"want":"clean","note":"meetup red-line benign tea venue"}
+{"text":"Top pick for Saturday 2 PM: Hex & Co in Flatiron (great tables for board games). Works for you, or want to swap the spot?","facts":["halal","kosher","celiac","peanut allergy","shellfish","wheelchair","goes to AA","in recovery","sober"],"contacts":false,"want":"clean","note":"meetup red-line benign game cafe"}
+{"text":"Fair call. How about Devoción in Williamsburg for Friday 5 PM instead?","facts":["halal","kosher","celiac","peanut allergy","shellfish","wheelchair","goes to AA","in recovery","sober"],"contacts":false,"want":"clean","note":"meetup red-line benign pivot"}
+{"text":"Quick pivot: original spot is full, so let's meet at Asha Tea House instead. Reply if your plans change.","facts":["halal","kosher","celiac","peanut allergy","shellfish","wheelchair","goes to AA","in recovery","sober"],"contacts":false,"want":"clean","note":"meetup red-line benign backup pivot"}
+{"text":"Quiet spot for Tuesday 11 AM: Blue Bottle in Ferry Building. Works for you, or want to swap the spot?","facts":["halal","kosher","celiac","peanut allergy","shellfish","wheelchair","goes to AA","in recovery","sober"],"contacts":false,"want":"clean","note":"meetup red-line benign professional coffee"}
+{"text":"venue visit vv_9k2m1 confirmed for Thursday","exact":["vv_9k2m1"],"contacts":false,"want":"leak","note":"pass3 internal id vv_ prefix"}
+{"text":"meetup action ma_7x8y9 pending approval","exact":["ma_7x8y9"],"contacts":false,"want":"leak","note":"pass3 internal id ma_ prefix"}
+{"text":"external rsvp_4a5b6 approved by host","exact":["rsvp_4a5b6"],"contacts":false,"want":"leak","note":"pass3 internal id rsvp_ prefix"}
+{"text":"prospect ep_1c2d3 ready for invite","exact":["ep_1c2d3"],"contacts":false,"want":"leak","note":"pass3 internal id ep_ prefix"}
+{"text":"your plan_9z8y7 is scheduled","exact":["plan_9z8y7"],"contacts":false,"want":"leak","note":"pass3 internal id plan_ prefix"}
+{"text":"delivery ntf_3e4f5 queued for send","exact":["ntf_3e4f5"],"contacts":false,"want":"leak","note":"pass3 internal id ntf_ prefix"}
+{"text":"oauth token ntwa_6g7h8 issued","exact":["ntwa_6g7h8"],"contacts":false,"want":"leak","note":"pass3 internal id ntwa_ prefix"}
+{"text":"picked a tea spot because she keeps halal","privateVocab":["halal","kosher","peanut","shellfish","sober","wheelchair"],"contacts":false,"want":"leak","note":"pass3 mcp sensitive dietary halal"}
+{"text":"avoiding Thai food due to a severe peanut allergy","privateVocab":["halal","kosher","peanut","shellfish","sober","wheelchair"],"contacts":false,"want":"leak","note":"pass3 mcp sensitive allergen peanut"}
+{"text":"switched spots for wheelchair access","privateVocab":["halal","kosher","peanut","shellfish","sober","wheelchair"],"contacts":false,"want":"leak","note":"pass3 mcp sensitive accessibility wheelchair"}

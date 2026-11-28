@@ -16,9 +16,9 @@ export function isLocalUrl(url: string): boolean {
 
 function toDbVenueStatus(status: VenueStatus): string {
   switch (status) {
-    case "SuspectClosed": return "suspect_closed";
-    case "ClosedTemporary": return "closed_temporary";
-    case "ClosedPermanent": return "closed_permanent";
+    case "suspect_closed": return "suspect_closed";
+    case "closed_temporary": return "closed_temporary";
+    case "closed_permanent": return "closed_permanent";
     default: return "active";
   }
 }
@@ -33,50 +33,89 @@ function toDbWorkChannel(ch: WorkIntroChannel): "warm_email" | "scheduled_video"
 }
 
 function computeScores(v: VenueRecord): { groupScore: number; dateScore: number } {
-  const groupScore = groupVenueRubricScore(
-    v.separateChecks,
-    v.walkInGroupCapacity,
-    v.noiseLevel,
-    v.liveMusicAtNight,
-    v.alcoholOptional,
-    v.servesVegetarian,
-    v.servesVegan,
-    v.safetyScore ?? 8,
-    v.indoor,
-    v.weatherSensitive,
-    v.arrivalLandmark.trim().length > 0,
-    v.transitScore ?? 4
-  );
+  const groupScore = groupVenueRubricScore({
+    separateChecks: v.separateChecks,
+    walkInCapacity: v.walkInGroupCapacity,
+    noiseLevel: v.noiseLevel,
+    liveMusicAtNight: v.liveMusicAtNight,
+    alcoholOptional: v.alcoholOptional,
+    servesVegetarian: v.servesVegetarian,
+    servesVegan: v.servesVegan,
+    safetyScore: v.safetyScore ?? 8,
+    indoor: v.indoor,
+    weatherSensitive: v.weatherSensitive,
+    hasArrivalLandmark: v.arrivalLandmark.trim().length > 0,
+    transitScore: v.transitScore ?? 4,
+  });
   const romanticBoost = v.personaPriors.romantic ? 8 : 0;
-  const noiseBoost = v.noiseLevel === "Conversational" ? 10 : v.noiseLevel === "Quiet" ? 8 : 3;
+  const noiseBoost = v.noiseLevel === "conversational" ? 10 : v.noiseLevel === "quiet" ? 8 : 3;
   const dateScore = Math.min(100, Math.max(45, Math.round((v.yelpRating ?? 4.3) * 17 + noiseBoost + romanticBoost)));
   return { groupScore, dateScore };
 }
 
 export async function upsertSeedVenues(sql: SQL, venues: readonly VenueRecord[] = ALL_SEED_VENUES): Promise<number> {
-  let n = 0;
+  if (venues.length === 0) return 0;
   await sql.begin(async tx => {
-    for (const v of venues) {
-      const { groupScore, dateScore } = computeScores(v);
-      const priorsJson = JSON.stringify(v.personaPriors ?? {});
-      const hoursJson = JSON.stringify(v.hours ?? []);
-      const verifiedAt = new Date(v.lastVerifiedAt);
-      const dbStatus = toDbVenueStatus(v.status);
-      const dbNoise = v.noiseLevel.toLowerCase();
+    const chunkSize = 50;
+    for (let i = 0; i < venues.length; i += chunkSize) {
+      const rows = venues.slice(i, i + chunkSize).map(v => {
+        const { groupScore, dateScore } = computeScores(v);
+        const isAlcoholCentric = v.isAlcoholCentric ?? v.isBarOnly;
+        const ageMin = v.ageMin ?? (v.isBarOnly || isAlcoholCentric ? 21 : 0);
+        const allAges = v.allAges ?? (!v.isBarOnly && !isAlcoholCentric && ageMin <= 13);
+        const priors = (v.personaPriors ?? {}) as any;
+        return {
+          id: v.id,
+          city: v.city,
+          neighborhood: v.neighborhood,
+          name: v.name,
+          address: v.address,
+          lat: v.lat,
+          lon: v.lng,
+          is_public: true,
+          all_ages: allAges,
+          category: v.category,
+          price_tier: v.priceTier,
+          age_min: ageMin,
+          is_bar_only: v.isBarOnly,
+          is_alcohol_centric: isAlcoholCentric,
+          alcohol_optional: v.alcoholOptional,
+          serves_vegetarian: v.servesVegetarian,
+          serves_vegan: v.servesVegan,
+          halal_friendly: v.halalFriendly ?? false,
+          kosher_friendly: v.kosherFriendly ?? false,
+          gluten_free_friendly: v.glutenFreeFriendly ?? false,
+          severe_allergen_safe: v.severeAllergenSafe ?? false,
+          wheelchair_accessible: v.wheelchairAccessible,
+          is_smoke_free: v.isSmokeFree ?? true,
+          separate_checks: v.separateChecks,
+          walk_in_group_capacity: v.walkInGroupCapacity,
+          reservation_required: v.reservationRequired,
+          open_event_eligible: v.openEventEligible ?? false,
+          noise_level: v.noiseLevel,
+          live_music_at_night: v.liveMusicAtNight,
+          indoor: v.indoor,
+          outdoor: v.outdoor,
+          weather_sensitive: v.weatherSensitive,
+          safety_score: v.safetyScore ?? 8,
+          transit_score: v.transitScore ?? 4,
+          arrival_landmark: v.arrivalLandmark,
+          hours: tx.json((v.hours ?? []) as any),
+          hobbies: tx.json((v.hobbies ?? []) as any),
+          cuisine_tags: tx.json((v.cuisineTags ?? []) as any),
+          group_score: groupScore,
+          date_score: dateScore,
+          source: v.source,
+          yelp_rating: v.yelpRating ?? null,
+          status: toDbVenueStatus(v.status),
+          closure_reports: v.closureReports,
+          verified_open_at: new Date(v.lastVerifiedAt),
+          persona_priors: tx.json(priors),
+          persona_stats: tx.json(priors),
+        };
+      });
       await tx`
-        insert into platform.venues (
-          id, city, neighborhood, name, address, lat, lon, is_public, category, price_tier, age_min,
-          is_bar_only, alcohol_optional, serves_vegetarian, serves_vegan, wheelchair_accessible,
-          separate_checks, walk_in_group_capacity, reservation_required, noise_level, live_music_at_night,
-          indoor, outdoor, weather_sensitive, arrival_landmark, hours, group_score, date_score,
-          source, yelp_rating, status, closure_reports, verified_open_at, persona_priors, persona_stats, updated_at
-        ) values (
-          ${v.id}, ${v.city}, ${v.neighborhood}, ${v.name}, ${v.address}, ${v.lat}, ${v.lng}, true, ${v.category}, ${v.priceTier}, ${v.ageMin},
-          ${v.isBarOnly}, ${v.alcoholOptional}, ${v.servesVegetarian}, ${v.servesVegan}, ${v.wheelchairAccessible},
-          ${v.separateChecks}, ${v.walkInGroupCapacity}, ${v.reservationRequired}, ${dbNoise}, ${v.liveMusicAtNight},
-          ${v.indoor}, ${v.outdoor}, ${v.weatherSensitive}, ${v.arrivalLandmark}, ${hoursJson}::jsonb, ${groupScore}, ${dateScore},
-          ${v.source}, ${v.yelpRating ?? null}, ${dbStatus}, ${v.closureReports}, ${verifiedAt}, ${priorsJson}::jsonb, ${priorsJson}::jsonb, now()
-        )
+        insert into platform.venues ${tx(rows)}
         on conflict (id) do update set
           city = excluded.city,
           neighborhood = excluded.neighborhood,
@@ -84,24 +123,36 @@ export async function upsertSeedVenues(sql: SQL, venues: readonly VenueRecord[] 
           address = excluded.address,
           lat = excluded.lat,
           lon = excluded.lon,
+          all_ages = excluded.all_ages,
           category = excluded.category,
           price_tier = excluded.price_tier,
           age_min = excluded.age_min,
           is_bar_only = excluded.is_bar_only,
+          is_alcohol_centric = excluded.is_alcohol_centric,
           alcohol_optional = excluded.alcohol_optional,
           serves_vegetarian = excluded.serves_vegetarian,
           serves_vegan = excluded.serves_vegan,
+          halal_friendly = excluded.halal_friendly,
+          kosher_friendly = excluded.kosher_friendly,
+          gluten_free_friendly = excluded.gluten_free_friendly,
+          severe_allergen_safe = excluded.severe_allergen_safe,
           wheelchair_accessible = excluded.wheelchair_accessible,
+          is_smoke_free = excluded.is_smoke_free,
           separate_checks = excluded.separate_checks,
           walk_in_group_capacity = excluded.walk_in_group_capacity,
           reservation_required = excluded.reservation_required,
+          open_event_eligible = excluded.open_event_eligible,
           noise_level = excluded.noise_level,
           live_music_at_night = excluded.live_music_at_night,
           indoor = excluded.indoor,
           outdoor = excluded.outdoor,
           weather_sensitive = excluded.weather_sensitive,
+          safety_score = excluded.safety_score,
+          transit_score = excluded.transit_score,
           arrival_landmark = excluded.arrival_landmark,
           hours = excluded.hours,
+          hobbies = excluded.hobbies,
+          cuisine_tags = excluded.cuisine_tags,
           group_score = excluded.group_score,
           date_score = excluded.date_score,
           source = excluded.source,
@@ -110,10 +161,9 @@ export async function upsertSeedVenues(sql: SQL, venues: readonly VenueRecord[] 
           persona_priors = excluded.persona_priors,
           updated_at = now()
       `;
-      n++;
     }
   });
-  return n;
+  return venues.length;
 }
 
 export async function seedFromSim(url: string, opts: { days: number; seed: number; personas?: number; engine?: "engine-v1" | "random" | "off"; city?: City | "all" }) {

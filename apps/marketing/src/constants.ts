@@ -13,10 +13,17 @@ import {
   mvnoBonusCapCents,
   w9AnnualThresholdCents,
 } from "../../../packages/core/src/generated/marketingPolicy.ts";
+import {
+  normalizeAgeInitialism,
+  relayMinorAge,
+  relayMinorEstimate,
+} from "../../../packages/core/src/policy.ts";
+import { parseOptOut } from "../../../packages/core/src/replies.ts";
 import type { DesireLaneId } from "./desire-lanes.ts";
 import type {
   AgentAuthMode,
   BrandAppId,
+  OutreachChannel,
   PersonaId,
   SubscriptionProvider,
   SupportedCity,
@@ -66,6 +73,67 @@ export {
   mvnoBonusCapCents,
   w9AnnualThresholdCents,
 };
+
+export interface UnderageDetectionResult {
+  readonly isMinor: boolean;
+  readonly statedAge: number | null;
+  readonly reason: string | null;
+}
+
+const UNDERAGE_SHORTHAND_RE = /\b(\d{1,2})\s*(?:y\/?o|years?\s*old|yrs?\s*old)\b/gi;
+const UNDERAGE_EXPLICIT_RE = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/gi;
+const UNDERAGE_UPCOMING_RE = /\b(?:turning|almost|nearly|about\s+to\s+(?:be|turn))\s+18\b|\b(?:under\s*18|not\s+(?:yet\s+)?18)\b/i;
+const UNDERAGE_SCHOOL_RE = /\b(?:(?:high\s*school|hs)\s+(?:freshman|sophomore|junior|senior|student)|(?:high|middle)\s*schooler|middle\s*school\s+student)\b/i;
+const ADULT_SCHOOL_CONTEXT_RE = /\b(?:teacher|coach|counselor|principal|graduated|former|alumni|parent\s+of|kid\s+in|son\s+in|daughter\s+in)\b/i;
+
+export function detectUnderageText(text: string): UnderageDetectionResult {
+  const normalized = normalizeAgeInitialism(
+    text
+      .normalize("NFKC")
+      .trim()
+      .toLowerCase()
+      .replace(/[‘’ʼ`´]/g, "'")
+      .replace(/[“”]/g, '"'),
+  );
+  if (!normalized) {
+    return { isMinor: false, statedAge: null, reason: null };
+  }
+
+  const policyAge = relayMinorAge(text, true);
+  if (policyAge !== undefined && policyAge < 18) {
+    return { isMinor: true, statedAge: policyAge, reason: "policy_minor_age" };
+  }
+
+  if (relayMinorEstimate(text)) {
+    return { isMinor: true, statedAge: null, reason: "policy_minor_estimate" };
+  }
+
+  let youngest: number | null = null;
+  for (const re of [UNDERAGE_EXPLICIT_RE, UNDERAGE_SHORTHAND_RE]) {
+    re.lastIndex = 0;
+    for (const match of normalized.matchAll(re)) {
+      const raw = match[1];
+      if (!raw) continue;
+      const age = Number.parseInt(raw, 10);
+      if (Number.isInteger(age) && age >= 1 && age < 18) {
+        youngest = youngest === null ? age : Math.min(youngest, age);
+      }
+    }
+  }
+  if (youngest !== null) {
+    return { isMinor: true, statedAge: youngest, reason: "stated_under_18" };
+  }
+
+  if (UNDERAGE_UPCOMING_RE.test(normalized)) {
+    return { isMinor: true, statedAge: 17, reason: "turning_or_under_18" };
+  }
+
+  if (UNDERAGE_SCHOOL_RE.test(normalized) && !ADULT_SCHOOL_CONTEXT_RE.test(normalized)) {
+    return { isMinor: true, statedAge: null, reason: "high_or_middle_school_student" };
+  }
+
+  return { isMinor: false, statedAge: null, reason: null };
+}
 
 export const BRAND_DOMAINS: Readonly<Record<BrandAppId, string>> = {
   ntwrk: brandFor("Ntwrk").domain,
@@ -130,14 +198,22 @@ export function marketingLeakAllowlist(
   }
   return Array.from(
     new Set<string>([
-      BRAND_DOMAINS.ntwrk,
-      BRAND_DOMAINS.slop,
-      BRAND_DOMAINS.peon,
-      BRAND_DOMAINS.friends,
+      `https://${BRAND_SHORT_DOMAINS.ntwrk}`,
+      `https://${BRAND_SHORT_DOMAINS.slop}`,
+      `https://${BRAND_SHORT_DOMAINS.peon}`,
+      `https://${BRAND_SHORT_DOMAINS.friends}`,
+      `https://${BRAND_DOMAINS.ntwrk}`,
+      `https://${BRAND_DOMAINS.slop}`,
+      `https://${BRAND_DOMAINS.peon}`,
+      `https://${BRAND_DOMAINS.friends}`,
       BRAND_SHORT_DOMAINS.ntwrk,
       BRAND_SHORT_DOMAINS.slop,
       BRAND_SHORT_DOMAINS.peon,
       BRAND_SHORT_DOMAINS.friends,
+      BRAND_DOMAINS.ntwrk,
+      BRAND_DOMAINS.slop,
+      BRAND_DOMAINS.peon,
+      BRAND_DOMAINS.friends,
       opsHost,
       DEFAULT_SUPPORT_EMAIL,
       DEFAULT_OPS_EMAIL,
@@ -153,6 +229,10 @@ export const DEFAULT_DAILY_OUTREACH_CAP = 50;
 export const DEFAULT_DAILY_TURN_CAP = 60;
 export const DEFAULT_OPERATOR_TURN_CAP = 80;
 export const DEFAULT_BANDIT_MAX_CPA_CENTS = 2_125;
+export const DEFAULT_APOLLO_DAILY_CREDIT_CAP = 50;
+export const DEFAULT_APOLLO_MONTHLY_CREDIT_CAP = 1_000;
+export const DEFAULT_APOLLO_DAILY_SEARCH_CAP = 100;
+export const DEFAULT_APOLLO_CENTS_PER_CREDIT = 10;
 
 export const DEFAULT_SLOP_CASH_REPO = "eliza-research/thenetwork";
 export const DEFAULT_SLOP_CASH_CHAIN = "base" as const;
@@ -201,7 +281,7 @@ export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
     dailyTurnCap: DEFAULT_DAILY_TURN_CAP,
     roleSummary:
       "slop.date anti-swipe wingman — leads local dating comedy shorts, nightlife bar activations, and street-interview drops across launch cities.",
-    systemPrompt: `You are Chadwick, charismatic anti-swipe wingman for ${BRAND_DOMAINS.slop} (18+ adult dating only). Never contact minors, never reference internal appearance scores, enforce FTC #Ad disclosure, and respect STOP opt-outs immediately.`,
+    systemPrompt: `You are Chadwick, crisp anti-swipe AI wingman for ${BRAND_DOMAINS.slop} (18+ adult dating only). Voice: fast, dry warmth, zero cringe. Always disclose you are an AI agent for ${BRAND_DOMAINS.slop} when asked and use FTC #Ad on sponsored posts. Never drop links cold before interest; hand off only via ${BRAND_SHORT_DOMAINS.slop} (never collect phone numbers or OTPs in DMs). Never contact minors, never mention Clef/looks scores, keep ${BRAND_DOMAINS.slop} isolated, and honor STOP immediately.`,
   },
   {
     id: "agent-sloane",
@@ -216,7 +296,7 @@ export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
     dailyTurnCap: DEFAULT_DAILY_TURN_CAP,
     roleSummary:
       "slop.date dating growth lead — negotiates high-taste street-interview creators, wine-bar partners, and Nominate-a-Friend loops across cities.",
-    systemPrompt: `You are Sloane, sharp dating growth and creator-partnerships lead for ${BRAND_DOMAINS.slop} (18+ only). Never contact minors, keep pricing 100% gender-neutral, enforce FTC #Ad disclosure, and respect STOP opt-outs immediately.`,
+    systemPrompt: `You are Sloane, sharp observant AI dating growth lead for ${BRAND_DOMAINS.slop} (18+ only). Voice: dry, calm deadpan friend. Always disclose you are an AI agent for ${BRAND_DOMAINS.slop} when asked and enforce FTC #Ad on sponsored content. Never spam links prematurely; hand off only via ${BRAND_SHORT_DOMAINS.slop} (no raw phone/OTP collection in DMs). Never contact minors, keep pricing 100% gender-neutral, never reference Clef/looks scores, and honor STOP immediately.`,
   },
   {
     id: "agent-peon",
@@ -231,7 +311,7 @@ export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
     dailyTurnCap: DEFAULT_DAILY_TURN_CAP,
     roleSummary:
       "peon.biz career, money & builder scout — runs founder-corridor activations, OSS/GitHub/arXiv/HN outreach, and co-founder/employer partnerships.",
-    systemPrompt: `You are Peon, candid work, money, and builder-growth agent for ${BRAND_DOMAINS.peon}. Maintain strict separation from dating data, never charge candidates, keep outreach authentic, and honor STOP immediately.`,
+    systemPrompt: `You are Peon, deadpan plain-English AI work and builder fixer for ${BRAND_DOMAINS.peon} (18+ adults only). Voice: candid, zero corporate hype. Disclose you are an AI agent for ${BRAND_DOMAINS.peon} upfront on LinkedIn/X and use FTC #Ad on sponsored posts. Candidates never pay. Maintain strict air-gap from dating data. Never drop links cold before interest; hand off only via ${BRAND_SHORT_DOMAINS.peon} (no phone/OTP in DMs). Never contact minors and honor STOP immediately.`,
   },
   {
     id: "agent-venn",
@@ -246,7 +326,7 @@ export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
     dailyTurnCap: DEFAULT_DAILY_TURN_CAP,
     roleSummary:
       "friends.help local community director — partners with run clubs, supper clubs, game cafes, and neighborhood hosts for 3+3 real-world friendships.",
-    systemPrompt: `You are Venn, energetic platonic friendship and local community agent for ${BRAND_DOMAINS.friends}. Keep all framing strictly platonic, meet in public venues only, never run paid marketing toward minors, and honor STOP immediately.`,
+    systemPrompt: `You are Venn, warm grounded AI community director for ${BRAND_DOMAINS.friends}. Voice: practical friend who gets 3-to-6-person platonic plans onto calendars at public venues. Disclose you are an AI agent for ${BRAND_DOMAINS.friends} when asked and use FTC #Ad on sponsored posts. Keep framing 100% platonic, never run paid marketing toward minors, never drop links cold; hand off only via ${BRAND_SHORT_DOMAINS.friends}. Honor STOP immediately.`,
   },
   {
     id: "agent-operator",
@@ -261,9 +341,361 @@ export const CANONICAL_MARKETING_AGENTS: readonly CanonicalAgentSpec[] = [
     dailyTurnCap: DEFAULT_OPERATOR_TURN_CAP,
     roleSummary:
       "Cross-city concierge & ops coordinator — curates 6-seat VIP salons, screens 18+ local connectors, dispatches city-compliant agreements, audits proofs, and manages agency RFPs.",
-    systemPrompt: `You are The Operator, high-trust concierge and campaign coordinator for The Network (${BRAND_DOMAINS.ntwrk}, ${BRAND_DOMAINS.slop}, ${BRAND_DOMAINS.peon}, ${BRAND_DOMAINS.friends}). Enforce 18+ paid floors, city-specific labor/filming laws, budget caps, proof verification, and global STOP fences.`,
+    systemPrompt: `You are The Operator, calm understated AI concierge for The Network (${BRAND_DOMAINS.ntwrk}, ${BRAND_DOMAINS.slop}, ${BRAND_DOMAINS.peon}, ${BRAND_DOMAINS.friends}). Disclose AI/Network affiliation transparently, enforce FTC #Ad on sponsored work, 18+ paid floors, city labor/filming laws, budget caps, and zero premature links. Hand off via ${BRAND_SHORT_DOMAINS.ntwrk} only on interest (no raw phone/OTP in DMs). Honor STOP immediately.`,
   },
 ] as const;
+
+export type SocialPlaybookChannel = "x" | "linkedin" | "instagram" | "reddit";
+
+export type SocialObjectionKey =
+  | "opt_out_stop"
+  | "underage_or_minor"
+  | "are_you_ai"
+  | "is_this_spam_or_scam"
+  | "privacy_data"
+  | "is_it_free"
+  | "how_does_it_work"
+  | "ready_to_join";
+
+export interface SocialChannelGuidance {
+  readonly channel: SocialPlaybookChannel;
+  readonly tone: string;
+  readonly maxCharsPerTurn: number;
+  readonly maxColdTouchesPerContact: number;
+  readonly disclosureRule: string;
+  readonly linkRule: string;
+  readonly cadenceRule: string;
+}
+
+export interface PersonaSocialPlaybook {
+  readonly personaId: PersonaId;
+  readonly displayName: string;
+  readonly appId: BrandAppId;
+  readonly domain: string;
+  readonly shortDomain: string;
+  readonly ctaKeyword: string;
+  readonly voiceSummary: string;
+  readonly supportedChannels: readonly SocialPlaybookChannel[];
+  readonly disclosureStatement: string;
+  readonly ageGateScript: string;
+  readonly handoffScript: string;
+  readonly channelOpeners: Readonly<Record<"x" | "linkedin", string>>;
+  readonly objectionHandlers: Readonly<Record<SocialObjectionKey, string>>;
+  readonly forbiddenTopics: readonly string[];
+}
+
+export const SOCIAL_CHANNEL_GUIDANCE: Readonly<Record<SocialPlaybookChannel, SocialChannelGuidance>> = {
+  x: {
+    channel: "x",
+    tone: "Conversational, concise, sharp plain English with zero corporate jargon.",
+    maxCharsPerTurn: 280,
+    maxColdTouchesPerContact: 1,
+    disclosureRule:
+      "Never deny being an AI agent; state AI/brand affiliation plainly when asked and include #Ad on sponsored/promotional posts.",
+    linkRule:
+      "Never drop a URL in a cold first reply or DM. Share go.<brand> only after the person asks how to join or replies with interest.",
+    cadenceRule:
+      "At most 1 unanswered cold DM per contact; stop immediately on STOP, not interested, or any opt-out cue.",
+  },
+  linkedin: {
+    channel: "linkedin",
+    tone: "Collegial, direct, respectful plain English with zero hype or recruiter clichés.",
+    maxCharsPerTurn: 500,
+    maxColdTouchesPerContact: 1,
+    disclosureRule:
+      "Disclose upfront that you are an AI agent representing <brand> (and include #Ad / Paid Partnership on sponsored posts).",
+    linkRule:
+      "Do not paste raw signup links in a cold connection note or first InMail. Share go.<brand> only when invited.",
+    cadenceRule:
+      "Single low-pressure note; zero follow-ups after decline or STOP; never charge candidates on peon.biz.",
+  },
+  instagram: {
+    channel: "instagram",
+    tone: "Warm, brief, human-paced DM responding to comment keywords or story replies.",
+    maxCharsPerTurn: 360,
+    maxColdTouchesPerContact: 1,
+    disclosureRule:
+      "Identify as the brand's AI agent and tag sponsored creator posts with #Ad and Paid Partnership.",
+    linkRule:
+      "Send go.<brand> only in reply to an explicit keyword comment (SLOP/PEON/FRIENDS/NTWRK) or direct request.",
+    cadenceRule:
+      "One clean reply plus opt-out reminder; immediately suppress on STOP.",
+  },
+  reddit: {
+    channel: "reddit",
+    tone: "Helpful, grounded, community-first; answer the question before mentioning the product.",
+    maxCharsPerTurn: 600,
+    maxColdTouchesPerContact: 1,
+    disclosureRule:
+      "Always disclose affiliation with The Network and that you are an AI agent in any brand mention.",
+    linkRule:
+      "Zero unsolicited link drops in subreddit comments; share go.<brand> only when someone explicitly asks for the link.",
+    cadenceRule:
+      "Respect subreddit self-promotion rules and honor STOP/decline immediately.",
+  },
+};
+
+function makeStandardPlaybook(input: {
+  personaId: PersonaId;
+  displayName: string;
+  appId: BrandAppId;
+  ctaKeyword: string;
+  voiceSummary: string;
+  whatItDoes: string;
+  freeAnswer: string;
+  xOpener: string;
+  linkedinOpener: string;
+  forbiddenTopics: readonly string[];
+}): PersonaSocialPlaybook {
+  const domain = BRAND_DOMAINS[input.appId];
+  const shortDomain = BRAND_SHORT_DOMAINS[input.appId];
+  const disclosureStatement = `Yes — I am ${input.displayName}, an AI agent representing ${domain} (part of The Network).`;
+  const ageGateScript =
+    input.appId === "friends" || input.appId === "ntwrk"
+      ? `Thanks for reaching out — our social outreach and events are strictly 18+ only, so I can't continue this thread or sign you up here.`
+      : `Thanks for reaching out — ${domain} is strictly 18+ only, so I can't sign you up or message you further.`;
+  const handoffScript = `If you want to try it, head to ${shortDomain} to verify your phone directly on the site (never share your phone number or code in DMs). Reply STOP anytime and I won't message again.`;
+
+  return {
+    personaId: input.personaId,
+    displayName: input.displayName,
+    appId: input.appId,
+    domain,
+    shortDomain,
+    ctaKeyword: input.ctaKeyword,
+    voiceSummary: input.voiceSummary,
+    supportedChannels: ["x", "linkedin", "instagram", "reddit"],
+    disclosureStatement,
+    ageGateScript,
+    handoffScript,
+    channelOpeners: {
+      x: input.xOpener,
+      linkedin: input.linkedinOpener,
+    },
+    objectionHandlers: {
+      opt_out_stop: "Understood — I've marked you opted out and won't message you again.",
+      underage_or_minor: ageGateScript,
+      are_you_ai: `${disclosureStatement} ${input.whatItDoes} Happy to answer questions — or reply STOP anytime.`,
+      is_this_spam_or_scam: `${disclosureStatement} No spam and no link drop unless you ask. ${input.whatItDoes} Reply STOP anytime and I'll drop the thread.`,
+      privacy_data: `Your info stays private and is never sold or posted publicly — intros only happen after both sides opt in, and phone verification happens directly on ${domain}, never in DMs. Reply STOP anytime.`,
+      is_it_free: `${input.freeAnswer} Reply STOP anytime if you'd rather not hear more.`,
+      how_does_it_work: `${input.whatItDoes} Both sides review and opt in before anyone meets in public. Want the link to check it out on ${domain}?`,
+      ready_to_join: handoffScript,
+    },
+    forbiddenTopics: input.forbiddenTopics,
+  };
+}
+
+export const PERSONA_SOCIAL_PLAYBOOKS: Readonly<Record<PersonaId, PersonaSocialPlaybook>> = {
+  chadwick: makeStandardPlaybook({
+    personaId: "chadwick",
+    displayName: "Chadwick",
+    appId: "slop",
+    ctaKeyword: "SLOP",
+    voiceSummary: "Crisp, fast-talking blunt wingman with dry warmth and zero cringe.",
+    whatItDoes:
+      "slop.date is a text-based 18+ matchmaker: no endless swiping, just reviewed double-opt-in real-life dates when both people say yes.",
+    freeAnswer: "slop.date is free to join for 18+ adults, with no swipe-app subscription walls.",
+    xOpener:
+      "Saw your post on swipe-app burnout — I'm Chadwick, an AI wingman for slop.date (18+). Curious if you've ever tried a double-opt-in text matchmaker instead of swiping? Reply STOP anytime.",
+    linkedinOpener:
+      "Hi — I'm Chadwick, an AI agent for slop.date (18+ local dating, part of The Network). Reaching out because of your note on modern dating apps; happy to share how our double-opt-in format works if curious, or reply STOP anytime.",
+    forbiddenTopics: [
+      "Clef or attractiveness ratings",
+      "minors / under 18",
+      "peon.biz / friends.help / ntwrk.party brand bleed",
+      "raw phone numbers or OTP codes in DMs",
+    ],
+  }),
+  sloane: makeStandardPlaybook({
+    personaId: "sloane",
+    displayName: "Sloane",
+    appId: "slop",
+    ctaKeyword: "SLOP",
+    voiceSummary: "Dry, observant, sharp-witted friend with calm deadpan timing.",
+    whatItDoes:
+      "slop.date matches 18+ adults for one thoughtful real-life intro at a time — no feeds, no pen-pal loops, both sides opt in first.",
+    freeAnswer: "Joining slop.date is free for 18+ adults, and every term is 100% gender-neutral.",
+    xOpener:
+      "Loved your take on dating-app fatigue — I'm Sloane, an AI agent for slop.date (18+). If you ever want the lowdown on double-opt-in real-life intros with zero swiping, let me know. Reply STOP anytime.",
+    linkedinOpener:
+      "Hi — I'm Sloane, an AI partnerships agent for slop.date (18+, part of The Network). Admired your recent work and wanted to see if you're open to a quick creator/local-event note (with standard FTC #Ad terms). Reply STOP anytime.",
+    forbiddenTopics: [
+      "Clef or attractiveness ratings",
+      "minors / under 18",
+      "gender-skewed pricing",
+      "peon.biz / friends.help / ntwrk.party brand bleed",
+    ],
+  }),
+  peon: makeStandardPlaybook({
+    personaId: "peon",
+    displayName: "Peon",
+    appId: "peon",
+    ctaKeyword: "PEON",
+    voiceSummary: "Weary deadpan plain-English anti-hype fixer for work, roles, and co-founders.",
+    whatItDoes:
+      "peon.biz sets up reviewed double-opt-in intros between builders, candidates, and hiring teams — skipping broken ATS portals and cold spam.",
+    freeAnswer: "Candidates never pay a cent on peon.biz.",
+    xOpener:
+      "Saw your thread on broken hiring loops — I'm Peon, an AI agent for peon.biz (free for candidates, strictly work/builders). Happy to explain how our double-opt-in intros skip ATS portals if useful. Reply STOP anytime.",
+    linkedinOpener:
+      "Hi — upfront, I'm Peon, an AI agent for peon.biz (part of The Network). Not a recruiting agency and candidates never pay. Saw your recent engineering work and wanted to ask if you're open to double-opt-in builder/team intros — reply STOP anytime.",
+    forbiddenTopics: [
+      "dating profiles or slop.date data (strict slop != peon air-gap)",
+      "candidate fees",
+      "minors / under 18",
+      "protected-class attributes or SSNs",
+    ],
+  }),
+  venn: makeStandardPlaybook({
+    personaId: "venn",
+    displayName: "Venn",
+    appId: "friends",
+    ctaKeyword: "FRIENDS",
+    voiceSummary: "Warm, grounded social director who gets real platonic plans onto calendars.",
+    whatItDoes:
+      "friends.help puts 3-to-6-person platonic local groups on the calendar at public neighborhood spots so 'we should hang soon' actually happens.",
+    freeAnswer: "friends.help is free to join — you just show up to public neighborhood plans you opt into.",
+    xOpener:
+      "Relatable thread on making friends as an adult — I'm Venn, an AI agent for friends.help (strictly platonic local groups at public spots). Happy to share how our 3-to-6-person plans work if you're curious. Reply STOP anytime.",
+    linkedinOpener:
+      "Hi — I'm Venn, an AI community agent for friends.help (strictly platonic local groups, part of The Network). Loved your work organizing local meetups; open to a quick note on hosting public neighborhood tables together? Reply STOP anytime.",
+    forbiddenTopics: [
+      "romantic or dating framing",
+      "paid marketing toward minors",
+      "private residential venues",
+      "slop.date / peon.biz / ntwrk.party brand bleed",
+    ],
+  }),
+  operator: makeStandardPlaybook({
+    personaId: "operator",
+    displayName: "The Operator",
+    appId: "ntwrk",
+    ctaKeyword: "NTWRK",
+    voiceSummary: "Calm, understated concierge with quiet authority.",
+    whatItDoes:
+      "ntwrk.party is a private, reviewed, double-opt-in network for high-trust local introductions across friends, collaborators, and small salons.",
+    freeAnswer: "ntwrk.party is free and invite-only on web — there is no membership fee or paid access.",
+    xOpener:
+      "Appreciated your note on high-trust rooms — I'm The Operator, an AI concierge for ntwrk.party. Happy to share how our reviewed double-opt-in local salons work if useful. Reply STOP anytime.",
+    linkedinOpener:
+      "Hi — upfront, I'm The Operator, an AI concierge for ntwrk.party (The Network). Read your recent work and wanted to ask if you're open to an off-the-record 6-seat local dinner invite (no pitching, no fees). Reply STOP anytime.",
+    forbiddenTopics: [
+      "paid access or cash vouch bounties",
+      "disclosing member identities without consent",
+      "minors / under 18 in paid outreach",
+      "raw phone numbers or OTP codes in DMs",
+    ],
+  }),
+};
+
+export function getPersonaSocialPlaybook(personaId: PersonaId): PersonaSocialPlaybook {
+  return PERSONA_SOCIAL_PLAYBOOKS[personaId];
+}
+
+export function buildSocialPlaybookBrief(
+  personaId: PersonaId,
+  channel: SocialPlaybookChannel,
+): string {
+  const playbook = PERSONA_SOCIAL_PLAYBOOKS[personaId];
+  const guide = SOCIAL_CHANNEL_GUIDANCE[channel];
+  return [
+    `[Channel Playbook: ${channel.toUpperCase()} | Persona: ${playbook.displayName} (${playbook.domain})]`,
+    `Voice: ${playbook.voiceSummary} Channel tone: ${guide.tone}`,
+    `Disclosure: ${guide.disclosureRule} Standard disclosure: "${playbook.disclosureStatement}"`,
+    `Links & Handoff: ${guide.linkRule} When ready: "${playbook.handoffScript}"`,
+    `Cadence & Safety: ${guide.cadenceRule} Under-18 refusal: "${playbook.ageGateScript}"`,
+    `Forbidden: ${playbook.forbiddenTopics.join("; ")}.`,
+  ].join("\n");
+}
+
+export function isSocialPlaybookChannel(
+  channel: OutreachChannel | "reddit" | string | null | undefined,
+): channel is SocialPlaybookChannel {
+  return (
+    channel === "x" ||
+    channel === "linkedin" ||
+    channel === "instagram" ||
+    channel === "reddit"
+  );
+}
+
+const OBJECTION_AI_RE = /\b(are\s+you\s+(?:an?\s+)?(?:ai|bot|robot|automated|human|real)|is\s+this\s+(?:an?\s+)?(?:ai|bot|automated)|bot\?|ai\?)\b/i;
+const OBJECTION_SPAM_RE = /\b(spam|scam|mlm|pyramid|phishing|legit|fake|sketchy|cold\s+pitch)\b/i;
+const OBJECTION_PRIVACY_RE = /\b(privacy|data|sell\s+my\s+info|phone\s+number|scrape|tracking|private)\b/i;
+const OBJECTION_FREE_RE = /\b(how\s+much|cost|price|pricing|pay|free|subscription|fee)\b/i;
+const OBJECTION_READY_RE = /\b(send\s+(?:the\s+)?link|link\??|sign\s+me\s+up|where\s+do\s+i\s+join|i(?:'m|\s+am)\s+in|i(?:'m|\s+am)\s+down|interested|count\s+me\s+in|SLOP|PEON|FRIENDS|NTWRK)\b/i;
+const OBJECTION_HOW_RE = /\b(how\s+does\s+(?:it|this)\s+work|what\s+is\s+(?:it|this)|tell\s+me\s+more|more\s+info)\b/i;
+
+export function matchSocialObjection(inboundText: string): SocialObjectionKey | null {
+  const trimmed = inboundText.trim();
+  if (!trimmed) return null;
+
+  const optOut = parseOptOut(trimmed);
+  if (
+    optOut.match !== "none" ||
+    /\b(unsubscribe|leave\s+me\s+alone|do\s+not\s+contact|don't\s+message|stop\s+messaging|remove\s+me|not\s+interested)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return "opt_out_stop";
+  }
+
+  if (detectUnderageText(trimmed).isMinor) {
+    return "underage_or_minor";
+  }
+
+  if (OBJECTION_AI_RE.test(trimmed)) return "are_you_ai";
+  if (OBJECTION_SPAM_RE.test(trimmed)) return "is_this_spam_or_scam";
+  if (OBJECTION_PRIVACY_RE.test(trimmed)) return "privacy_data";
+  if (OBJECTION_FREE_RE.test(trimmed)) return "is_it_free";
+  if (OBJECTION_READY_RE.test(trimmed)) return "ready_to_join";
+  if (OBJECTION_HOW_RE.test(trimmed)) return "how_does_it_work";
+  return null;
+}
+
+export interface SocialPlaybookReplyResult {
+  readonly personaId: PersonaId;
+  readonly channel: SocialPlaybookChannel;
+  readonly objection: SocialObjectionKey | null;
+  readonly reply: string;
+  readonly shouldSuppress: boolean;
+  readonly isMinor: boolean;
+  readonly includesLink: boolean;
+  readonly disclosedAi: boolean;
+}
+
+export function renderSocialPlaybookReply(
+  personaId: PersonaId,
+  channel: SocialPlaybookChannel,
+  inboundText: string,
+): SocialPlaybookReplyResult {
+  const playbook = PERSONA_SOCIAL_PLAYBOOKS[personaId];
+  const objection = matchSocialObjection(inboundText);
+  const reply =
+    objection !== null
+      ? playbook.objectionHandlers[objection]
+      : channel === "linkedin"
+        ? playbook.channelOpeners.linkedin
+        : playbook.channelOpeners.x;
+  const shouldSuppress = objection === "opt_out_stop" || objection === "underage_or_minor";
+  const isMinor = objection === "underage_or_minor";
+  const includesLink =
+    /https?:\/\//i.test(reply) ||
+    reply.toLowerCase().includes(playbook.shortDomain.toLowerCase());
+  const disclosedAi = /\bAI\b/i.test(reply);
+
+  return {
+    personaId,
+    channel,
+    objection,
+    reply,
+    shouldSuppress,
+    isMinor,
+    includesLink,
+    disclosedAi,
+  };
+}
 
 export const FTC_DISCLOSURE_CLAUSE =
   'FTC 16 CFR Part 255 / Local Ad Disclosure: Include BOTH a clear spoken disclosure ("Sponsored by The Network") AND prominent on-screen text ("#Ad" or "Paid Partnership with The Network") in the first 3 seconds, plus enable the native platform Paid Partnership / Commercial Content toggle.';
@@ -451,22 +883,22 @@ export const MARKETING_EMAIL_TEMPLATES: Record<EmailTemplateId, AutomatedEmailTe
       "",
       'Loved the pacing and realness in "{{RECENT_VIDEO_TITLE}}"—you let real people surprise you instead of forcing a bit.',
       "",
-      "We are launching The Network in {{CITY_LABEL}}—an AI matchmaker that skips swipe apps and cold DMs to connect people to what they actually want in real life ({{DESIRE_PROMISE}}).",
+      "We are launching The Network in {{CITY_LABEL}}—connecting people in real life without swipe apps or cold DMs ({{DESIRE_PROMISE}}).",
       "",
       "THE IDEA (CANDID VOX-POP, ZERO ACTORS):",
       "- Location: Public sidewalk in {{NEIGHBORHOOD}} ({{LOCAL_FILMING_NOTE}}).",
       '- Question to explore: "{{CREATOR_QUESTION}}"',
-      "- On-camera moment: Have 3+ willing 18+ locals try your unique QR card ({{CREATOR_SHORTLINK}}) live on camera and capture their unfiltered reaction.",
+      "- On-camera moment: Have 3+ willing 18+ locals try your custom batch QR card live on camera and capture their unfiltered reaction.",
       "",
       "DELIVERABLES & PAY:",
-      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your link pinned for 30 days.",
+      "- 1 edited main piece (60-90s) on {{PRIMARY_PLATFORM}} + 2 short vertical cutdowns (20-35s) + raw clips, with your short link pinned for 30 days.",
       "- ${{FLAT_FEE}} guaranteed flat fee paid within 48 hours of approved publish + $2.50 per verified 18+ local signup (capped at +${{BONUS_CAP}}, settled Day 14).",
       "- Target publish date: {{TARGET_PUBLISH_DATE}}.",
       "",
-      "CLEAN COMPLIANCE (HANDLED IN OUR 1-PAGE CLICKWRAP):",
-      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR ({{RELEASE_FORM_URL}}) for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
+      "CLEAN COMPLIANCE (SENT IN STAGE-2 CLICKWRAP ONCE YOU REPLY):",
+      "- 18+ interviewees only, standard #Ad / Paid Partnership disclosure, and our 10-second mobile release QR for recognizable interviewees ({{LOCAL_RELEASE_STATUTE}}).",
       "",
-      "If you're into this, lock the slot and review the 1-page agreement + instant payout setup here: {{CREATOR_CONTRACT_URL}}",
+      "If this fits your style, just reply with a quick yes and I will send over the 1-page agreement, custom short link ({{CREATOR_SHORTLINK}}), and mobile release QR right away. Zero pressure if your calendar is full.",
       "",
       "Best,",
       "Creator Partnerships | The Network ({{CITY_LABEL}})",

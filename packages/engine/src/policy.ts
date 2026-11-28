@@ -5,13 +5,14 @@ import {
   initial, selectionMemberFullAt, step,
   type Event as SelectionEvent, type SelectionChoice, type SelectionMember, type SelectionRun,
 } from "../../core/src/generated/selectionRun.ts";
+import { exposureFloorEligible, vampireWeeklyCap } from "../../core/src/generated/qualityAndLeague.ts";
 export { gini };
-import { isMinor } from "./filters.ts";
+import { isMinor, memberQualityBandOf, memberVampireTierOf } from "./filters.ts";
 import { sha256 } from "./hash.ts";
 import { ASK_QUESTIONS as NETWORK_ASK_QUESTIONS } from "./packs/network/copy.ts";
 import { explorationBar, type Scored } from "./scoring.ts";
 import { solveChooSiowIPFP, type MarketEquilibrium, type SparsePairEdge } from "./sinkhorn.ts";
-import { directionalStatusMultiplier, explorationPairAllowed, VERTICAL_KERNELS, worldStatusBeliefs } from "./status.ts";
+import { directionalStatusMultiplier, explorationPairAllowed, verticalKernelFor, worldStatusBeliefs } from "./status.ts";
 import type { AskReason, EngineAsk, EngineInput, FairnessMetrics } from "./types.ts";
 import { pairKey, type World } from "./world.ts";
 
@@ -160,10 +161,14 @@ function selectionShell(w: World, opts: SelectOptions) {
     const members: SelectionMember[] = c.participants.map(id => {
       const mi = w.get(id)!;
       const role = c.roles[id];
+      const baseLimit = cfg.budgets[mi.m.state].limit;
+      const proactiveLimit = !w.minors.has(id) && !isMinor(w, id) && w.input.vampireByMember?.[id] !== undefined
+        ? vampireWeeklyCap(memberVampireTierOf(w, id), baseLimit)
+        : baseLimit;
       return {
         id, unavailable: Boolean(mi.inOpenOpportunity || opts.exclude?.has(id)),
         priorProactive: mi.recentProactive + (opts.extraProactive?.get(id) ?? 0),
-        proactiveLimit: cfg.budgets[mi.m.state].limit,
+        proactiveLimit,
         contributor: !!role && w.pack.ontology.contributorRoles.has(role),
         priorContribution: mi.recentContribution, contributionLimit: cfg.contribution.limit,
       };
@@ -212,6 +217,11 @@ export function exposureFloor(w: World, rng: Rng, debt: Readonly<Record<MemberId
   const carried = (id: MemberId) => Math.min(cfg.selection.exposureDebtCap, Math.max(0, debt[id] ?? 0));
   const members = rng.fork("floor").shuffle(w.ids.filter(id => {
     const mi = w.get(id)!;
+    if (w.input.qualityByMember?.[id] !== undefined || mi.tags.has("hv:hype:pitch")) {
+      const band = memberQualityBandOf(w, id);
+      const hasClearSignal = mi.match.length >= 2 || mi.intents.length > 0 || !mi.lowData;
+      return exposureFloorEligible(band, mi.lowExposure, mi.newcomer, mi.recentExposure30, hasClearSignal);
+    }
     return mi.lowExposure && (mi.newcomer || mi.lowData || mi.recentExposure30 === 0);
   })).sort((a, b) => carried(b) - carried(a));
   return { members, cap: Math.ceil(cfg.selection.exposureFloorShare * cfg.selection.maxProposalsPerCity * w.pack.geo.markets(cfg).length) };
@@ -288,7 +298,7 @@ export function selectProposals(w: World, scored: Scored[], rng: Rng, debt: Reco
         tsSamples.set(id, b.mu.map((m, d) => Math.max(-3, Math.min(3, m + b.sigma[d]! * nextNormal()))));
       }
     }
-    const K = VERTICAL_KERNELS[w.pack.id] ?? VERTICAL_KERNELS.ntwrk;
+    const K = verticalKernelFor(w.pack.id);
     const all = scored.filter(x => Number.isFinite(x.score) && !use.keys.has(x.c.key) && (!x.reason || x.reason === "below_threshold")
       && x.verdict?.verdict !== "no" && x.score >= explorationBar(w, x.c, x.threshold))
       .sort(byKey)

@@ -46,6 +46,13 @@ const CONSOLE_STAFF_STEPS: readonly ConsoleStep[] = [
   { step: "StopApprovedReview", method: "POST", console: "/api/staff/review/:id/stop", service: id => `/review/${id}/stop`, action: "step_stop_review", target: "opportunity" },
   { step: "DecideSafetyCase", method: "POST", console: "/api/staff/teen-intros", service: () => "/teen-intros", action: "step_switch_teen_intros" },
   { step: "DecideSafetyCase", method: "POST", console: "/api/staff/safety/older-than-stated", service: () => "/safety/older-than-stated", action: "step_report_older_than_stated" },
+  { step: "ReadVenues", method: "GET", console: "/api/staff/venues", service: () => "/venues", action: "step_read_venues", query: ["city", "status"] },
+  { step: "UpdateVenueStatus", method: "POST", console: "/api/staff/venues/:id/status", service: id => `/venues/${id}/status`, action: "step_update_venue_status", target: "case" },
+  { step: "ReadExternalEvents", method: "GET", console: "/api/staff/external-events", service: () => "/external-events", action: "step_read_external_events", query: ["city", "status"] },
+  { step: "ReviewExternalEvent", method: "POST", console: "/api/staff/external-events/:id/review", service: id => `/external-events/${id}/review`, action: "step_review_external_event", target: "case" },
+  { step: "ReadMatchmakers", method: "GET", console: "/api/staff/matchmakers", service: () => "/matchmakers", action: "step_read_matchmakers", query: ["city"] },
+  { step: "UpdateMatchmakerStatus", method: "POST", console: "/api/staff/matchmakers/:id/status", service: id => `/matchmakers/${id}/status`, action: "step_update_matchmaker_status", target: "case" },
+  { step: "ReadCityOps", method: "GET", console: "/api/staff/ops/cities", service: () => "/ops/cities", action: "step_read_city_ops", query: ["city"] },
 ];
 
 const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
@@ -73,6 +80,13 @@ const SERVICE_STEPS: readonly [RegExp, StaffStep, StaffStep][] = [
   [/^\/review\/[^/]+$/, "DecideReviewItem", "DecideReviewItem"],
   [/^\/safety\/(?:hold|ban|dismiss|lift|close|clear-minor|older-than-stated)$/, "DecideSafetyCase", "DecideSafetyCase"],
   [/^\/teen-intros$/, "DecideSafetyCase", "DecideSafetyCase"],
+  [/^\/venues$/, "ReadVenues", "ReadVenues"],
+  [/^\/venues\/[^/]+\/status$/, "UpdateVenueStatus", "UpdateVenueStatus"],
+  [/^\/external-events$/, "ReadExternalEvents", "ReadExternalEvents"],
+  [/^\/external-events\/[^/]+\/review$/, "ReviewExternalEvent", "ReviewExternalEvent"],
+  [/^\/matchmakers$/, "ReadMatchmakers", "ReadMatchmakers"],
+  [/^\/matchmakers\/[^/]+\/status$/, "UpdateMatchmakerStatus", "UpdateMatchmakerStatus"],
+  [/^\/ops\/cities$/, "ReadCityOps", "ReadCityOps"],
 ];
 
 export function serviceStaffStep(method: string, path: string): StaffStep | undefined {

@@ -3,7 +3,7 @@
 // wraps every critical state transition in Postgres sql.begin(...) + SELECT ... FOR UPDATE,
 // and implements full Memory + Pg CRUD across all 17 marketing.* tables.
 
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { RealClock } from "../../../packages/core/src/clock.ts";
 import { warmupDailyCap } from "../../../packages/core/src/generated/marketingDevice.ts";
 import { isOssDevBounty } from "../../../packages/core/src/generated/marketingPolicy.ts";
@@ -37,6 +37,9 @@ import type {
   AgentStatus,
   AntiFraudClaim,
   AntiFraudClaimStatus,
+  ApolloCreditLedgerEntry,
+  ApolloCreditUsageSummary,
+  ApolloOperationKind,
   AppId,
   AttributionEvent,
   BanditArm,
@@ -47,6 +50,7 @@ import type {
   BudgetEntry,
   BudgetEntryType,
   Campaign,
+  CanonicalOutreachPlatform,
   ChannelAccount,
   CityLaunchStage,
   CityPackOverride,
@@ -61,9 +65,13 @@ import type {
   DevicePlatform,
   DeviceStatus,
   DeviceWarmupStage,
+  EnrichmentCacheEntry,
   HumanPartner,
   HumanRole,
   ImplementationTier,
+  IntakeCandidateRecord,
+  IntakeCandidateStatus,
+  IntakeScoreBreakdown,
   LlmTrajectoryRecord,
   LlmTrajectoryStatus,
   MarketingAgent,
@@ -74,6 +82,8 @@ import type {
   PayoutRail,
   PersonaId,
   PhoneLineType,
+  PlatformInteractionOutcome,
+  PlatformInteractionRecord,
   ProofKind,
   ProofSubmission,
   ProofVerdict,
@@ -245,6 +255,8 @@ export interface UpsertChannelAccountInput {
 export interface UpsertHumanInput {
   id?: string;
   handleOrEmailHmac: string;
+  phoneHash?: string | null;
+  phoneE164?: string | null;
   contactEmail?: string | null;
   displayLabel: string;
   channel: OutreachChannel;
@@ -327,13 +339,14 @@ export interface CreateOutreachInput {
   campaignId: string;
   agentId: string;
   humanId: string;
+  phoneHash?: string | null;
   channelAccountId?: string | null;
   channel: OutreachChannel;
   tier: ImplementationTier;
   subject?: string | null;
   bodySummary: string;
   leakCheckPass: boolean;
-  desiredStatus?: "queued" | "sent" | "delivered";
+  desiredStatus?: "queued" | "sent" | "delivered" | "blocked_stop" | "blocked_policy";
   externalRef?: string | null;
   dailyOutreachCap?: number;
 }
@@ -727,6 +740,8 @@ export interface MarketingStore {
   upsertHuman(input: UpsertHumanInput): Promise<HumanPartner>;
   getHuman(id: string): Promise<HumanPartner | null>;
   getHumanByHmac(handleOrEmailHmac: string): Promise<HumanPartner | null>;
+  getHumanPhoneHash?(id: string): Promise<string | null>;
+  isPhoneHashSuppressed?(phoneHash: string): Promise<boolean>;
   listHumans(
     filter?: { city?: string; role?: HumanRole; stopped?: boolean } & PaginationFilter,
   ): Promise<HumanPartner[]>;
@@ -899,6 +914,51 @@ export interface MarketingStore {
     config: Record<string, unknown>,
   ): Promise<CityPackOverride>;
   listCityPacksOverrides(): Promise<CityPackOverride[]>;
+
+  // Pass-4 Apollo enrichment cache, credit ledger, 10-platform interactions, and quality intake
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null>;
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry>;
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number>;
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry>;
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary>;
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord>;
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]>;
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord>;
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null>;
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null>;
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]>;
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord>;
 
   resetDailyCounters(): Promise<void>;
   getOverview(campaignId?: string): Promise<MarketingOverview>;
@@ -1094,6 +1154,89 @@ function isPgUniqueViolation(err: unknown): boolean {
   return code === "23505";
 }
 
+export function normalizeMarketingPhoneE164(phone: string | null | undefined): string | null {
+  if (typeof phone !== "string") return null;
+  const trimmed = phone.trim();
+  if (trimmed.length === 0 || trimmed.length > 40) return null;
+  if (/[^0-9+().\-\s]/.test(trimmed)) return null;
+  const hasPlus = trimmed.startsWith("+");
+  const digits = trimmed.replace(/\D/g, "");
+  if (hasPlus) {
+    if (digits.length < 10 || digits.length > 15) return null;
+    return `+${digits}`;
+  }
+  if (digits.length === 10 && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits)) {
+    return `+1${digits}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1") && /^[2-9]\d{2}[2-9]\d{6}$/.test(digits.slice(1))) {
+    return `+${digits}`;
+  }
+  return null;
+}
+
+export function computeMarketingPhoneHash(
+  phoneOrE164: string,
+  hashKey: string | undefined = process.env.PLATFORM_HASH_KEY,
+): string | null {
+  const key = hashKey?.trim();
+  if (!key) return null;
+  const normalized = normalizeMarketingPhoneE164(phoneOrE164);
+  if (!normalized) return null;
+  return createHmac("sha256", key).update(normalized).digest("hex");
+}
+
+function resolveHumanPhoneHash(
+  input: Pick<UpsertHumanInput, "phoneHash" | "phoneE164" | "handleOrEmailHmac">,
+  hashKey?: string,
+): string | null {
+  const explicit = typeof input.phoneHash === "string" ? input.phoneHash.trim() : "";
+  if (explicit.length > 0) return explicit;
+  const effectiveKey = hashKey ?? process.env.PLATFORM_HASH_KEY;
+  if (input.phoneE164) {
+    const hashed = computeMarketingPhoneHash(input.phoneE164, effectiveKey);
+    if (hashed) return hashed;
+  }
+  const fromContactKey = computeMarketingPhoneHash(input.handleOrEmailHmac, effectiveKey);
+  if (fromContactKey) return fromContactKey;
+  return null;
+}
+
+export async function isGloballySuppressedPhoneHash(
+  sql: SQL,
+  phoneHash: string | null | undefined,
+): Promise<boolean> {
+  const hash = typeof phoneHash === "string" ? phoneHash.trim() : "";
+  if (!hash) return false;
+
+  const fnCheck = firstRow(await sql`
+    select exists (
+      select 1
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'platform'
+        and p.proname = 'is_suppressed_phone_hash'
+        and p.pronargs = 1
+        and has_function_privilege(p.oid, 'EXECUTE')
+    ) as has_fn
+  `);
+  if (asBool(fnCheck?.has_fn)) {
+    const res = firstRow(await sql`
+      select platform.is_suppressed_phone_hash(${hash}) as suppressed
+    `);
+    return asBool(res?.suppressed);
+  }
+
+  const fallback = firstRow(await sql`
+    select exists (
+      select 1
+      from marketing.humans
+      where phone_hash = ${hash}
+        and (stopped or banned)
+    ) as suppressed
+  `);
+  return asBool(fallback?.suppressed);
+}
+
 // ============================================================================
 // MemoryMarketingStore
 // ============================================================================
@@ -1101,12 +1244,16 @@ function isPgUniqueViolation(err: unknown): boolean {
 export class MemoryMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
+  private readonly externalSuppressedPhoneHashes = new Set<string>();
+  private readonly isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
 
   private readonly campaigns = new Map<string, Campaign>();
   private readonly agents = new Map<string, MarketingAgent>();
   private readonly devices = new Map<string, DeviceNode>();
   private readonly channels = new Map<string, ChannelAccount>();
   private readonly humans = new Map<string, HumanPartner>();
+  private readonly humanPhoneHashes = new Map<string, string>();
   private readonly tasks = new Map<string, MarketingTask>();
   private readonly proofs = new Map<string, ProofSubmission>();
   private readonly outreach = new Map<string, OutreachMessage>();
@@ -1124,10 +1271,30 @@ export class MemoryMarketingStore implements MarketingStore {
   private readonly contactSuppressions = new Map<string, ContactSuppressionRecord>();
   private readonly contactTouchpoints: ContactTouchpoint[] = [];
   private readonly cityPackOverrides = new Map<string, CityPackOverride>();
+  private readonly enrichmentCache = new Map<string, EnrichmentCacheEntry>();
+  private readonly apolloCreditLedger: ApolloCreditLedgerEntry[] = [];
+  private readonly apolloCreditByKey = new Map<string, ApolloCreditLedgerEntry>();
+  private readonly platformInteractions: PlatformInteractionRecord[] = [];
+  private readonly intakeCandidates = new Map<string, IntakeCandidateRecord>();
+  private readonly intakeByContactHash = new Map<string, string>();
 
-  constructor(opts: { clock?: Clock; idGen?: () => string } = {}) {
+  constructor(
+    opts: {
+      clock?: Clock;
+      idGen?: () => string;
+      hashKey?: string;
+      isExternalPhoneHashSuppressed?: (phoneHash: string) => Promise<boolean> | boolean;
+    } = {},
+  ) {
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
+    this.isExternalPhoneHashSuppressed = opts.isExternalPhoneHashSuppressed;
+  }
+
+  suppressExternalPhoneHash(phoneHash: string): void {
+    const trimmed = phoneHash.trim();
+    if (trimmed) this.externalSuppressedPhoneHashes.add(trimmed);
   }
 
   close(): Promise<void> {
@@ -1324,13 +1491,15 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve({ ...next });
   }
 
-  consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
+  async consumeAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
     const agent = this.agents.get(input.agentId);
-    if (!agent) return Promise.reject(new Error(`Agent not found: ${input.agentId}`));
+    if (!agent) throw new Error(`Agent not found: ${input.agentId}`);
     const campaign = input.campaignId ? this.campaigns.get(input.campaignId) ?? null : null;
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
     const lockdown = Boolean(input.lockdown || campaign?.riskDial === "lockdown");
     const decision = evaluateAgentTurnPolicy({
       agent,
@@ -1340,7 +1509,7 @@ export class MemoryMarketingStore implements MarketingStore {
     });
 
     if (!decision.allowed) {
-      return Promise.resolve({ allowed: false, agent: { ...agent }, reason: decision.reason });
+      return { allowed: false, agent: { ...agent }, reason: decision.reason };
     }
 
     const updated: MarketingAgent = {
@@ -1349,7 +1518,7 @@ export class MemoryMarketingStore implements MarketingStore {
       updatedAt: isoNow(this.clock),
     };
     this.agents.set(updated.id, updated);
-    return Promise.resolve({ allowed: true, agent: { ...updated } });
+    return { allowed: true, agent: { ...updated } };
   }
 
   recordAgentTurn(input: ConsumeAgentTurnInput): Promise<ConsumeAgentTurnResult> {
@@ -1545,12 +1714,14 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(count);
   }
 
-  recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
+  async recordDeviceAction(input: RecordDeviceActionInput): Promise<DeviceActionReceipt> {
     const device = this.devices.get(input.deviceId);
-    if (!device) return Promise.reject(new Error(`Device not found: ${input.deviceId}`));
+    if (!device) throw new Error(`Device not found: ${input.deviceId}`);
     const human = input.targetHumanId ? this.humans.get(input.targetHumanId) ?? null : null;
+    const phoneHash = human ? this.humanPhoneHashes.get(human.id) ?? null : null;
+    const phoneSuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
     const nowMs = this.clock.now();
-    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned);
+    const targetStopped = Boolean(input.targetStopped || human?.stopped || human?.banned || phoneSuppressed);
 
     const decision = evaluateDeviceActionPolicy({
       device,
@@ -1671,6 +1842,10 @@ export class MemoryMarketingStore implements MarketingStore {
       createdAt: existing?.createdAt ?? isoNow(this.clock),
     };
     this.humans.set(human.id, human);
+    const resolvedPhoneHash = resolveHumanPhoneHash(input, this.hashKey);
+    if (resolvedPhoneHash) {
+      this.humanPhoneHashes.set(human.id, resolvedPhoneHash);
+    }
     return Promise.resolve({ ...human });
   }
 
@@ -1684,6 +1859,25 @@ export class MemoryMarketingStore implements MarketingStore {
       if (h.handleOrEmailHmac === handleOrEmailHmac) return Promise.resolve({ ...h });
     }
     return Promise.resolve(null);
+  }
+
+  getHumanPhoneHash(id: string): Promise<string | null> {
+    return Promise.resolve(this.humanPhoneHashes.get(id) ?? null);
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    const hash = phoneHash.trim();
+    if (!hash) return false;
+    if (this.externalSuppressedPhoneHashes.has(hash)) return true;
+    if (this.isExternalPhoneHashSuppressed && (await this.isExternalPhoneHashSuppressed(hash))) {
+      return true;
+    }
+    for (const [id, storedHash] of this.humanPhoneHashes.entries()) {
+      if (storedHash !== hash) continue;
+      const h = this.humans.get(id);
+      if (h && (h.stopped || h.banned)) return true;
+    }
+    return false;
   }
 
   listHumans(
@@ -2060,18 +2254,21 @@ export class MemoryMarketingStore implements MarketingStore {
     });
   }
 
-  createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
+  async createOutreachMessage(input: CreateOutreachInput): Promise<OutreachMessage> {
     const campaign = this.campaigns.get(input.campaignId);
-    if (!campaign) return Promise.reject(new Error(`Campaign not found: ${input.campaignId}`));
+    if (!campaign) throw new Error(`Campaign not found: ${input.campaignId}`);
     const human = this.humans.get(input.humanId);
-    if (!human) return Promise.reject(new Error(`Human not found: ${input.humanId}`));
+    if (!human) throw new Error(`Human not found: ${input.humanId}`);
     const account = input.channelAccountId ? this.channels.get(input.channelAccountId) ?? null : null;
+
+    const phoneHash = input.phoneHash?.trim() || this.humanPhoneHashes.get(human.id) || null;
+    const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
 
     const sentToday = account ? account.sentToday : human.dailySendsToday;
     const dailyOutreachCap =
       input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
     const decision = evaluateOutreachPolicy({
-      human,
+      human: globallySuppressed ? { ...human, stopped: true } : human,
       lockdown: campaign.riskDial === "lockdown",
       leakCheckPass: input.leakCheckPass,
       sentToday,
@@ -2111,7 +2308,7 @@ export class MemoryMarketingStore implements MarketingStore {
       }
     }
 
-    return Promise.resolve({ ...msg });
+    return { ...msg };
   }
 
   listOutreachMessages(
@@ -2132,23 +2329,25 @@ export class MemoryMarketingStore implements MarketingStore {
     return Promise.resolve(paginateArray(list, filter));
   }
 
-  updateOutreachStatus(
+  async updateOutreachStatus(
     id: string,
     status: OutreachStatus,
     externalRef?: string | null,
     dailyOutreachCap?: number,
   ): Promise<OutreachMessage> {
     const existing = this.outreach.get(id);
-    if (!existing) return Promise.reject(new Error(`Outreach message not found: ${id}`));
+    if (!existing) throw new Error(`Outreach message not found: ${id}`);
 
     if (status === "sent" || status === "delivered") {
       const campaign = this.campaigns.get(existing.campaignId);
       const human = this.humans.get(existing.humanId);
       if (!campaign || !human) {
-        return Promise.reject(new Error("Missing campaign or human for outreach send"));
+        throw new Error("Missing campaign or human for outreach send");
       }
+      const phoneHash = this.humanPhoneHashes.get(human.id) ?? null;
+      const globallySuppressed = phoneHash ? await this.isPhoneHashSuppressed(phoneHash) : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: campaign.riskDial === "lockdown",
         leakCheckPass: existing.leakCheckPass,
         dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,
@@ -2159,7 +2358,7 @@ export class MemoryMarketingStore implements MarketingStore {
           status: decision.blockedStatus ?? "blocked_policy",
         };
         this.outreach.set(id, blocked);
-        return Promise.resolve({ ...blocked });
+        return { ...blocked };
       }
       if (existing.status !== "sent" && existing.status !== "delivered") {
         this.humans.set(human.id, {
@@ -2176,7 +2375,7 @@ export class MemoryMarketingStore implements MarketingStore {
       externalRef: externalRef !== undefined ? externalRef : existing.externalRef,
     };
     this.outreach.set(id, updated);
-    return Promise.resolve({ ...updated });
+    return { ...updated };
   }
 
   recordAttributionEvent(input: CreateAttributionEventInput): Promise<AttributionEvent> {
@@ -3059,6 +3258,11 @@ export class MemoryMarketingStore implements MarketingStore {
       suppressedAt: existing?.suppressedAt ?? isoNow(this.clock),
     };
     this.contactSuppressions.set(record.contactHash, record);
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === record.contactHash) {
+        this.enrichmentCache.delete(key);
+      }
+    }
     return Promise.resolve({ ...record });
   }
 
@@ -3206,6 +3410,251 @@ export class MemoryMarketingStore implements MarketingStore {
         .map((c) => ({ ...c, config: { ...c.config } })),
     );
   }
+
+  getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const existing = this.enrichmentCache.get(cacheKey);
+    if (!existing) return Promise.resolve(null);
+    const expiresMs = Date.parse(existing.expiresAt);
+    if (Number.isFinite(expiresMs) && expiresMs <= nowMs) {
+      this.enrichmentCache.delete(cacheKey);
+      return Promise.resolve(null);
+    }
+    return Promise.resolve({ ...existing, payload: { ...existing.payload } });
+  }
+
+  upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const stored: EnrichmentCacheEntry = {
+      ...entry,
+      payload: { ...entry.payload },
+    };
+    this.enrichmentCache.set(stored.cacheKey, stored);
+    trimMapFifo(this.enrichmentCache, MAX_MEMORY_APPEND_ITEMS);
+    return Promise.resolve({ ...stored, payload: { ...stored.payload } });
+  }
+
+  purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    let removed = 0;
+    for (const [key, cached] of this.enrichmentCache) {
+      if (cached.contactHash === contactHash) {
+        this.enrichmentCache.delete(key);
+        removed += 1;
+      }
+    }
+    return Promise.resolve(removed);
+  }
+
+  recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const existing = this.apolloCreditByKey.get(input.idempotencyKey);
+    if (existing) return Promise.resolve({ ...existing });
+    const entry: ApolloCreditLedgerEntry = {
+      id: String(this.apolloCreditLedger.length + 1),
+      campaignId: input.campaignId ?? null,
+      operation: input.operation,
+      credits: Math.max(0, Math.round(input.credits)),
+      costCents: Math.max(0, Math.round(input.costCents)),
+      cacheHit: Boolean(input.cacheHit),
+      dryRun: Boolean(input.dryRun),
+      idempotencyKey: input.idempotencyKey,
+      createdAt: isoNow(this.clock),
+    };
+    this.apolloCreditLedger.push(entry);
+    this.apolloCreditByKey.set(entry.idempotencyKey, entry);
+    if (this.apolloCreditLedger.length > MAX_MEMORY_APPEND_ITEMS) {
+      const dropped = this.apolloCreditLedger.shift();
+      if (dropped) this.apolloCreditByKey.delete(dropped.idempotencyKey);
+    }
+    return Promise.resolve({ ...entry });
+  }
+
+  getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const dayPrefix = new Date(nowMs).toISOString().slice(0, 10);
+    const monthPrefix = dayPrefix.slice(0, 7);
+    let creditsUsedToday = 0;
+    let creditsUsedMonth = 0;
+    let searchCallsToday = 0;
+    let cacheHitsToday = 0;
+    let totalCallsToday = 0;
+
+    for (const row of this.apolloCreditLedger) {
+      const rowMonth = row.createdAt.slice(0, 7);
+      const rowDay = row.createdAt.slice(0, 10);
+      if (rowMonth === monthPrefix) {
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedMonth += row.credits;
+        }
+      }
+      if (rowDay === dayPrefix) {
+        totalCallsToday += 1;
+        if (row.cacheHit) cacheHitsToday += 1;
+        if (row.operation === "people_search" && !row.cacheHit) {
+          searchCallsToday += 1;
+        }
+        if (!row.dryRun && !row.cacheHit) {
+          creditsUsedToday += row.credits;
+        }
+      }
+    }
+
+    return Promise.resolve({
+      day: dayPrefix,
+      month: monthPrefix,
+      creditsUsedToday,
+      creditsUsedMonth,
+      searchCallsToday,
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    });
+  }
+
+  recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const record: PlatformInteractionRecord = {
+      id: this.idGen(),
+      campaignId: input.campaignId ?? null,
+      platform: input.platform,
+      channelAccountId: input.channelAccountId ?? null,
+      contactHash: input.contactHash,
+      direction: input.direction,
+      interactionKind: input.interactionKind,
+      reportRiskScore: Math.max(0, Math.min(100, Math.round(input.reportRiskScore))),
+      outcome: input.outcome,
+      createdAt: isoNow(this.clock),
+    };
+    this.platformInteractions.push(record);
+    if (this.platformInteractions.length > MAX_MEMORY_APPEND_ITEMS) {
+      this.platformInteractions.splice(0, this.platformInteractions.length - MAX_MEMORY_APPEND_ITEMS);
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const matching = this.platformInteractions
+      .filter((r) => !filter?.campaignId || r.campaignId === filter.campaignId)
+      .filter((r) => !filter?.platform || r.platform === filter.platform)
+      .filter((r) => !filter?.channelAccountId || r.channelAccountId === filter.channelAccountId)
+      .filter((r) => !filter?.contactHash || r.contactHash === filter.contactHash)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, safeLimit)
+      .map((r) => ({ ...r }));
+    return Promise.resolve(matching);
+  }
+
+  upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const now = isoNow(this.clock);
+    const existingId = this.intakeByContactHash.get(input.contactHash);
+    const existing = existingId ? this.intakeCandidates.get(existingId) : undefined;
+    const minAge = minAgeReading(existing?.statedAge, input.statedAge);
+    const record: IntakeCandidateRecord = {
+      id: existing?.id ?? input.id ?? this.idGen(),
+      campaignId: input.campaignId ?? existing?.campaignId ?? null,
+      city: input.city,
+      targetAppId: input.targetAppId,
+      desireLane: input.desireLane ?? existing?.desireLane ?? null,
+      sourcePlatform: input.sourcePlatform,
+      contactHash: input.contactHash,
+      statedAge: minAge,
+      qualityScore: Math.max(0, Math.min(100, Math.round(input.qualityScore))),
+      scoreBreakdown: { ...input.scoreBreakdown },
+      valueDelivered: Boolean(existing?.valueDelivered || input.valueDelivered),
+      explicitPositiveSignal: Boolean(existing?.explicitPositiveSignal || input.explicitPositiveSignal),
+      inviteAttempts: Math.max(existing?.inviteAttempts ?? 0, input.inviteAttempts),
+      status: input.status,
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.intakeCandidates.set(record.id, record);
+    this.intakeByContactHash.set(record.contactHash, record.id);
+    return Promise.resolve({ ...record, scoreBreakdown: { ...record.scoreBreakdown } });
+  }
+
+  getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const found = this.intakeCandidates.get(id);
+    return Promise.resolve(
+      found ? { ...found, scoreBreakdown: { ...found.scoreBreakdown } } : null,
+    );
+  }
+
+  getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const id = this.intakeByContactHash.get(contactHash);
+    if (!id) return Promise.resolve(null);
+    return this.getIntakeCandidate(id);
+  }
+
+  listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    return Promise.resolve(
+      [...this.intakeCandidates.values()]
+        .filter((c) => !filter?.campaignId || c.campaignId === filter.campaignId)
+        .filter((c) => !filter?.city || c.city === filter.city)
+        .filter((c) => !filter?.status || c.status === filter.status)
+        .sort((a, b) => b.qualityScore - a.qualityScore || b.updatedAt.localeCompare(a.updatedAt))
+        .slice(0, safeLimit)
+        .map((c) => ({ ...c, scoreBreakdown: { ...c.scoreBreakdown } })),
+    );
+  }
+
+  updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = this.intakeCandidates.get(id);
+    if (!existing) return Promise.reject(new Error(`Intake candidate not found: ${id}`));
+    const next: IntakeCandidateRecord = {
+      ...existing,
+      qualityScore:
+        patch.qualityScore !== undefined
+          ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+          : existing.qualityScore,
+      scoreBreakdown: patch.scoreBreakdown ? { ...patch.scoreBreakdown } : existing.scoreBreakdown,
+      valueDelivered:
+        patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered,
+      explicitPositiveSignal:
+        patch.explicitPositiveSignal !== undefined
+          ? Boolean(patch.explicitPositiveSignal)
+          : existing.explicitPositiveSignal,
+      inviteAttempts:
+        patch.inviteAttempts !== undefined
+          ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+          : existing.inviteAttempts,
+      status: patch.status ?? existing.status,
+      statedAge:
+        patch.statedAge !== undefined
+          ? minAgeReading(existing.statedAge, patch.statedAge)
+          : existing.statedAge,
+      updatedAt: isoNow(this.clock),
+    };
+    this.intakeCandidates.set(id, next);
+    return Promise.resolve({ ...next, scoreBreakdown: { ...next.scoreBreakdown } });
+  }
 }
 
 // ============================================================================
@@ -3342,15 +3791,17 @@ export class PgMarketingStore implements MarketingStore {
   readonly clock: Clock;
   private readonly owned: boolean;
   private readonly idGen: () => string;
+  private readonly hashKey?: string;
 
   constructor(
     db: string | SQL,
-    opts: { clock?: Clock; idGen?: () => string } = {},
+    opts: { clock?: Clock; idGen?: () => string; hashKey?: string } = {},
   ) {
     this.owned = typeof db === "string";
     this.sql = typeof db === "string" ? new SQL({ url: db, max: 12 }) : db;
     this.clock = opts.clock ?? new RealClock();
     this.idGen = opts.idGen ?? defaultId;
+    this.hashKey = opts.hashKey;
   }
 
   async close(): Promise<void> {
@@ -4056,9 +4507,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -4288,9 +4743,13 @@ export class PgMarketingStore implements MarketingStore {
       let targetStopped = Boolean(input.targetStopped);
       if (input.targetHumanId) {
         const hr = firstRow(
-          await tx`select stopped, banned from marketing.humans where id = ${input.targetHumanId}`,
+          await tx`select stopped, banned, phone_hash from marketing.humans where id = ${input.targetHumanId}`,
         );
         if (hr && (asBool(hr.stopped) || asBool(hr.banned))) targetStopped = true;
+        const phoneHash = asOptStr(hr?.phone_hash);
+        if (!targetStopped && phoneHash && (await isGloballySuppressedPhoneHash(tx, phoneHash))) {
+          targetStopped = true;
+        }
       }
 
       const nowMs = this.clock.now();
@@ -4390,17 +4849,18 @@ export class PgMarketingStore implements MarketingStore {
     const unstop = input.unstop === true;
     const incomingStopped = unstop ? false : Boolean(input.stopped);
     const incomingBanned = Boolean(input.banned);
+    const phoneHash = resolveHumanPhoneHash(input, this.hashKey);
     const meta = JSON.stringify({ channel: input.channel });
 
     // C-04: Atomic SQL ON CONFLICT preserves youngest age reading and STOP/ban fence.
     const rows = await this.sql`
       insert into marketing.humans (
-        id, contact_key, contact_email, display_name, role, source_channel, city,
+        id, contact_key, contact_email, display_name, role, source_channel, city, phone_hash,
         age_years, age_verified, stopped, stop_reason, banned,
         daily_sends_today, last_contacted_at, metadata, created_at, updated_at
       ) values (
         ${id}, ${input.handleOrEmailHmac}, ${input.contactEmail ?? null}, ${input.displayLabel},
-        ${input.role}, ${input.channel}, ${input.city ?? "nyc"},
+        ${input.role}, ${input.channel}, ${input.city ?? "nyc"}, ${phoneHash},
         ${incomingAge}, ${isAdultReading(incomingAge)},
         ${incomingStopped}, ${unstop ? null : (input.stopReason ?? null)}, ${incomingBanned},
         ${input.dailySendsToday ?? 0},
@@ -4412,6 +4872,7 @@ export class PgMarketingStore implements MarketingStore {
         display_name = excluded.display_name,
         role = excluded.role,
         city = excluded.city,
+        phone_hash = coalesce(excluded.phone_hash, marketing.humans.phone_hash),
         age_years = case
           when marketing.humans.age_years is null then excluded.age_years
           when excluded.age_years is null then marketing.humans.age_years
@@ -4450,6 +4911,16 @@ export class PgMarketingStore implements MarketingStore {
     const rows = await this.sql`select * from marketing.humans where contact_key = ${handleOrEmailHmac}`;
     const r = firstRow(rows);
     return r ? this.mapHuman(r) : null;
+  }
+
+  async getHumanPhoneHash(id: string): Promise<string | null> {
+    const rows = await this.sql`select phone_hash from marketing.humans where id = ${id}`;
+    const r = firstRow(rows);
+    return r ? asOptStr(r.phone_hash) : null;
+  }
+
+  async isPhoneHashSuppressed(phoneHash: string): Promise<boolean> {
+    return isGloballySuppressedPhoneHash(this.sql, phoneHash);
   }
 
   async listHumans(
@@ -5062,8 +5533,12 @@ export class PgMarketingStore implements MarketingStore {
       const sentToday = account ? account.sentToday : human.dailySendsToday;
       const dailyOutreachCap =
         input.dailyOutreachCap ?? account?.dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP;
+      const phoneHash = input.phoneHash?.trim() || asOptStr(hr.phone_hash);
+      const globallySuppressed = phoneHash
+        ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+        : false;
       const decision = evaluateOutreachPolicy({
-        human,
+        human: globallySuppressed ? { ...human, stopped: true } : human,
         lockdown: asStr(cr.risk_dial) === "lockdown",
         leakCheckPass: input.leakCheckPass,
         sentToday,
@@ -5158,8 +5633,12 @@ export class PgMarketingStore implements MarketingStore {
         );
         if (!cr || !hr) throw new Error("Missing campaign or human for outreach send");
         const human = this.mapHuman(hr);
+        const phoneHash = asOptStr(hr.phone_hash);
+        const globallySuppressed = phoneHash
+          ? await isGloballySuppressedPhoneHash(tx, phoneHash)
+          : false;
         const decision = evaluateOutreachPolicy({
-          human,
+          human: globallySuppressed ? { ...human, stopped: true } : human,
           lockdown: asStr(cr.risk_dial) === "lockdown",
           leakCheckPass: existing.leakCheckPass,
           dailyOutreachCap: dailyOutreachCap ?? DEFAULT_DAILY_OUTREACH_CAP,
@@ -6280,6 +6759,10 @@ export class PgMarketingStore implements MarketingStore {
         is_minor = (marketing.contact_suppression.is_minor or excluded.is_minor)
       returning *
     `;
+    await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${input.contactHash}
+    `;
     return this.mapContactSuppression(firstRow(rows)!);
   }
 
@@ -6438,5 +6921,364 @@ export class PgMarketingStore implements MarketingStore {
       order by code asc
     `;
     return allRows(rows).map((r) => this.mapCityPackOverride(r));
+  }
+
+  private parseJsonRecord(v: unknown): Record<string, unknown> {
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      return v as Record<string, unknown>;
+    }
+    if (typeof v === "string") {
+      try {
+        const parsed: unknown = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        return {};
+      }
+    }
+    return {};
+  }
+
+  private mapEnrichmentCache(r: Row): EnrichmentCacheEntry {
+    return {
+      cacheKey: asStr(r.cache_key),
+      provider: asStr(r.provider, "apollo"),
+      operation: asStr(r.operation, "people_match") as EnrichmentCacheEntry["operation"],
+      contactHash: asOptStr(r.contact_hash),
+      payload: this.parseJsonRecord(r.payload),
+      verifiedEmail: asBool(r.verified_email),
+      creditsSpent: asNum(r.credits_spent),
+      fetchedAt: toIso(r.fetched_at),
+      expiresAt: toIso(r.expires_at),
+    };
+  }
+
+  private mapApolloCredit(r: Row): ApolloCreditLedgerEntry {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      operation: asStr(r.operation, "people_match") as ApolloOperationKind,
+      credits: asNum(r.credits),
+      costCents: asNum(r.cost_cents),
+      cacheHit: asBool(r.cache_hit),
+      dryRun: asBool(r.dry_run),
+      idempotencyKey: asStr(r.idempotency_key),
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapPlatformInteraction(r: Row): PlatformInteractionRecord {
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      platform: asStr(r.platform, "email") as CanonicalOutreachPlatform | "email",
+      channelAccountId: asOptStr(r.channel_account_id),
+      contactHash: asStr(r.contact_hash),
+      direction: (asStr(r.direction, "outbound") === "inbound" ? "inbound" : "outbound"),
+      interactionKind: asStr(r.interaction_kind),
+      reportRiskScore: asNum(r.report_risk_score),
+      outcome: asStr(r.outcome, "sent") as PlatformInteractionOutcome,
+      createdAt: toIso(r.created_at),
+    };
+  }
+
+  private mapIntakeCandidate(r: Row): IntakeCandidateRecord {
+    const rawBreakdown = this.parseJsonRecord(r.score_breakdown);
+    const scoreBreakdown: IntakeScoreBreakdown = {
+      specificityEffort: asNum(rawBreakdown["specificityEffort"]),
+      proofOfWorkAnchoring: asNum(rawBreakdown["proofOfWorkAnchoring"]),
+      reliabilityFollowThrough: asNum(rawBreakdown["reliabilityFollowThrough"]),
+      bilateralValueFit: asNum(rawBreakdown["bilateralValueFit"]),
+      disqualifiers: Array.isArray(rawBreakdown["disqualifiers"])
+        ? rawBreakdown["disqualifiers"].filter((x: unknown): x is string => typeof x === "string")
+        : [],
+    };
+    return {
+      id: asStr(r.id),
+      campaignId: asOptStr(r.campaign_id),
+      city: asStr(r.city, "nyc"),
+      targetAppId: asStr(r.target_app_id, "ntwrk") as BrandAppId,
+      desireLane: asOptStr(r.desire_lane),
+      sourcePlatform: asStr(r.source_platform),
+      contactHash: asStr(r.contact_hash),
+      statedAge: r.stated_age === null || r.stated_age === undefined ? null : asNum(r.stated_age),
+      qualityScore: asNum(r.quality_score),
+      scoreBreakdown,
+      valueDelivered: asBool(r.value_delivered),
+      explicitPositiveSignal: asBool(r.explicit_positive_signal),
+      inviteAttempts: asNum(r.invite_attempts),
+      status: asStr(r.status, "spotted") as IntakeCandidateStatus,
+      createdAt: toIso(r.created_at),
+      updatedAt: toIso(r.updated_at),
+    };
+  }
+
+  async getEnrichmentCache(cacheKey: string, nowMs: number): Promise<EnrichmentCacheEntry | null> {
+    const now = new Date(nowMs);
+    const rows = await this.sql`
+      select * from marketing.enrichment_cache
+      where cache_key = ${cacheKey}
+        and expires_at > ${now}
+      limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapEnrichmentCache(r) : null;
+  }
+
+  async upsertEnrichmentCache(entry: EnrichmentCacheEntry): Promise<EnrichmentCacheEntry> {
+    const payload = JSON.stringify(entry.payload);
+    const rows = await this.sql`
+      insert into marketing.enrichment_cache (
+        cache_key, provider, operation, contact_hash, payload,
+        verified_email, credits_spent, fetched_at, expires_at
+      ) values (
+        ${entry.cacheKey}, ${entry.provider}, ${entry.operation}, ${entry.contactHash},
+        ${payload}::text::jsonb, ${entry.verifiedEmail}, ${entry.creditsSpent},
+        ${new Date(entry.fetchedAt)}, ${new Date(entry.expiresAt)}
+      )
+      on conflict (cache_key) do update set
+        provider = excluded.provider,
+        operation = excluded.operation,
+        contact_hash = coalesce(excluded.contact_hash, marketing.enrichment_cache.contact_hash),
+        payload = excluded.payload,
+        verified_email = excluded.verified_email,
+        credits_spent = excluded.credits_spent,
+        fetched_at = excluded.fetched_at,
+        expires_at = excluded.expires_at
+      returning *
+    `;
+    return this.mapEnrichmentCache(firstRow(rows)!);
+  }
+
+  async purgeEnrichmentCacheByContactHash(contactHash: string): Promise<number> {
+    const rows = await this.sql`
+      delete from marketing.enrichment_cache
+      where contact_hash = ${contactHash}
+      returning cache_key
+    `;
+    return allRows(rows).length;
+  }
+
+  async recordApolloCredit(
+    input: Omit<ApolloCreditLedgerEntry, "id" | "createdAt">,
+  ): Promise<ApolloCreditLedgerEntry> {
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.apollo_credit_ledger (
+        campaign_id, operation, credits, cost_cents, cache_hit, dry_run, idempotency_key, created_at
+      ) values (
+        ${input.campaignId ?? null}, ${input.operation}, ${Math.max(0, Math.round(input.credits))},
+        ${Math.max(0, Math.round(input.costCents))}, ${Boolean(input.cacheHit)},
+        ${Boolean(input.dryRun)}, ${input.idempotencyKey}, ${now}
+      )
+      on conflict (idempotency_key) do update set
+        idempotency_key = marketing.apollo_credit_ledger.idempotency_key
+      returning *
+    `;
+    return this.mapApolloCredit(firstRow(rows)!);
+  }
+
+  async getApolloCreditUsage(nowMs: number): Promise<ApolloCreditUsageSummary> {
+    const day = new Date(nowMs).toISOString().slice(0, 10);
+    const month = day.slice(0, 7);
+    const dayStart = new Date(`${day}T00:00:00.000Z`);
+    const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+    const monthStart = new Date(`${month}-01T00:00:00.000Z`);
+    const rows = await this.sql`
+      select
+        coalesce(sum(credits) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_credits,
+        coalesce(sum(credits) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_credits,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and operation = 'people_search' and not cache_hit)::int as daily_searches,
+        coalesce(sum(cost_cents) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as daily_cost_cents,
+        coalesce(sum(cost_cents) filter (where created_at >= ${monthStart} and created_at < ${dayEnd} and not dry_run and not cache_hit), 0)::int as monthly_cost_cents,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd} and cache_hit)::int as cache_hits_today,
+        count(*) filter (where created_at >= ${dayStart} and created_at < ${dayEnd})::int as total_calls_today
+      from marketing.apollo_credit_ledger
+      where created_at >= ${monthStart} and created_at < ${dayEnd}
+    `;
+    const r = firstRow(rows);
+    const cacheHitsToday = asNum(r?.cache_hits_today);
+    const totalCallsToday = asNum(r?.total_calls_today);
+    return {
+      day,
+      month,
+      creditsUsedToday: asNum(r?.daily_credits),
+      creditsUsedMonth: asNum(r?.monthly_credits),
+      searchCallsToday: asNum(r?.daily_searches),
+      cacheHitsToday,
+      totalCallsToday,
+      cacheHitRate: totalCallsToday > 0 ? Number((cacheHitsToday / totalCallsToday).toFixed(4)) : 0,
+    };
+  }
+
+  async recordPlatformInteraction(
+    input: Omit<PlatformInteractionRecord, "id" | "createdAt">,
+  ): Promise<PlatformInteractionRecord> {
+    const id = this.idGen();
+    const now = new Date(this.clock.now());
+    const rows = await this.sql`
+      insert into marketing.platform_interactions (
+        id, campaign_id, platform, channel_account_id, contact_hash,
+        direction, interaction_kind, report_risk_score, outcome, created_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.platform}, ${input.channelAccountId ?? null},
+        ${input.contactHash}, ${input.direction}, ${input.interactionKind},
+        ${Math.max(0, Math.min(100, Math.round(input.reportRiskScore)))}, ${input.outcome}, ${now}
+      )
+      returning *
+    `;
+    return this.mapPlatformInteraction(firstRow(rows)!);
+  }
+
+  async listPlatformInteractions(filter?: {
+    campaignId?: string;
+    platform?: CanonicalOutreachPlatform | "email";
+    channelAccountId?: string;
+    contactHash?: string;
+    limit?: number;
+  }): Promise<PlatformInteractionRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.platform_interactions
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.platform ?? null}::text is null or platform = ${filter?.platform ?? null})
+        and (${filter?.channelAccountId ?? null}::text is null or channel_account_id = ${filter?.channelAccountId ?? null})
+        and (${filter?.contactHash ?? null}::text is null or contact_hash = ${filter?.contactHash ?? null})
+      order by created_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapPlatformInteraction(r));
+  }
+
+  async upsertIntakeCandidate(
+    input: Omit<IntakeCandidateRecord, "id" | "createdAt" | "updatedAt"> & { id?: string },
+  ): Promise<IntakeCandidateRecord> {
+    const id = input.id ?? this.idGen();
+    const now = new Date(this.clock.now());
+    const breakdownJson = JSON.stringify(input.scoreBreakdown);
+    const rows = await this.sql`
+      insert into marketing.intake_candidates (
+        id, campaign_id, city, target_app_id, desire_lane, source_platform,
+        contact_hash, stated_age, quality_score, score_breakdown,
+        value_delivered, explicit_positive_signal, invite_attempts, status,
+        created_at, updated_at
+      ) values (
+        ${id}, ${input.campaignId ?? null}, ${input.city}, ${input.targetAppId},
+        ${input.desireLane ?? null}, ${input.sourcePlatform}, ${input.contactHash},
+        ${input.statedAge ?? null}, ${Math.max(0, Math.min(100, Math.round(input.qualityScore)))},
+        ${breakdownJson}::text::jsonb, ${Boolean(input.valueDelivered)},
+        ${Boolean(input.explicitPositiveSignal)}, ${Math.max(0, Math.round(input.inviteAttempts))},
+        ${input.status}, ${now}, ${now}
+      )
+      on conflict (contact_hash) do update set
+        campaign_id = coalesce(excluded.campaign_id, marketing.intake_candidates.campaign_id),
+        city = excluded.city,
+        target_app_id = excluded.target_app_id,
+        desire_lane = coalesce(excluded.desire_lane, marketing.intake_candidates.desire_lane),
+        stated_age = case
+          when marketing.intake_candidates.stated_age is null then excluded.stated_age
+          when excluded.stated_age is null then marketing.intake_candidates.stated_age
+          else least(marketing.intake_candidates.stated_age, excluded.stated_age)
+        end,
+        quality_score = excluded.quality_score,
+        score_breakdown = excluded.score_breakdown,
+        value_delivered = (marketing.intake_candidates.value_delivered or excluded.value_delivered),
+        explicit_positive_signal = (marketing.intake_candidates.explicit_positive_signal or excluded.explicit_positive_signal),
+        invite_attempts = greatest(marketing.intake_candidates.invite_attempts, excluded.invite_attempts),
+        status = excluded.status,
+        updated_at = excluded.updated_at
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
+  }
+
+  async getIntakeCandidate(id: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where id = ${id} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async getIntakeCandidateByHash(contactHash: string): Promise<IntakeCandidateRecord | null> {
+    const rows = await this.sql`
+      select * from marketing.intake_candidates where contact_hash = ${contactHash} limit 1
+    `;
+    const r = firstRow(rows);
+    return r ? this.mapIntakeCandidate(r) : null;
+  }
+
+  async listIntakeCandidates(filter?: {
+    campaignId?: string;
+    city?: string;
+    status?: IntakeCandidateStatus;
+    limit?: number;
+  }): Promise<IntakeCandidateRecord[]> {
+    const safeLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.round(filter?.limit ?? DEFAULT_LIST_LIMIT)));
+    const rows = await this.sql`
+      select * from marketing.intake_candidates
+      where (${filter?.campaignId ?? null}::text is null or campaign_id = ${filter?.campaignId ?? null})
+        and (${filter?.city ?? null}::text is null or city = ${filter?.city ?? null})
+        and (${filter?.status ?? null}::text is null or status = ${filter?.status ?? null})
+      order by quality_score desc, updated_at desc
+      limit ${safeLimit}
+    `;
+    return allRows(rows).map((r) => this.mapIntakeCandidate(r));
+  }
+
+  async updateIntakeCandidate(
+    id: string,
+    patch: Partial<
+      Pick<
+        IntakeCandidateRecord,
+        | "qualityScore"
+        | "scoreBreakdown"
+        | "valueDelivered"
+        | "explicitPositiveSignal"
+        | "inviteAttempts"
+        | "status"
+        | "statedAge"
+      >
+    >,
+  ): Promise<IntakeCandidateRecord> {
+    const existing = await this.getIntakeCandidate(id);
+    if (!existing) throw new Error(`Intake candidate not found: ${id}`);
+    const now = new Date(this.clock.now());
+    const nextAge =
+      patch.statedAge !== undefined
+        ? minAgeReading(existing.statedAge, patch.statedAge)
+        : existing.statedAge;
+    const nextScore =
+      patch.qualityScore !== undefined
+        ? Math.max(0, Math.min(100, Math.round(patch.qualityScore)))
+        : existing.qualityScore;
+    const nextBreakdown = patch.scoreBreakdown ?? existing.scoreBreakdown;
+    const nextValueDelivered =
+      patch.valueDelivered !== undefined ? Boolean(patch.valueDelivered) : existing.valueDelivered;
+    const nextPositive =
+      patch.explicitPositiveSignal !== undefined
+        ? Boolean(patch.explicitPositiveSignal)
+        : existing.explicitPositiveSignal;
+    const nextAttempts =
+      patch.inviteAttempts !== undefined
+        ? Math.max(existing.inviteAttempts, Math.round(patch.inviteAttempts))
+        : existing.inviteAttempts;
+    const nextStatus = patch.status ?? existing.status;
+
+    const rows = await this.sql`
+      update marketing.intake_candidates set
+        stated_age = ${nextAge},
+        quality_score = ${nextScore},
+        score_breakdown = ${JSON.stringify(nextBreakdown)}::text::jsonb,
+        value_delivered = ${nextValueDelivered},
+        explicit_positive_signal = ${nextPositive},
+        invite_attempts = ${nextAttempts},
+        status = ${nextStatus},
+        updated_at = ${now}
+      where id = ${id}
+      returning *
+    `;
+    return this.mapIntakeCandidate(firstRow(rows)!);
   }
 }

@@ -2,6 +2,7 @@ import type { SQL } from "../../core/src/runtime/postgres.ts";
 import { km } from "../../core/src/geo.ts";
 import {
   CITY_TZ,
+  cityTimezone,
   DAY,
   HOUR,
   MINUTE,
@@ -13,6 +14,8 @@ import {
   shouldFetchExternalVenues,
   type AppId,
   type City,
+  type CityId,
+  type Clock,
   type VenueCandidateResult,
   type VenueCategory,
   type VenueHoursSlot,
@@ -26,10 +29,11 @@ import {
   listVenues,
   putCachedSearch,
   upsertVenue,
+  upsertVenues,
 } from "./venue-store.ts";
 
 export interface VenueSearchQuery {
-  city: City;
+  city: CityId;
   neighborhood?: string;
   lat: number;
   lng: number;
@@ -53,8 +57,8 @@ export interface VenueOpenStatusResult {
 export interface VenueExternalProvider {
   readonly name: string;
   isConfigured(): boolean;
-  searchVenues(query: VenueSearchQuery, nowMs?: number): Promise<VenueRecord[]>;
-  verifyVenueOpen(venue: VenueRecord, nowMs?: number): Promise<VenueOpenStatusResult>;
+  searchVenues(query: VenueSearchQuery, nowMs: number): Promise<VenueRecord[]>;
+  verifyVenueOpen(venue: VenueRecord, nowMs: number): Promise<VenueOpenStatusResult>;
 }
 
 const DEFAULT_HOURS: VenueHoursSlot[] = [0, 1, 2, 3, 4, 5, 6].map(weekday => ({
@@ -62,6 +66,9 @@ const DEFAULT_HOURS: VenueHoursSlot[] = [0, 1, 2, 3, 4, 5, 6].map(weekday => ({
   openMin: 9 * 60,
   closeMin: 21 * 60,
 }));
+
+const DEFAULT_MAX_VERIFY_CALLS = 5;
+const DEFAULT_UNKNOWN_COOLDOWN_MS = 15 * MINUTE;
 
 function mapYelpPrice(price?: string): VenuePriceTier {
   if (!price) return 2;
@@ -75,35 +82,36 @@ function mapYelpPrice(price?: string): VenuePriceTier {
 function mapYelpCategory(categories: Array<{ alias?: string; title?: string }> = []): {
   category: VenueCategory;
   isBarOnly: boolean;
+  isAlcoholCentric: boolean;
   alcoholOptional: boolean;
   ageMin: number;
 } {
   const aliases = categories.map(c => (c.alias ?? "").toLowerCase());
   if (aliases.some(a => a.includes("food_court") || a.includes("foodhall"))) {
-    return { category: "food_hall", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+    return { category: "food_hall", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
   }
   if (aliases.some(a => a.includes("coffee") || a.includes("cafe"))) {
-    return { category: "coffee_shop", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+    return { category: "coffee_shop", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
   }
   if (aliases.some(a => a.includes("baker"))) {
-    return { category: "bakery_cafe", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+    return { category: "bakery_cafe", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
   }
   if (aliases.some(a => a.includes("book"))) {
-    return { category: "bookstore_cafe", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+    return { category: "bookstore_cafe", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
   }
   if (aliases.some(a => a.includes("park"))) {
-    return { category: "park", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+    return { category: "park", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
   }
   if (aliases.some(a => a.includes("brewer"))) {
-    return { category: "brewery", isBarOnly: false, alcoholOptional: true, ageMin: 21 };
+    return { category: "brewery", isBarOnly: false, isAlcoholCentric: true, alcoholOptional: true, ageMin: 21 };
   }
   if (aliases.some(a => a.includes("wine_bar"))) {
-    return { category: "wine_bar", isBarOnly: false, alcoholOptional: true, ageMin: 21 };
+    return { category: "wine_bar", isBarOnly: false, isAlcoholCentric: true, alcoholOptional: true, ageMin: 21 };
   }
   if (aliases.some(a => a.includes("cocktail") || a === "bars" || a === "divebars")) {
-    return { category: "cocktail_bar", isBarOnly: true, alcoholOptional: false, ageMin: 21 };
+    return { category: "cocktail_bar", isBarOnly: true, isAlcoholCentric: true, alcoholOptional: false, ageMin: 21 };
   }
-  return { category: "diner", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+  return { category: "diner", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
 }
 
 function parseHhmm(hhmm: string): number {
@@ -138,7 +146,7 @@ export class YelpFusionProvider implements VenueExternalProvider {
     return Boolean(this.apiKey);
   }
 
-  async searchVenues(query: VenueSearchQuery, nowMs = Date.now()): Promise<VenueRecord[]> {
+  async searchVenues(query: VenueSearchQuery, nowMs: number): Promise<VenueRecord[]> {
     if (!this.apiKey) return [];
     const params = new URLSearchParams({
       latitude: String(query.lat),
@@ -177,14 +185,22 @@ export class YelpFusionProvider implements VenueExternalProvider {
         status: "active",
         priceTier: mapYelpPrice(b.price),
         ageMin: cat.ageMin,
+        allAges: !cat.isBarOnly && !cat.isAlcoholCentric && cat.ageMin <= 0,
         isBarOnly: cat.isBarOnly,
+        isAlcoholCentric: cat.isAlcoholCentric,
         alcoholOptional: cat.alcoholOptional,
         servesVegetarian: true,
         servesVegan: cat.category === "coffee_shop" || cat.category === "food_hall" || cat.category === "park",
+        halalFriendly: false,
+        kosherFriendly: false,
+        glutenFreeFriendly: false,
+        severeAllergenSafe: false,
         wheelchairAccessible: true,
+        isSmokeFree: true,
         separateChecks: true,
         walkInGroupCapacity: cat.category === "food_hall" || cat.category === "brewery" || cat.category === "park" ? 10 : 6,
         reservationRequired: false,
+        openEventEligible: false,
         noiseLevel: "conversational",
         liveMusicAtNight: false,
         indoor: cat.category !== "park",
@@ -192,12 +208,14 @@ export class YelpFusionProvider implements VenueExternalProvider {
         weatherSensitive: cat.category === "park",
         arrivalLandmark: `At the main entrance of ${b.name}`,
         hours: parseYelpHours(b.hours),
+        hobbies: [],
+        cuisineTags: [],
         yelpRating: rating,
         externalPlaceId: String(b.id),
         source: "listing",
         lastVerifiedAt: nowMs,
         closureReports: 0,
-        safetyScore: 9,
+        safetyScore: 8,
         transitScore: 4,
         personaPriors: { default: { alpha, beta } },
       });
@@ -205,7 +223,7 @@ export class YelpFusionProvider implements VenueExternalProvider {
     return out;
   }
 
-  async verifyVenueOpen(venue: VenueRecord, nowMs = Date.now()): Promise<VenueOpenStatusResult> {
+  async verifyVenueOpen(venue: VenueRecord, nowMs: number): Promise<VenueOpenStatusResult> {
     if (!this.apiKey || !venue.externalPlaceId) {
       return { venueId: venue.id, externalPlaceId: venue.externalPlaceId, status: "unknown", checkedAt: nowMs };
     }
@@ -269,18 +287,19 @@ function mapGoogleStatus(status?: string): VenueOpenStatusResult["status"] {
 function mapGoogleTypes(types: string[] = []): {
   category: VenueCategory;
   isBarOnly: boolean;
+  isAlcoholCentric: boolean;
   alcoholOptional: boolean;
   ageMin: number;
 } {
   const set = new Set(types.map(t => t.toLowerCase()));
-  if (set.has("coffee_shop") || set.has("cafe")) return { category: "coffee_shop", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
-  if (set.has("bakery")) return { category: "bakery_cafe", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
-  if (set.has("book_store")) return { category: "bookstore_cafe", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
-  if (set.has("park")) return { category: "park", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
-  if (set.has("brewery")) return { category: "brewery", isBarOnly: false, alcoholOptional: true, ageMin: 21 };
-  if (set.has("wine_bar")) return { category: "wine_bar", isBarOnly: false, alcoholOptional: true, ageMin: 21 };
-  if (set.has("bar") && !set.has("restaurant")) return { category: "cocktail_bar", isBarOnly: true, alcoholOptional: false, ageMin: 21 };
-  return { category: "diner", isBarOnly: false, alcoholOptional: true, ageMin: 0 };
+  if (set.has("coffee_shop") || set.has("cafe")) return { category: "coffee_shop", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
+  if (set.has("bakery")) return { category: "bakery_cafe", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
+  if (set.has("book_store")) return { category: "bookstore_cafe", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
+  if (set.has("park")) return { category: "park", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
+  if (set.has("brewery")) return { category: "brewery", isBarOnly: false, isAlcoholCentric: true, alcoholOptional: true, ageMin: 21 };
+  if (set.has("wine_bar")) return { category: "wine_bar", isBarOnly: false, isAlcoholCentric: true, alcoholOptional: true, ageMin: 21 };
+  if (set.has("bar") && !set.has("restaurant")) return { category: "cocktail_bar", isBarOnly: true, isAlcoholCentric: true, alcoholOptional: false, ageMin: 21 };
+  return { category: "diner", isBarOnly: false, isAlcoholCentric: false, alcoholOptional: true, ageMin: 0 };
 }
 
 function parseGoogleHours(opening?: { periods?: Array<{ open?: { day: number; hour: number; minute: number }; close?: { day: number; hour: number; minute: number } }> }): VenueHoursSlot[] {
@@ -314,7 +333,7 @@ export class GooglePlacesProvider implements VenueExternalProvider {
     return Boolean(this.apiKey);
   }
 
-  async searchVenues(query: VenueSearchQuery, nowMs = Date.now()): Promise<VenueRecord[]> {
+  async searchVenues(query: VenueSearchQuery, nowMs: number): Promise<VenueRecord[]> {
     if (!this.apiKey) return [];
     const res = await this.fetchImpl(`${this.baseUrl}/places:searchNearby`, {
       method: "POST",
@@ -362,14 +381,22 @@ export class GooglePlacesProvider implements VenueExternalProvider {
         status: "active",
         priceTier: mapGooglePrice(p.priceLevel),
         ageMin: cat.ageMin,
+        allAges: !cat.isBarOnly && !cat.isAlcoholCentric && cat.ageMin <= 0,
         isBarOnly: cat.isBarOnly,
+        isAlcoholCentric: cat.isAlcoholCentric,
         alcoholOptional: cat.alcoholOptional,
         servesVegetarian: p.servesVegetarianFood !== false,
         servesVegan: cat.category === "coffee_shop" || cat.category === "park",
+        halalFriendly: false,
+        kosherFriendly: false,
+        glutenFreeFriendly: false,
+        severeAllergenSafe: false,
         wheelchairAccessible: p.accessibilityOptions?.wheelchairAccessibleEntrance !== false,
+        isSmokeFree: true,
         separateChecks: true,
         walkInGroupCapacity: cat.category === "park" ? 12 : 6,
         reservationRequired: false,
+        openEventEligible: false,
         noiseLevel: "conversational",
         liveMusicAtNight: false,
         indoor: cat.category !== "park",
@@ -377,13 +404,15 @@ export class GooglePlacesProvider implements VenueExternalProvider {
         weatherSensitive: cat.category === "park",
         arrivalLandmark: `At the main entrance of ${name}`,
         hours: parseGoogleHours(p.currentOpeningHours),
+        hobbies: [],
+        cuisineTags: [],
         yelpRating: rating,
         externalPlaceId: placeId,
         source: "google_places",
         lastVerifiedAt: nowMs,
         geoExpiresAt,
         closureReports: 0,
-        safetyScore: 9,
+        safetyScore: 8,
         transitScore: 4,
         personaPriors: { default: { alpha, beta } },
       });
@@ -391,7 +420,7 @@ export class GooglePlacesProvider implements VenueExternalProvider {
     return out;
   }
 
-  async verifyVenueOpen(venue: VenueRecord, nowMs = Date.now()): Promise<VenueOpenStatusResult> {
+  async verifyVenueOpen(venue: VenueRecord, nowMs: number): Promise<VenueOpenStatusResult> {
     if (!this.apiKey || !venue.externalPlaceId) {
       return { venueId: venue.id, externalPlaceId: venue.externalPlaceId, status: "unknown", checkedAt: nowMs };
     }
@@ -419,8 +448,8 @@ export class GooglePlacesProvider implements VenueExternalProvider {
 }
 
 export interface SimulatedVenueProviderOptions {
-  discoveredByCity?: Partial<Record<City, VenueRecord[]>>;
-  closedStatuses?: Record<string, "operational" | "closed_temporary" | "closed_permanent">;
+  discoveredByCity?: Partial<Record<CityId, VenueRecord[]>>;
+  closedStatuses?: Record<string, VenueOpenStatusResult["status"]>;
   hoursOverrides?: Record<string, VenueHoursSlot[]>;
   ratingOverrides?: Record<string, { rating: number; reviewCount?: number }>;
 }
@@ -432,8 +461,8 @@ export class SimulatedVenueProvider implements VenueExternalProvider {
   readonly searchLog: VenueSearchQuery[] = [];
   readonly verifyLog: string[] = [];
 
-  private readonly discoveredByCity: Partial<Record<City, VenueRecord[]>>;
-  private readonly closedStatuses: Map<string, "operational" | "closed_temporary" | "closed_permanent">;
+  private readonly discoveredByCity: Partial<Record<CityId, VenueRecord[]>>;
+  private readonly closedStatuses: Map<string, VenueOpenStatusResult["status"]>;
   private readonly hoursOverrides: Map<string, VenueHoursSlot[]>;
   private readonly ratingOverrides: Map<string, { rating: number; reviewCount?: number }>;
 
@@ -452,7 +481,7 @@ export class SimulatedVenueProvider implements VenueExternalProvider {
     return true;
   }
 
-  setClosedStatus(venueIdOrExternalId: string, status: "operational" | "closed_temporary" | "closed_permanent"): void {
+  setClosedStatus(venueIdOrExternalId: string, status: VenueOpenStatusResult["status"]): void {
     this.closedStatuses.set(venueIdOrExternalId, status);
   }
 
@@ -463,7 +492,7 @@ export class SimulatedVenueProvider implements VenueExternalProvider {
     this.verifyLog.length = 0;
   }
 
-  async searchVenues(query: VenueSearchQuery, nowMs = Date.now()): Promise<VenueRecord[]> {
+  async searchVenues(query: VenueSearchQuery, nowMs: number): Promise<VenueRecord[]> {
     this.searchCalls += 1;
     this.searchLog.push({ ...query });
     const list = this.discoveredByCity[query.city] ?? [];
@@ -474,7 +503,7 @@ export class SimulatedVenueProvider implements VenueExternalProvider {
     }));
   }
 
-  async verifyVenueOpen(venue: VenueRecord, nowMs = Date.now()): Promise<VenueOpenStatusResult> {
+  async verifyVenueOpen(venue: VenueRecord, nowMs: number): Promise<VenueOpenStatusResult> {
     this.verifyCalls += 1;
     this.verifyLog.push(venue.id);
     const status =
@@ -504,7 +533,10 @@ export interface CompositeVenueProviderOptions {
   providers?: VenueExternalProvider[];
   cacheTtlMs?: number;
   maxExternalSearchCalls?: number;
+  maxVerifyCalls?: number;
+  unknownCooldownMs?: number;
   sufficiencyThreshold?: number;
+  clock?: Clock;
   now?: () => number;
 }
 
@@ -521,6 +553,7 @@ export interface VerifyOpenResult {
   ok: boolean;
   venue: VenueRecord;
   verifiedViaProvider: boolean;
+  providerCallsMade: number;
   reason?: "closed_temporary" | "closed_permanent";
 }
 
@@ -539,8 +572,11 @@ export class CompositeVenueProvider {
   private readonly providers: VenueExternalProvider[];
   private readonly cacheTtlMs: number;
   private readonly maxExternalSearchCalls: number;
+  private readonly maxVerifyCalls: number;
+  private readonly unknownCooldownMs: number;
   private readonly sufficiencyThreshold: number;
-  private readonly nowFn: () => number;
+  private readonly nowFn?: () => number;
+  private readonly unknownCooldownUntil = new Map<string, number>();
   private externalSearchCallsUsed = 0;
 
   constructor(opts: CompositeVenueProviderOptions) {
@@ -548,8 +584,16 @@ export class CompositeVenueProvider {
     this.providers = opts.providers ?? [];
     this.cacheTtlMs = opts.cacheTtlMs ?? 24 * HOUR;
     this.maxExternalSearchCalls = opts.maxExternalSearchCalls ?? 100;
+    this.maxVerifyCalls = opts.maxVerifyCalls ?? DEFAULT_MAX_VERIFY_CALLS;
+    this.unknownCooldownMs = opts.unknownCooldownMs ?? DEFAULT_UNKNOWN_COOLDOWN_MS;
     this.sufficiencyThreshold = opts.sufficiencyThreshold ?? defaultLocalSufficiencyThreshold;
-    this.nowFn = opts.now ?? Date.now;
+    this.nowFn = opts.clock ? () => opts.clock!.now() : opts.now;
+  }
+
+  private resolveNow(nowMs?: number): number {
+    if (nowMs !== undefined) return nowMs;
+    if (this.nowFn) return this.nowFn();
+    throw new Error("CompositeVenueProvider requires explicit nowMs, clock, or now()");
   }
 
   private configuredProviders(): VenueExternalProvider[] {
@@ -562,9 +606,10 @@ export class CompositeVenueProvider {
     return `venues:${request.city}:${request.mode}:${maxBudget}:${areas || "any"}`;
   }
 
-  async findAndRankVenues(request: VenueRankRequest, nowMs = this.nowFn()): Promise<VenueDiscoveryResult> {
+  async findAndRankVenues(request: VenueRankRequest, nowMs?: number): Promise<VenueDiscoveryResult> {
+    const resolvedNow = this.resolveNow(nowMs);
     const localVenues = await listVenues(this.pool, { city: request.city, status: "active" });
-    const localCandidates = rankVenuesForMatch(localVenues, request, nowMs);
+    const localCandidates = rankVenuesForMatch(localVenues, request, resolvedNow);
     const localQualifiedBeforeFetch = localCandidates.length;
     const budgetRemaining = Math.max(0, this.maxExternalSearchCalls - this.externalSearchCallsUsed);
 
@@ -580,7 +625,7 @@ export class CompositeVenueProvider {
     }
 
     const cacheKey = this.buildCacheKey(request);
-    const cached = await getCachedSearch(this.pool, cacheKey, nowMs);
+    const cached = await getCachedSearch(this.pool, cacheKey, resolvedNow);
     if (cached) {
       return {
         candidates: localCandidates,
@@ -619,7 +664,7 @@ export class CompositeVenueProvider {
     };
 
     let externalSearchCalls = 0;
-    const discovered: VenueRecord[] = [];
+    const discoveredById = new Map<string, VenueRecord>();
     let primaryProviderName = activeProviders[0]!.name;
 
     for (const provider of activeProviders) {
@@ -627,15 +672,17 @@ export class CompositeVenueProvider {
       this.externalSearchCallsUsed += 1;
       externalSearchCalls += 1;
       primaryProviderName = provider.name;
-      const found = await provider.searchVenues(query, nowMs);
+      const found = await provider.searchVenues(query, resolvedNow);
       for (const v of found) {
         if (v.public === true && v.city === request.city) {
-          await upsertVenue(this.pool, v);
-          discovered.push(v);
+          discoveredById.set(v.id, v);
         }
       }
-      if (localQualifiedBeforeFetch + discovered.length >= this.sufficiencyThreshold) break;
+      if (localQualifiedBeforeFetch + discoveredById.size >= this.sufficiencyThreshold) break;
     }
+
+    const discovered = [...discoveredById.values()];
+    const savedDiscovered = discovered.length > 0 ? await upsertVenues(this.pool, discovered) : [];
 
     await putCachedSearch(this.pool, {
       cacheKey,
@@ -643,12 +690,28 @@ export class CompositeVenueProvider {
       city: request.city,
       payload: discovered.map(v => v.id),
       resultCount: discovered.length,
-      fetchedAt: nowMs,
-      expiresAt: nowMs + this.cacheTtlMs,
+      fetchedAt: resolvedNow,
+      expiresAt: resolvedNow + this.cacheTtlMs,
     });
 
-    const refreshedVenues = await listVenues(this.pool, { city: request.city, status: "active" });
-    const candidates = rankVenuesForMatch(refreshedVenues, request, nowMs);
+    if (savedDiscovered.length === 0) {
+      return {
+        candidates: localCandidates,
+        localQualifiedBeforeFetch,
+        fetchedExternal: true,
+        cacheHit: false,
+        externalSearchCalls,
+        discoveredCount: 0,
+      };
+    }
+
+    const mergedById = new Map<string, VenueRecord>();
+    for (const v of localVenues) mergedById.set(v.id, v);
+    for (const v of savedDiscovered) {
+      if (v.status === "active") mergedById.set(v.id, v);
+      else mergedById.delete(v.id);
+    }
+    const candidates = rankVenuesForMatch([...mergedById.values()], request, resolvedNow);
     return {
       candidates,
       localQualifiedBeforeFetch,
@@ -661,26 +724,44 @@ export class CompositeVenueProvider {
 
   async verifyVenueOpenBeforeRecommend(
     venue: VenueRecord,
-    opts: { appId?: AppId; nowMs?: number; isWeekendOrHoliday?: boolean; startMs?: number } = {},
+    opts: { appId?: AppId; nowMs?: number; isWeekendOrHoliday?: boolean; startMs?: number; maxProviderCalls?: number } = {},
   ): Promise<VerifyOpenResult> {
-    const nowMs = opts.nowMs ?? this.nowFn();
-    const tz = getCity(venue.city)?.tz ?? CITY_TZ[venue.city] ?? "America/New_York";
+    const nowMs = this.resolveNow(opts.nowMs);
+    const tz = getCity(venue.city)?.tz ?? cityTimezone(venue.city) ?? "America/New_York";
     const refMs = opts.startMs ?? nowMs;
     const isWeekendOrHoliday = opts.isWeekendOrHoliday ?? (localParts(refMs, tz).weekday >= 5);
     const ageHours = Math.floor((nowMs - venue.lastVerifiedAt) / (60 * MINUTE));
 
     if (!needsPreRecommendOpenCheck(ageHours, isWeekendOrHoliday)) {
-      return { ok: true, venue, verifiedViaProvider: false };
+      return { ok: true, venue, verifiedViaProvider: false, providerCallsMade: 0 };
+    }
+
+    const maxProviderCalls = opts.maxProviderCalls ?? Number.POSITIVE_INFINITY;
+    if (maxProviderCalls <= 0) {
+      return { ok: true, venue, verifiedViaProvider: false, providerCallsMade: 0 };
     }
 
     const activeProviders = this.configuredProviders();
     if (activeProviders.length === 0) {
-      return { ok: true, venue, verifiedViaProvider: false };
+      return { ok: true, venue, verifiedViaProvider: false, providerCallsMade: 0 };
     }
 
+    let providerCallsMade = 0;
+
     for (const provider of activeProviders) {
+      if (providerCallsMade >= maxProviderCalls) break;
+      const cooldownKey = `${provider.name}:${venue.id}`;
+      const cooldownUntil = this.unknownCooldownUntil.get(cooldownKey) ?? 0;
+      if (cooldownUntil > nowMs) continue;
+
+      providerCallsMade += 1;
       const check = await provider.verifyVenueOpen(venue, nowMs);
-      if (check.status === "unknown") continue;
+      if (check.status === "unknown") {
+        this.unknownCooldownUntil.set(cooldownKey, nowMs + this.unknownCooldownMs);
+        continue;
+      }
+
+      this.unknownCooldownUntil.delete(cooldownKey);
 
       if (check.status === "closed_permanent" || check.status === "closed_temporary") {
         const providerCode = check.status === "closed_permanent" ? "ProviderPermanentClosed" : "ProviderTemporaryClosed";
@@ -704,6 +785,7 @@ export class CompositeVenueProvider {
           ok: false,
           venue: updated ?? { ...venue, status: fallbackStatus, lastVerifiedAt: nowMs },
           verifiedViaProvider: true,
+          providerCallsMade,
           reason: check.status,
         };
       }
@@ -717,19 +799,20 @@ export class CompositeVenueProvider {
       const saved = await upsertVenue(this.pool, refreshed, {
         ...(check.reviewCount !== undefined ? { yelpReviewCount: check.reviewCount } : {}),
       });
-      return { ok: true, venue: saved, verifiedViaProvider: true };
+      return { ok: true, venue: saved, verifiedViaProvider: true, providerCallsMade };
     }
 
-    return { ok: true, venue, verifiedViaProvider: false };
+    return { ok: true, venue, verifiedViaProvider: false, providerCallsMade };
   }
 
   async pickVerifiedPrimaryAndBackup(
     request: VenueRankRequest,
-    opts: { appId?: AppId; nowMs?: number } = {},
+    opts: { appId?: AppId; nowMs?: number; maxVerifyCalls?: number } = {},
   ): Promise<VerifiedRecommendationResult> {
-    const nowMs = opts.nowMs ?? this.nowFn();
+    const nowMs = this.resolveNow(opts.nowMs);
+    const verifyCap = Math.max(0, opts.maxVerifyCalls ?? this.maxVerifyCalls);
     const discovery = await this.findAndRankVenues(request, nowMs);
-    const tz = getCity(request.city)?.tz ?? CITY_TZ[request.city] ?? "America/New_York";
+    const tz = getCity(request.city)?.tz ?? cityTimezone(request.city) ?? "America/New_York";
     const isWeekendOrHoliday = request.isWeekendOrHoliday ?? (localParts(request.startMs, tz).weekday >= 5);
 
     let externalVerifyCalls = 0;
@@ -746,13 +829,14 @@ export class CompositeVenueProvider {
           nowMs,
           isWeekendOrHoliday,
           startMs: request.startMs,
+          maxProviderCalls: Math.max(0, verifyCap - externalVerifyCalls),
         });
-        if (v.verifiedViaProvider) externalVerifyCalls += 1;
+        externalVerifyCalls += v.providerCallsMade;
         if (!v.ok) {
           quarantinedIds.push(cand.venue.id);
           continue;
         }
-        primary = { ...cand, venue: v.venue, needsOpenCheck: false };
+        primary = { ...cand, venue: v.venue, needsOpenCheck: v.verifiedViaProvider ? false : cand.needsOpenCheck };
         verifiedCandidates.push(primary);
       } else {
         remaining.push(cand);
@@ -782,13 +866,14 @@ export class CompositeVenueProvider {
           nowMs,
           isWeekendOrHoliday,
           startMs: request.startMs,
+          maxProviderCalls: Math.max(0, verifyCap - externalVerifyCalls),
         });
-        if (v.verifiedViaProvider) externalVerifyCalls += 1;
+        externalVerifyCalls += v.providerCallsMade;
         if (!v.ok) {
           quarantinedIds.push(cand.venue.id);
           continue;
         }
-        backup = { ...cand, venue: v.venue, needsOpenCheck: false };
+        backup = { ...cand, venue: v.venue, needsOpenCheck: v.verifiedViaProvider ? false : cand.needsOpenCheck };
         verifiedCandidates.push(backup);
       } else {
         verifiedCandidates.push(cand);

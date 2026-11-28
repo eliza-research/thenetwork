@@ -7,7 +7,7 @@ import { Field } from "./Field.tsx";
 import { Input } from "./Input.tsx";
 
 /** A field error that can show on the phone page. */
-export type PhoneFieldError = Exclude<FieldError, "CodeNotAccepted">;
+export type PhoneFieldError = Extract<FieldError, "NoFieldError" | "CheckNotPassed" | "PhoneNotValid" | "CodesRateLimited" | "CodeSendFailed">;
 
 const errorText: Record<PhoneFieldError, string | undefined> = {
   NoFieldError: undefined,

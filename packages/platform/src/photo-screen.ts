@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { ratingMaxBytes } from "../../core/src/generated/photoPolicy.ts";
 import { ClefError, clefRun, type ClefFetch, type ClefQuestion } from "../../engine/src/packs/slop/clef.ts";
 import type { AppId } from "./apps.ts";
@@ -5,6 +6,7 @@ import type { PhotoType } from "./photos.ts";
 
 const PHOTO_SCREEN_MODEL = "clef-flash" as const;
 const PHOTO_SCREEN_TIMEOUT_MS = 4000;
+const PHOTO_SCREEN_CACHE_MAX_ENTRIES = 1024;
 const PHOTO_SCREEN_STATE = "A photo that one adult member of a dating app chose to send privately to one adult match. Judge only what is visible in the photo.";
 const PHOTO_SCREEN_QUESTIONS: Record<string, ClefQuestion> = {
   "unsafe.sexual": { type: "noul", instructions: "Does this photo show nudity, exposed genitals, sexual activity or sexual content?" },
@@ -42,16 +44,42 @@ interface WorkersAiPhotoScreenOptions {
   fetch?: ClefFetch;
   baseUrl?: string;
   onCall?: (call: PhotoScreenCall) => void;
+  maxCacheEntries?: number;
 }
 
 class WorkersAiPhotoScreen implements PhotoScreen {
   readonly id = `screen:${PHOTO_SCREEN_MODEL}`;
+  private readonly cache = new Map<string, Extract<PhotoScreenResult, { kind: "answered" }>>();
+  private readonly maxCacheEntries: number;
   constructor(private readonly o: WorkersAiPhotoScreenOptions) {
     if (!o.token || !o.accountId) throw new ClefError("the photo screen needs CLOUDFLARE_AI_TOKEN and CLOUDFLARE_ACCOUNT_ID");
+    this.maxCacheEntries = o.maxCacheEntries ?? PHOTO_SCREEN_CACHE_MAX_ENTRIES;
+  }
+
+  private cacheGet(key: string): PhotoScreenResult | undefined {
+    const hit = this.cache.get(key);
+    if (!hit) return undefined;
+    this.cache.delete(key);
+    this.cache.set(key, hit);
+    return { ...hit };
+  }
+
+  private cacheSet(key: string, value: Extract<PhotoScreenResult, { kind: "answered" }>): void {
+    if (this.maxCacheEntries <= 0) return;
+    this.cache.delete(key);
+    this.cache.set(key, { ...value });
+    while (this.cache.size > this.maxCacheEntries) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest === undefined) break;
+      this.cache.delete(oldest);
+    }
   }
 
   async screen(image: PhotoScreenImage, app: AppId): Promise<PhotoScreenResult> {
     if (image.bytes.byteLength > ratingMaxBytes) return { kind: "unusable" };
+    const hash = createHash("sha256").update(image.contentType).update("\0").update(image.bytes).digest("hex");
+    const cached = this.cacheGet(hash);
+    if (cached) return cached;
     const record = (call: Omit<PhotoScreenCall, "app" | "model">) => this.o.onCall?.({ app, model: PHOTO_SCREEN_MODEL, ...call });
     const data = `data:${image.contentType};base64,${Buffer.from(image.bytes).toString("base64")}`;
     try {
@@ -61,6 +89,7 @@ class WorkersAiPhotoScreen implements PhotoScreen {
         AbortSignal.timeout(PHOTO_SCREEN_TIMEOUT_MS),
       );
       const parsed = parsePhotoScreenAnswers(result.answers);
+      if (parsed.kind === "answered") this.cacheSet(hash, parsed);
       const inputTokens = result.usage?.input_tokens;
       record({ outcome: parsed.kind === "answered" ? "ok" : "unparsed", ...(typeof inputTokens === "number" ? { inputTokens } : {}) });
       return parsed;

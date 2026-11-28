@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { Facet, Intent, MemberId } from "@thenetwork/core";
+import { isBusinessDomain, type Facet, type Intent, type MemberId } from "@thenetwork/core";
 import { hireEvidenceCurrent } from "../../core/src/generated/peonHireDispatch.ts";
 import { standingIntentLive } from "../../core/src/standing-intent.ts";
 import { JOB_INTENT, SAFETY, SEARCH_INTENT, T } from "../../engine/src/packs/peon/schema.ts";
@@ -33,7 +33,7 @@ export function readHireEvidence(records: Records, seat: HireSeat, candidate: Me
   const absent = { verified: false, companyAllowed: false };
   if (!isSeatId(seat.id) || seat.manager === candidate) return absent;
   const postingId = postingIdOf(seat.id), postingOwner = projected ? seat.id : seat.manager;
-  const exactApp = (row: Intent | Facet) => row.app === undefined || row.app === "peon";
+  const exactApp = (row: Intent | Facet) => row.app === undefined || isBusinessDomain(row.app);
   const posting = records.intents.find(intent => intent.id === postingId && intent.memberId === postingOwner && exactApp(intent)
     && intent.category === "professional" && intent.details?.startsWith(JOB_INTENT) && standingIntentLive(intent, now));
   const searches = records.intents.filter(intent => intent.memberId === candidate && exactApp(intent)

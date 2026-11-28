@@ -14,22 +14,25 @@
 //            reviews a blind summary, and the intro goes out only after both yeses (peonHooks below,
 //            src/jobs.ts). Managers post, update and close jobs by text (read back, saved on a yes).
 //   friends  friendsPack with its plans config (FRIENDS_PLANS).
-import { canBeMatched, CITY_TZ, DAY, HOUR, seedVenuesForCity, type City, type MemberId, type VenuePriceTier, type VenueRecord } from "@thenetwork/core";
 import {
-  friendsPack, FRIENDS_PLANS, makeSlopPack, peonPack, PEON_ENGINE_CONFIG, peonSeatCapacity, planFromInput, SLOP_ENGINE_CONFIG, slopProfiles,
+  canBeMatched, CITY_TZ, cityTimezone, DAY, HOUR, isCity, isLaunchCity, localParts, seedVenuesForCity, toDomainId,
+  type City, type CityId, type DomainId, type LaunchCity, type MemberId, type MemberVenuePrefs, type VenuePriceTier, type VenueRecord,
+} from "@thenetwork/core";
+import {
+  businessPack, BUSINESS_ENGINE_CONFIG, businessSeatCapacity, DATING_ENGINE_CONFIG, datingProfiles, friendshipPack, FRIENDSHIP_PLANS, makeDatingPack, planFromInput,
   type AppPack, type EngineConfigInput, type EngineInput, type PlansConfigInput, type World,
 } from "@thenetwork/engine";
 import { classifyYesNo } from "@thenetwork/core";
 import {
   ageBand, applyCorrection, distancePhrase, emptyOnboarding, extractSlopProfile, markAsked,
   SLOP_ONBOARD_QUESTIONS, slopBookedText, slopCheckInText, slopOnboardTags, slopProbeText, type OnboardField, type SlopOnboarding,
-} from "@thenetwork/engine/src/packs/slop/index.ts";
-import { finalize } from "@thenetwork/engine/src/packs/slop/extract.ts";
-import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/slop/standing.ts";
-import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/slop/onboard.ts";
-import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/slop/rules.ts";
-import { isNonDrinkerProfile } from "@thenetwork/engine/src/packs/slop/score.ts";
-import { ZIPS } from "@thenetwork/engine/src/packs/slop/zips.ts";
+} from "@thenetwork/engine/src/packs/dating/index.ts";
+import { finalize } from "@thenetwork/engine/src/packs/dating/extract.ts";
+import { DateStandings, type DateStandingValidity } from "@thenetwork/engine/src/packs/dating/standing.ts";
+import { nextOnboardingPrompt, SLOP_READBACK } from "@thenetwork/engine/src/packs/dating/onboard.ts";
+import { slopHardPairCurrent } from "@thenetwork/engine/src/packs/dating/rules.ts";
+import { isNonDrinkerProfile } from "@thenetwork/engine/src/packs/dating/score.ts";
+import { ZIPS } from "@thenetwork/engine/src/packs/dating/zips.ts";
 import type { AppHooks, AppOnboarding, HookOpp, HookVenue } from "../src/apphooks.ts";
 import { mustMarks, seatJob, SEAT_COPY } from "../src/jobs.ts";
 import { findCityNeighborhood, km, NEIGHBORHOOD, VENUES } from "../src/geo.ts";
@@ -49,30 +52,42 @@ export interface AppWiring {
   prefs(age: number): { categoriesOptIn: string[]; romanceOptIn: boolean };
 }
 
-const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
+export interface AppWiringOptions {
+  venues?: () => readonly VenueRecord[];
+}
 
-/** The wiring for one app and city. A new instance each time (packs hold no state, but options are per network). */
-export function appWiring(app: AppId, city: City = "nyc"): AppWiring {
-  switch (app) {
-    case "slop": {
-      // Founder decision 9: no ID check (phone login is the identity check; a stated age is enough).
-      const pack = makeSlopPack({ verification: { required: false } });
+const NTWRK_CATEGORIES = ["social", "hobby", "professional", "events", "growth", "help"];
+const asEngineCity = (city: CityId): City => (isCity(city) ? city : "nyc");
+
+export type DomainWiringTarget = DomainId | "network" | "ntwrk";
+
+/** The canonical wiring for one matching domain and city. A new instance each time (packs hold no state, but options are per network). */
+export function domainWiring(domain: DomainWiringTarget, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
+  const market = asEngineCity(city);
+  switch (domain) {
+    case "dating": {
+      const pack = makeDatingPack({ verification: { required: false } });
       return {
-        pack, engine: { ...SLOP_ENGINE_CONFIG, cities: [city] }, hooks: slopHooks(pack.options, city), plans: false,
+        pack, engine: { ...DATING_ENGINE_CONFIG, cities: [market] }, hooks: datingHooks(pack.options, market, opts?.venues), plans: false,
         dateStanding: w => new DateStandings(w, pack.options).validity,
         prefs: age => ({ categoriesOptIn: canBeMatched(age) ? ["romance"] : [], romanceOptIn: canBeMatched(age) }),
       };
     }
-    case "peon":
+    case "business":
       return {
-        pack: peonPack, engine: { ...PEON_ENGINE_CONFIG, cities: [city] }, plans: false, hooks: peonHooks(),
+        pack: businessPack, engine: { ...BUSINESS_ENGINE_CONFIG, cities: [market] }, plans: false, hooks: businessHooks(),
         prefs: () => ({ categoriesOptIn: ["professional"], romanceOptIn: false }),
       };
-    case "friends":
-      return { pack: friendsPack, engine: { cities: [city] }, plansConfig: FRIENDS_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
+    case "friendship":
+      return { pack: friendshipPack, engine: { cities: [market] }, plansConfig: FRIENDSHIP_PLANS, prefs: () => ({ categoriesOptIn: ["social", "hobby"], romanceOptIn: false }) };
     default:
       return { prefs: () => ({ categoriesOptIn: NTWRK_CATEGORIES, romanceOptIn: false }) };
   }
+}
+
+/** The wiring for one app and city, delegating to the canonical domain wiring. */
+export function appWiring(app: AppId, city: CityId = "nyc", opts?: AppWiringOptions): AppWiring {
+  return domainWiring(toDomainId(app) ?? "network", city, opts);
 }
 
 // ==================================================================================== slop
@@ -107,8 +122,8 @@ function stateOf(s: unknown, age: number | undefined): SlopOnboarding {
 /** What is stored keeps values and spans, never the member's words. */
 const withoutWords = (p: SlopOnboarding): SlopOnboarding => JSON.parse(JSON.stringify(p), (k, v) => (k === "evidence" && v ? { ...v, text: "" } : v));
 
-/** The slop onboarding loop for one market (AppHooks.onboarding). */
-export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
+/** The dating onboarding loop for one market (AppHooks.onboarding). */
+export function datingOnboardingForCity(city: City = "nyc"): AppOnboarding {
   return {
     read(state, body, reasons, { now, age }) {
       let p = stateOf(state, age);
@@ -130,9 +145,11 @@ export function slopOnboardingForCity(city: City = "nyc"): AppOnboarding {
     asked: (state, reasons, { age }) => reasons.reduce((p, r) => markAsked(p, r), stateOf(state, age)),
   };
 }
+export const slopOnboardingForCity = datingOnboardingForCity;
 
-/** The slop onboarding loop (AppHooks.onboarding; exported for the sims). */
-export const slopOnboarding: AppOnboarding = slopOnboardingForCity("nyc");
+/** The dating onboarding loop (AppHooks.onboarding; exported for the sims). */
+export const datingOnboarding: AppOnboarding = datingOnboardingForCity("nyc");
+export const slopOnboarding: AppOnboarding = datingOnboarding;
 
 const ACTIVITY_PHRASE: Record<string, string> = {
   coffee: "coffee", drinks: "drinks", walk: "a walk", museum: "a museum visit", dinner: "dinner", live_music: "live music",
@@ -176,47 +193,60 @@ export function slotStart(slot: string, now: number, city: City = "nyc"): number
   return s ? nextAt(now + DAY, s.hour, wd => wd === s.day, tzForCity(city)) : undefined;
 }
 
-export interface SlopVenueOptions {
+export interface DatingVenueOptions {
   excludeIds?: ReadonlySet<string>;
   nonDrinker?: boolean;
   maxBudgetTier?: VenuePriceTier;
   venues?: readonly VenueRecord[];
 }
+export type SlopVenueOptions = DatingVenueOptions;
 
 /** A public place near the midpoint of two members' cells that suits the activity. Never a home. */
-export function slopVenue(
+export function datingVenue(
   cells: { lat: number; lon: number }[],
   activity: string,
   at?: number,
-  city: City = "nyc",
-  opts?: SlopVenueOptions,
+  city: CityId = "nyc",
+  opts?: DatingVenueOptions | readonly VenueRecord[],
 ): HookVenue | undefined {
   if (!cells.length) return undefined;
-  const timeZone = CITY_TZ[city] ?? CITY_TZ.nyc;
+  const o: DatingVenueOptions | undefined = Array.isArray(opts) ? { venues: opts } : (opts as DatingVenueOptions | undefined);
+  const timeZone = cityTimezone(city) ?? CITY_TZ.nyc;
   const want = new Set(ACTIVITY_TAGS[activity] ?? ["social"]);
+  // After dark, a busy, lit public place, never a park or a waterfront.
   const hour = at === undefined ? 12 : Number(new Intl.DateTimeFormat("en-US", { timeZone, hourCycle: "h23", hour: "2-digit" }).format(at));
   const dark = hour >= 17 || hour < 9;
-  const rawPool: (HookVenue & { tags: string[] })[] = city === "nyc" && !opts?.venues
-    ? (dark
+  const curatedPool = o?.venues?.length
+    ? o.venues.filter(v => v.city === city)
+    : city !== "nyc"
+      ? seedVenuesForCity(city)
+      : undefined;
+  const rawPool: (HookVenue & { tags: string[] })[] = curatedPool
+    ? curatedPool
+        .filter(v => {
+          if (v.status !== "active" || !v.public) return false;
+          if (dark && (!v.indoor || v.category === "park" || v.category === "waterfront_park")) return false;
+          if (o?.nonDrinker && (v.isBarOnly || v.isAlcoholCentric || !v.alcoholOptional)) return false;
+          if (o?.maxBudgetTier !== undefined && v.priceTier > o.maxBudgetTier) return false;
+          return true;
+        })
+        .map(v => ({
+          id: v.id,
+          name: v.name,
+          neighborhood: v.neighborhood,
+          lat: v.lat,
+          lng: v.lng,
+          tags: [
+            ...(v.hobbies ?? []),
+            ...(v.cuisineTags ?? []),
+            v.category,
+            ...(v.category === "park" || v.category === "waterfront_park" ? ["walk", "outdoors"] : ["social", "food"]),
+          ],
+        }))
+    : dark
       ? EVENING_VENUES.map(v => ({ ...v, tags: ["social", "food"] }))
-      : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags })))
-    : (opts?.venues ? opts.venues.filter(v => v.city === city) : seedVenuesForCity(city))
-      .filter(v => {
-        if (v.status !== "active" || !v.public) return false;
-        if (dark && !v.indoor) return false;
-        if (opts?.nonDrinker && (v.isBarOnly || !v.alcoholOptional)) return false;
-        if (opts?.maxBudgetTier !== undefined && v.priceTier > opts.maxBudgetTier) return false;
-        return true;
-      })
-      .map(v => ({
-        id: v.id,
-        name: v.name,
-        neighborhood: v.neighborhood,
-        lat: v.lat,
-        lng: v.lng,
-        tags: v.category === "park" || v.category === "waterfront_park" ? ["walk", "outdoors"] : ["social", "food"],
-      }));
-  const filtered = opts?.excludeIds?.size ? rawPool.filter(v => !opts.excludeIds!.has(v.id)) : rawPool;
+      : VENUES.filter(v => v.adultPlans).map(v => ({ id: v.id, name: v.name, neighborhood: v.neighborhood, lat: v.lat, lng: v.lng, tags: v.tags }));
+  const filtered = o?.excludeIds?.size ? rawPool.filter(v => !o.excludeIds!.has(v.id)) : rawPool;
   const pool = filtered.length ? filtered : rawPool;
   let best: { v: (typeof pool)[number]; cost: number } | undefined;
   for (const v of pool) {
@@ -226,13 +256,83 @@ export function slopVenue(
   }
   return best && { id: best.v.id, name: best.v.name, neighborhood: best.v.neighborhood, lat: best.v.lat, lng: best.v.lng, timeZone };
 }
+export const slopVenue = datingVenue;
 
-/** The slop hooks (exported for tests). */
-export function slopHooks(options: Parameters<typeof planFromInput>[4], city: City = "nyc"): AppHooks {
-  const plan = (o: HookOpp, input: EngineInput) => {
+function memberVenueRedLines(input: EngineInput, memberId: MemberId): Partial<MemberVenuePrefs> {
+  const tags = new Set(
+    input.facets
+      .filter(f => f.memberId === memberId)
+      .flatMap(f => f.tags.map(t => t.toLowerCase()))
+  );
+  const has = (...keys: string[]) => keys.some(k => tags.has(k));
+  const strictSober = has("strict_sober", "sober", "alcohol_free", "in_recovery", "aa", "slop:dealbreaker:strict_sober");
+  const nonDrinker = strictSober || has("non_drinker", "no_alcohol", "no_drinks", "slop:lifestyle:non_drinker");
+  return {
+    ...(strictSober ? { strictSober: true } : {}),
+    ...(nonDrinker ? { drinksAlcohol: false } : {}),
+    ...(has("vegetarian", "diet:vegetarian") ? { vegetarian: true } : {}),
+    ...(has("vegan", "diet:vegan") ? { vegan: true } : {}),
+    ...(has("halal", "diet:halal") ? { halal: true } : {}),
+    ...(has("kosher", "diet:kosher") ? { kosher: true } : {}),
+    ...(has("gluten_free", "celiac", "diet:gluten_free") ? { glutenFree: true } : {}),
+    ...(has("severe_allergen", "peanut_allergy", "shellfish_allergy", "anaphylaxis") ? { severeAllergen: true } : {}),
+    ...(has("wheelchair", "wheelchair_needed", "accessible_only") ? { wheelchairNeeded: true } : {}),
+    ...(has("low_walking", "mobility_limited") ? { lowWalking: true } : {}),
+    ...(has("smoke_free", "no_smoking") ? { smokeFree: true } : {}),
+    ...(has("low_noise", "quiet_only", "sensory_friendly") ? { lowNoiseRequired: true } : {}),
+    ...(has("daytime_only", "no_night") ? { daytimeOnly: true } : {}),
+  };
+}
+
+function hasAnyRedLine(prefs: Partial<MemberVenuePrefs>): boolean {
+  return Boolean(
+    prefs.strictSober ||
+    prefs.drinksAlcohol === false ||
+    prefs.halal ||
+    prefs.kosher ||
+    prefs.vegan ||
+    prefs.glutenFree ||
+    prefs.severeAllergen ||
+    prefs.wheelchairNeeded ||
+    prefs.lowWalking ||
+    prefs.lowNoiseRequired ||
+    prefs.daytimeOnly
+  );
+}
+
+/** The dating hooks (exported for tests). */
+export function datingHooks(
+  options: Parameters<typeof planFromInput>[4],
+  city: CityId = "nyc",
+  venuesProvider?: () => readonly VenueRecord[]
+): AppHooks {
+  const market = asEngineCity(city);
+  const tz = cityTimezone(city) ?? CITY_TZ.nyc;
+  const venueCity: LaunchCity = isLaunchCity(city) ? city : "nyc";
+  const venuePool = (): readonly VenueRecord[] => {
+    const provided = venuesProvider?.();
+    return provided && provided.length > 0 ? provided : seedVenuesForCity(venueCity);
+  };
+  const homeAreaOf = (input: EngineInput, memberId: MemberId) =>
+    input.presence.find(p => p.memberId === memberId && p.type === "home")?.areas.find(a => !a.startsWith("zip:"));
+  const plan = (o: HookOpp, input: EngineInput, withVenue = false) => {
     const [a, b] = o.participants as [MemberId, MemberId];
     const first = o.first && o.participants.includes(o.first) ? o.first : a;
-    return planFromInput(input, first, first === a ? b : a, [city], options);
+    const partner = first === a ? b : a;
+    if (!withVenue) return planFromInput(input, first, partner, [market], options);
+    const startMs = o.meetingAt ?? input.now;
+    const hour = localParts(startMs, tz).hour;
+    const isAfterDark = hour >= 17 || hour < 9;
+    return planFromInput(input, first, partner, [market], options, {
+      city: venueCity,
+      venues: venuePool(),
+      memberAreas: [homeAreaOf(input, first), homeAreaOf(input, partner)],
+      memberPrefs: [memberVenueRedLines(input, first), memberVenueRedLines(input, partner)],
+      startMs,
+      nowMs: input.now,
+      isAfterDark,
+      badWeatherOrAfterDark: isAfterDark,
+    });
   };
   return {
     engineInput(input) {
@@ -246,10 +346,10 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
         let zip = mine.find(t => t.startsWith("slop:zip:"))?.slice(9);
         if (!zip) {
           const homeAreas = presence.find(p => p.memberId === m.id && p.type === "home")?.areas ?? [];
-          const area = city === "nyc"
+          const area = market === "nyc"
             ? homeAreas.find(x => NEIGHBORHOOD.has(x))
-            : homeAreas.find(x => !!findCityNeighborhood(x, city));
-          zip = zipForArea(area, city);
+            : homeAreas.find(x => !!findCityNeighborhood(x, market));
+          zip = zipForArea(area, market);
           if (zip) facets.push({ id: `${m.id}:slop:area-zip`, memberId: m.id, kind: "fact", value: zip, tags: [`slop:zip:${zip}`], scope: "agent_private", provenance: "inferred", confidence: 0.6, validFrom: now, source: "chat", observedAt: now, inferred: true, confirmedByMember: false });
         }
         const home = presence.find(p => p.memberId === m.id && p.type === "home");
@@ -261,12 +361,12 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
       }
       return { ...input, facets, presence, intents };
     },
-    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, city, options),
-    onboarding: city === "nyc" ? slopOnboarding : slopOnboardingForCity(city),
+    hardDatingPairCurrent: (input, participants) => slopHardPairCurrent(input, participants, market, options),
+    onboarding: market === "nyc" ? datingOnboarding : datingOnboardingForCity(market),
     timeOptions(o, now, input) {
       const p = plan(o, input());
       if (!p) return undefined;
-      return p.slots.map(s => slotStart(s, now, city)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
+      return p.slots.map(s => slotStart(s, now, market)).filter((t): t is number => t !== undefined).map(t => ({ start: t, end: t + 2 * HOUR }));
     },
     probe(o, id, ctx) {
       if (o.category !== "romance" || o.participants.length !== 2) return undefined;
@@ -274,22 +374,40 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
       const p = plan(o, input);
       const other = o.participants.find(x => x !== id)!;
       const age = input.members.find(m => m.id === other)?.age;
-      const P = slopProfiles(input);
+      const P = datingProfiles(input);
       const fact = P.get(other)?.shareableInterests.find(t => P.get(id)?.interests.includes(t)) ?? P.get(other)?.shareableInterests[0];
       const activity = ACTIVITY_PHRASE[p?.activity ?? "coffee"] ?? "coffee";
-      const about = [age !== undefined && canBeMatched(age) ? `in their ${ageBand(age)}` : undefined, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
+      const band = age !== undefined && canBeMatched(age) ? ageBand(age) : undefined;
+      const agePhrase = band ? (/^\d/.test(band) ? `aged ${band}` : `in their ${band}`) : undefined;
+      const about = [agePhrase, p ? distancePhrase(p.distance) : undefined].filter(Boolean).join(", ");
       return slopProbeText({ when: ctx.times ?? ctx.when, times: !!ctx.times }, activity, fact?.replace(/_/g, " "), about || undefined);
     },
     venue(o, input) {
       const inp = input();
-      const P = slopProfiles(inp);
+      const p = plan(o, inp, true);
+      if (p?.venueRecord) {
+        return {
+          id: p.venueRecord.id,
+          name: p.venueRecord.name,
+          neighborhood: p.venueRecord.neighborhood,
+          lat: p.venueRecord.lat,
+          lng: p.venueRecord.lng,
+          timeZone: tz,
+        };
+      }
+      if (o.participants.some(id => hasAnyRedLine(memberVenueRedLines(inp, id)))) {
+        return undefined;
+      }
+      const P = datingProfiles(inp);
       const cells = o.participants.map(id => P.get(id)?.cell).filter((c): c is NonNullable<typeof c> => !!c);
       const nonDrinker = o.participants.some(id => {
         const prof = P.get(id);
         return !!prof && isNonDrinkerProfile(prof);
       });
-      const p = plan(o, inp);
-      return slopVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, nonDrinker ? { nonDrinker: true } : undefined);
+      return datingVenue(cells, p?.activity ?? "coffee", o.meetingAt, city, {
+        ...(nonDrinker ? { nonDrinker: true } : {}),
+        venues: venuePool(),
+      });
     },
     booked(o, _id, ctx) {
       if (o.category !== "romance") return undefined;
@@ -301,18 +419,16 @@ export function slopHooks(options: Parameters<typeof planFromInput>[4], city: Ci
     },
   };
 }
+export const slopHooks = datingHooks;
 
-// ==================================================================================== peon
+// ==================================================================================== business
 /**
- * peon's hooks (#9): the seat capacity (engine peonSeatCapacity), job posts by text, and the seat
- * copy. Candidate first: the candidate hears the job (title, pay range, place; never the manager's
- * name); after their yes the hiring manager gets a blind summary (must-have checkmarks, start time;
- * never a name, a score or a rank); the intro names each side only after both yeses.
+ * Business domain hooks: seat capacity (businessSeatCapacity), job posts by text, and seat copy.
  */
-export function peonHooks(): AppHooks {
+export function businessHooks(): AppHooks {
   const seatOf = (o: HookOpp) => o.seat;
   return {
-    engineInput: peonSeatCapacity,
+    engineInput: businessSeatCapacity,
     postings: true,
     probe(o, id, ctx) {
       const seat = seatOf(o);
@@ -338,3 +454,4 @@ export function peonHooks(): AppHooks {
     },
   };
 }
+export const peonHooks = businessHooks;

@@ -25,6 +25,7 @@ The app registry can disable an otherwise available OpenAI host. Check this sett
 type AppId = Ntwrk | Slop | Peon | Friends
 type Surface = FullSurface | OpenAiSurface
 type ToolName = AppInfoTool | StartSignupTool | PrepareSignupTool | CheckStatusTool | ReadProfileTool | SubmitProfileTool | GetUpdatesTool |
+  GetContextTool | SetAvailabilityTool | SetRedLinesTool |
   ListLookingForTool | PauseLookingForTool | ResumeLookingForTool | MyPhotosTool | PhotoRequestTool
 
 pure def appOffered(surface: Surface, app: AppId): bool =
@@ -39,6 +40,8 @@ pure def lawConfiguredOptOutBlocksOpenAiHost(host: AppId): bool =
   not(configuredHostServes(OpenAiSurface, host, false))
 
 pure def photoTool(tool: ToolName): bool = tool == MyPhotosTool or tool == PhotoRequestTool
+
+pure def preferenceTool(tool: ToolName): bool = tool == SetAvailabilityTool or tool == SetRedLinesTool
 
 pure def toolListed(host: AppId, surface: Surface, tool: ToolName): bool =
   hostServes(surface, host) and (tool != PrepareSignupTool or host == Friends or host == Ntwrk) and
@@ -108,14 +111,14 @@ pure def lawSignInSiteServesTheApp(site: AppId, app: AppId): bool =
 
 ### Public tools need no sign-in, and member tools need the person's own grant
 
-`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status` and `get_updates` need the membership read scope. `read_profile` and `list_looking_for` need the explicitly authorized profile read scope. `submit_profile`, `prepare_signup`, `pause_looking_for` and `resume_looking_for` need the profile write scope. `my_photos` and `photo_request` need the explicitly authorized photos scope (`photos:use`), which no other scope includes and no other tool needs. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must confirm the phone and allow access on the sign-in site of the endpoint. Changed (owner decision 2026-11-22): the three looking-for tools are new; the list reads saved profile state, so it needs the profile read scope, and a pause or a resume changes it, so it needs the profile write scope. Changed (owner decision 2026-11-22): the photo tools are new and need their own scope, so that a person can give an agent the profile scopes without the photo list.
+`app_info` and `start_signup` return public facts only: what the app is, who can join, how to join, the ages and the legal links. They need no sign-in and take no personal details. `check_status`, `get_updates` and `get_context` need the membership read scope. `read_profile` and `list_looking_for` need the explicitly authorized profile read scope. `submit_profile`, `prepare_signup`, `set_availability`, `set_red_lines`, `pause_looking_for` and `resume_looking_for` need the profile write scope. `my_photos` and `photo_request` need the explicitly authorized photos scope (`photos:use`), which no other scope includes and no other tool needs. A grant covers a tool when the tool needs no scope, or when the grant holds the scope that the tool needs. Each grant covers the public tools, with or without scopes. A member tool without the right grant answers that the person must confirm the phone and allow access on the sign-in site of the endpoint. Changed (owner decision 2026-11-22): the three looking-for tools are new; the list reads saved profile state, so it needs the profile read scope, and a pause or a resume changes it, so it needs the profile write scope. Changed (owner decision 2026-11-22): the photo tools are new and need their own scope, so that a person can give an agent the profile scopes without the photo list. Changed (2026-11-27): `get_context` needs the membership read scope (and reveals saved profile fields only when the grant also holds the profile read scope); `set_availability` and `set_red_lines` need the profile write scope.
 
 ```quint
 type Scope = NoScope | MembershipRead | ProfileWrite | ProfileRead | PhotosUse
 
 pure def scopeFor(tool: ToolName): Scope =
   if (tool == AppInfoTool or tool == StartSignupTool) NoScope
-  else if (tool == CheckStatusTool or tool == GetUpdatesTool) MembershipRead
+  else if (tool == CheckStatusTool or tool == GetUpdatesTool or tool == GetContextTool) MembershipRead
   else if (tool == ReadProfileTool or tool == ListLookingForTool) ProfileRead
   else if (photoTool(tool)) PhotosUse
   else ProfileWrite
@@ -140,11 +143,14 @@ pure def lawPhotoScopeIsSeparate(tool: ToolName, hasRead: bool, hasWrite: bool, 
 
 pure def lawLookingForChangesNeedWrite(tool: ToolName): bool =
   (tool == PauseLookingForTool or tool == ResumeLookingForTool) implies scopeFor(tool) == ProfileWrite
+
+pure def lawPreferenceToolsNeedWrite(tool: ToolName): bool =
+  preferenceTool(tool) implies scopeFor(tool) == ProfileWrite
 ```
 
 ### The member status decides which member tool can act
 
-The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status and its updates. Only an onboarding or active member can send a profile. Only a person who is not joined or invited can prepare a Join draft. Only an active member can list, pause or resume what the app looks for on their behalf, see their photo list or ask to send a photo. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed: the join step now names a path that works from a live connection (audit MCP15). On The Network, slop.date and friends.help, the person disconnects the app in their agent, connects it again and chooses Finish signup on the connection page; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one. Changed (owner decision 2026-11-22): the looking-for tools are new and serve only an active member, because a pause or a resume sends the person a text, and a stopped, held or onboarding member gets no such text. Changed (owner decision 2026-11-22): the photo tools serve only an active member, because a photo goes only to a match and a send request is confirmed by a text. Changed (owner decision 2026-11-22, answers A2 to A5): for an active member under 18, the nothing-to-do step is the notice that the line gives that member ([which introductions the app makes](textEnrollment.md#a-minor-hears-which-introductions-the-app-makes)), read from the network; before, the connector chose the text by app alone and promised friendship introductions while staff had stopped them or the age was in doubt. When the network cannot give the notice, the connector uses the notice for a stored doubt, which promises no introductions.
+The agent sees one of six statuses: not joined, invited, onboarding, active, stopped or on hold. Every status can read its status, its updates and its context. Only an onboarding or active member can send a profile or save availability and red-line preferences. Only a person who is not joined or invited can prepare a Join draft. Only an active member can list, pause or resume what the app looks for on their behalf, see their photo list or ask to send a photo. Each status has one next step that the agent tells the person: join or get an invitation when not joined, accept the invitation, reply to the last text, nothing to do, text START, or email support. The connector reads the effective consent of the grant's current verified phone in its app. An explicit opt-out makes an active or onboarding membership read as stopped even while the membership update is pending. A review or restriction still reads as on hold. A missing consent record does not create a stopped status. Changed (2026-11-27): on The Network, slop.date and friends.help, `prepare_signup` (and `check_status` when the person is not joined or invited) provides a short-lived, single-use, app-bound `finish_signup_url` step-up link on the sign-in site that opens the verified browser Finish signup flow directly (checking the browser session, phone and matching grant owner, prefilling any live draft once and deleting it on use, and linking the new membership without requiring disconnect and reconnect), while keeping disconnect and reconnect as a fallback; on peon.biz, the person opens the app's join page. The text keyword stays a second path where the app has one. Changed (owner decision 2026-11-22): the looking-for tools are new and serve only an active member, because a pause or a resume sends the person a text, and a stopped, held or onboarding member gets no such text. Changed (owner decision 2026-11-22): the photo tools serve only an active member, because a photo goes only to a match and a send request is confirmed by a text. Changed (owner decision 2026-11-22, answers A2 to A5): for an active member under 18, the nothing-to-do step is the notice that the line gives that member ([which introductions the app makes](textEnrollment.md#a-minor-hears-which-introductions-the-app-makes)), read from the network; before, the connector chose the text by app alone and promised friendship introductions while staff had stopped them or the age was in doubt. When the network cannot give the notice, the connector uses the notice for a stored doubt, which promises no introductions.
 
 ```quint
 type MemberStatus = NotJoined | Invited | Onboarding | Active | Stopped | OnHold
@@ -164,7 +170,7 @@ pure def lawStoppedMembershipCannotSubmitProfile(storedStatus: str, reviewRequir
   not(liveMember(connectorMembershipStatus(storedStatus, reviewRequired, true)))
 
 pure def toolAllowedFor(tool: ToolName, status: MemberStatus): bool =
-  if (tool == SubmitProfileTool) liveMember(status)
+  if (tool == SubmitProfileTool or preferenceTool(tool)) liveMember(status)
   else if (tool == ReadProfileTool or tool == ListLookingForTool or tool == PauseLookingForTool or tool == ResumeLookingForTool or photoTool(tool)) status == Active
   else if (tool == PrepareSignupTool) (status == NotJoined or status == Invited)
   else true
@@ -180,6 +186,9 @@ pure def nextStepFor(status: MemberStatus, inviteOnly: bool): NextStep =
 pure def lawSubmitOnlyForLiveMembers(status: MemberStatus): bool =
   toolAllowedFor(SubmitProfileTool, status) iff (status == Active or status == Onboarding)
 
+pure def lawPreferenceToolsOnlyForLiveMembers(tool: ToolName, status: MemberStatus): bool =
+  preferenceTool(tool) implies (toolAllowedFor(tool, status) iff liveMember(status))
+
 pure def lawDraftOnlyBeforeJoining(status: MemberStatus): bool =
   toolAllowedFor(PrepareSignupTool, status) iff (status == NotJoined or status == Invited)
 
@@ -192,7 +201,8 @@ pure def lawPhotoToolsOnlyForActiveMembers(status: MemberStatus): bool =
 
 pure def lawReadToolsServeEveryStatus(status: MemberStatus): bool =
   toolAllowedFor(AppInfoTool, status) and toolAllowedFor(StartSignupTool, status) and
-  toolAllowedFor(CheckStatusTool, status) and toolAllowedFor(GetUpdatesTool, status)
+  toolAllowedFor(CheckStatusTool, status) and toolAllowedFor(GetUpdatesTool, status) and
+  toolAllowedFor(GetContextTool, status)
 ```
 
 ### A connection binds to one host on one surface, and the person connects it in the browser
@@ -202,8 +212,9 @@ The agent first reaches one host on one surface. The host is fixed before any to
 ```quint
 type ConnectionPhase = Unbound | Unavailable | Anonymous | Connected | Revoked
 type ToolResult =
-  NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ProfileAccepted |
-  ProfileNotForStatus | DraftSaved | DraftRefused | UpdatesShown | TooManyToday | SavedProfileShown | SavedProfileUnavailable |
+  NoResult | PublicFacts | AppNotAvailable | SignInNeeded | StatusShown | ContextShown | ProfileAccepted |
+  ProfileNotForStatus | PreferencesSaved | PreferencesNotForStatus | DraftSaved | DraftRefused | UpdatesShown |
+  TooManyToday | SavedProfileShown | SavedProfileUnavailable |
   LookingForUnavailable | LookingForShown | LookingForChanged | LookingForUnchanged |
   PhotoListShown | PhotoRequestAnswered | PhotoToolUnavailable
 type Connection = {
@@ -300,7 +311,8 @@ pure def callAfterOwnerChange(c: Connection): Connection =
   { ...c, phase: Revoked, hasWrite: false, hasProfileRead: false, hasPhotos: false, lastResult: SignInNeeded }
 
 pure def memberResult(r: ToolResult): bool =
-  r == StatusShown or r == ProfileAccepted or r == ProfileNotForStatus or r == DraftSaved or
+  r == StatusShown or r == ContextShown or r == ProfileAccepted or r == ProfileNotForStatus or
+  r == PreferencesSaved or r == PreferencesNotForStatus or r == DraftSaved or
   r == DraftRefused or r == UpdatesShown or r == TooManyToday or r == SavedProfileShown or r == SavedProfileUnavailable or
   r == LookingForUnavailable or r == LookingForShown or r == LookingForChanged or r == LookingForUnchanged or
   r == PhotoListShown or r == PhotoRequestAnswered or r == PhotoToolUnavailable
@@ -325,6 +337,22 @@ pure def canChangeMemberStatus(c: Connection, newStatus: MemberStatus): bool =
 
 pure def changeMemberStatus(c: Connection, newStatus: MemberStatus): Connection =
   { ...c, status: newStatus }
+```
+
+### Get context returns status and updates without bypassing profile read consent
+
+`get_context` returns the person's current status, next step and safe unseen updates for the host app in one call under the membership read scope. It includes saved profile fields or standing looking-for summaries only when the grant also holds the explicitly authorized profile read scope, so `get_context` never goes around separate profile read consent.
+
+```quint
+pure def resultShowsContextProfile(hasProfileRead: bool): bool =
+  grantCovers(ReadProfileTool, false, false, hasProfileRead, false)
+
+pure def lawContextProfileNeedsProfileRead(hasProfileRead: bool): bool =
+  resultShowsContextProfile(hasProfileRead) == hasProfileRead
+
+pure def canCallGetContext(c: Connection): bool = c.phase == Connected
+
+pure def callGetContext(c: Connection): Connection = { ...c, lastResult: ContextShown }
 ```
 
 ### Read saved profile fields only for this app's active member
@@ -448,14 +476,33 @@ pure def stepSubmitOnlyForLiveMember(before: Connection, via: str, after: Connec
      before.hasWrite and before.profileApproved)
 
 pure def stepNothingSentAtTheLimit(before: Connection, via: str, after: Connection): bool =
-  (before.sentToday >= profileDailyCap and (via == "callSubmitProfile" or via == "callPrepareSignup")) implies
+  (before.sentToday >= profileDailyCap and (via == "callSubmitProfile" or via == "callPrepareSignup" or via == "callPreferenceTool")) implies
     (after.lastResult == TooManyToday and after.profileSent == before.profileSent and
      after.draftPrepared == before.draftPrepared and after.sentToday == before.sentToday)
 ```
 
+### Structured availability and red-line tools save preferences for a live member within the daily limit
+
+`set_availability` and `set_red_lines` save structured scheduling windows and venue red-line constraints that the person approved for the host app. Both tools need the profile write scope, act only for an onboarding or active member, and share the grant's daily profile write limit. At the daily limit, nothing is saved and the call answers that the limit is reached. For a status that is not a live member, or when the platform refuses the write, nothing is saved and the call still counts against the daily limit.
+
+```quint
+pure def canCallPreferenceTool(c: Connection, tool: ToolName): bool =
+  c.phase == Connected and c.hasWrite and preferenceTool(tool)
+
+pure def callPreferenceTool(c: Connection, tool: ToolName, accepted: bool): Connection =
+  if (profileLimitReached(c.sentToday)) { ...c, lastResult: TooManyToday }
+  else if (liveMember(c.status) and accepted)
+    { ...c, sentToday: c.sentToday + 1, lastResult: PreferencesSaved }
+  else { ...c, sentToday: c.sentToday + 1, lastResult: PreferencesNotForStatus }
+
+pure def stepPreferencesSavedNeedsWriteAndLiveMember(before: Connection, via: str, after: Connection): bool =
+  (after.lastResult == PreferencesSaved and before.lastResult != PreferencesSaved) implies
+    (via == "callPreferenceTool" and before.phase == Connected and before.hasWrite and liveMember(before.status))
+```
+
 ### A Join draft holds only an approved first name and home city, once per grant
 
-On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply asks the person to connect again and choose Finish signup on the connection page, and to continue in their agent. The reply keeps the draft fields in storage. A person who connects for the first time types their name and city. A verified browser authorization form can use a draft from an existing grant once, when it passes the [one-use signup form checks](authorizationPages.md#the-signup-form-shows-the-draft-that-the-person-approved-in-the-agent) and the [Finish signup keep or delete decision](mcpSignupDraft.md). Changed (audit MCP16 and SIG46): the reply and the tool description said that a Join page shows the draft; that page does not exist. Changed (merge with develop, 2026-11-24): develop added the one-use prefill of the Finish signup form from the draft.
+On friends.help and ntwrk.party, `prepare_signup` saves only the first name and the optional home city that the person approved. It never creates a person, a membership or text consent. It needs a join age that the app allows and a person who is not joined or invited. A grant saves at most one draft. The call counts toward the daily limit. Both sites have retired their browser Join page. The reply provides a short-lived, single-use, app-bound `finish_signup_url` step-up link on the sign-in site that opens the verified browser Finish signup flow directly (checking the browser session, phone and matching grant owner, prefilling the draft once and deleting it on use, and linking the new membership without requiring disconnect and reconnect), and keeps disconnect and reconnect as a fallback. The reply keeps the draft fields in storage until use or cleanup. A person who connects for the first time types their name and city. A verified browser authorization form can use a draft from an existing grant once, when it passes the [one-use signup form checks](authorizationPages.md#the-signup-form-shows-the-draft-that-the-person-approved-in-the-agent) and the [Finish signup keep or delete decision](mcpSignupDraft.md). Changed (audit MCP16 and SIG46): the reply and the tool description said that a Join page shows the draft; that page does not exist. Changed (merge with develop, 2026-11-24): develop added the one-use prefill of the Finish signup form from the draft. Changed (2026-11-27): `prepare_signup` now provides the direct `finish_signup_url` step-up link instead of requiring disconnect and reconnect.
 
 ```quint
 pure def canCallPrepareSignup(c: Connection): bool =
@@ -602,6 +649,9 @@ pure def sometimesDraftSaved(c: Connection): bool = c.lastResult == DraftSaved
 pure def sometimesDraftRefused(c: Connection): bool = c.lastResult == DraftRefused
 pure def sometimesTwoUpdatesShown(c: Connection): bool = c.lastResult == UpdatesShown and c.lastShown == 2
 pure def sometimesStatusShown(c: Connection): bool = c.lastResult == StatusShown
+pure def sometimesContextShown(c: Connection): bool = c.lastResult == ContextShown
+pure def sometimesPreferencesSaved(c: Connection): bool = c.lastResult == PreferencesSaved
+pure def sometimesPreferencesNotForStatus(c: Connection): bool = c.lastResult == PreferencesNotForStatus
 pure def sometimesSignInNeeded(c: Connection): bool = c.lastResult == SignInNeeded
 pure def sometimesAppNotAvailable(c: Connection): bool = c.lastResult == AppNotAvailable
 pure def sometimesHostUnavailable(c: Connection): bool = c.phase == Unavailable

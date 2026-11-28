@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { canBeMatched } from "@thenetwork/core";
+import { canBeMatched, isBusinessDomain } from "@thenetwork/core";
 import {
   peonSearchAreas, peonSearchConfirmable, peonSearchDraftMs, peonSearchHorizonDays, peonSearchModes, peonSearchOwner,
   peonSearchRoles, peonSearchSkillAllowed, peonSearchSkills, peonSearchStartAllowed, peonSearchTermsAllowed,
@@ -94,7 +94,7 @@ export function peonSearchCommand(text: string): SearchCommand | undefined {
 export const namesPeonSearch = (text: string) => /^(?:(?:confirm|cancel) )?peon job search(?:\s|$)/i.test(text.trim()) && !!peonSearchCommand(text);
 
 export async function peonSearchCurrentOwner(tx: SQL, accounts: SearchAccounts, owner: MemberCommandOwner): Promise<boolean> {
-  if (owner.app.id !== "peon") return false;
+  if (!isBusinessDomain(owner.app.id)) return false;
   // The signed runtime already holds the app state lock. Match the staff hold and phone-change owner order.
   const [locked] = await tx<{ id: string }[]>`select person.id::text as id from platform.people person
     join platform.phone_identities phone on phone.person_id=person.id and phone.e164=${owner.e164} and phone.hold is null

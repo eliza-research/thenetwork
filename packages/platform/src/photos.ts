@@ -15,10 +15,11 @@ import {
   canRecordUploadBytes, canRecordUploadDiscard, canRecordUploadRow, canReserveRow, canScreenFile,
   initial as photoChangeInitial, photoChangeStaleMs, photoHoldAllowed, ratingHoldAllowed, type PhotoChange, step as stepPhotoChange, unfinishedPhotoDue,
 } from "../../core/src/generated/photoRetention.ts";
+import { domainAllowsPhotos } from "../../core/src/generated/memberDomains.ts";
 import { canBeMatched } from "../../core/src/policy.ts";
 import { effectiveAgeAt } from "./age.ts";
 import { ageFloorColumns, ageStandingOf, PgPeopleStore } from "./pg-store.ts";
-import type { AppId } from "./apps.ts";
+import { isDatingDomain, type AppId } from "./apps.ts";
 import { readCapped, readCappedText } from "./body.ts";
 import type { MembershipState, PeopleStore } from "./store.ts";
 import type { AppearanceRater, AppearanceScore, RatingSubject } from "../../engine/src/packs/slop/appearance.ts";
@@ -294,6 +295,14 @@ export function photoStorageFromEnv(env: Record<string, string | undefined> = pr
 type PhotoAdmission = (tx?: SQL) => Promise<PhotoRefusal | undefined>;
 interface UnfinishedPhoto { row: PhotoRow; reserved: boolean; hidden: boolean; changedAt: number }
 export interface PhotoHolder { personId: string; app: AppId }
+export function photoSha256Hex(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function isMissingBannedMediaTable(error: unknown): boolean {
+  return (error as { code?: unknown } | null)?.code === "42P01";
+}
+
 export interface PhotoStore {
   reserve(r: PhotoRow, admit: PhotoAdmission): Promise<PhotoRefusal | undefined>;
   confirm(row: PhotoRow, at: number, admit: PhotoAdmission): Promise<boolean>;
@@ -304,10 +313,13 @@ export interface PhotoStore {
   unfinished(limit: number): Promise<UnfinishedPhoto[]>;
   holders(limit: number, at: number): Promise<PhotoHolder[]>;
   setLabel(personId: string, app: AppId, id: string, label: string | null): Promise<PhotoLabelResult>;
+  isBannedMediaHash?(sha256Hex: string, tx?: SQL): Promise<boolean>;
+  banMediaHashes?(hashes: readonly string[], personId: string | null, at: number, tx?: SQL): Promise<number>;
 }
 interface MemoryPhotoRow extends PhotoRow { storedAt: number | null; hiddenAt: number | null }
 export class MemoryPhotoStore implements PhotoStore {
   readonly rows = new Map<string, MemoryPhotoRow>();
+  readonly bannedMediaHashes = new Map<string, { personId: string | null; bannedAt: number }>();
   private readonly locks = new Map<string, Promise<unknown>>();
   private async locked<T>(personId: string, fn: () => Promise<T>): Promise<T> {
     const before = this.locks.get(personId) ?? Promise.resolve();
@@ -370,6 +382,19 @@ export class MemoryPhotoStore implements PhotoStore {
       r.label = label;
       return "ok";
     });
+  }
+  async isBannedMediaHash(sha256Hex: string): Promise<boolean> {
+    return this.bannedMediaHashes.has(sha256Hex.toLowerCase());
+  }
+  async banMediaHashes(hashes: readonly string[], personId: string | null, at: number): Promise<number> {
+    let added = 0;
+    for (const raw of hashes) {
+      const hex = raw.trim().toLowerCase();
+      if (!hex) continue;
+      if (!this.bannedMediaHashes.has(hex)) added++;
+      this.bannedMediaHashes.set(hex, { personId, bannedAt: at });
+    }
+    return added;
   }
 }
 const photoRow = (r: Record<string, any>): PhotoRow => ({
@@ -471,6 +496,37 @@ export class PgPhotoStore implements PhotoStore {
       after = { personId: last.holder_id, app: last.holder_app };
     }
   }
+  async isBannedMediaHash(sha256Hex: string, tx?: SQL): Promise<boolean> {
+    const hex = sha256Hex.trim().toLowerCase();
+    if (!hex) return false;
+    const db = tx ?? this.sql;
+    try {
+      const [row] = await db<{ hit: number }[]>`select 1 as hit from platform.banned_media_hashes where sha256_hex = ${hex} limit 1`;
+      return !!row;
+    } catch (e) {
+      if (isMissingBannedMediaTable(e)) return false;
+      throw e;
+    }
+  }
+  async banMediaHashes(hashes: readonly string[], personId: string | null, at: number, tx?: SQL): Promise<number> {
+    const clean = [...new Set(hashes.map(h => h.trim().toLowerCase()).filter(Boolean))];
+    if (!clean.length) return 0;
+    const db = tx ?? this.sql;
+    let written = 0;
+    try {
+      for (const hex of clean) {
+        const res = await db`insert into platform.banned_media_hashes (sha256_hex, person_id, banned_at)
+          values (${hex}, ${personId}, ${at})
+          on conflict (sha256_hex) do update set person_id = coalesce(platform.banned_media_hashes.person_id, excluded.person_id)
+          returning sha256_hex`;
+        if (res.length) written++;
+      }
+    } catch (e) {
+      if (isMissingBannedMediaTable(e)) return 0;
+      throw e;
+    }
+    return written;
+  }
 }
 
 export type PhotoRefusal = "photos_off" | "app_not_allowed" | "consent_required" | "adults_only" | "not_verified" | "banned" | "too_large" | "bad_type" | "bad_image" | "too_many" | "not_found" | "not_member" | "photo_set_changed";
@@ -508,7 +564,16 @@ export class PhotoService {
   private async adultNow(people: PeopleStore, personId: string): Promise<{ live: boolean; adult: boolean }> {
     const standing = await people.ageStanding(personId, null);
     const live = !!standing.person && standing.person.deletedAt === null;
-    return { live, adult: live && canBeMatched(effectiveAgeAt(standing, this.now())) };
+    const age = effectiveAgeAt(standing, this.now());
+    return { live, adult: live && age !== undefined && canBeMatched(age) && domainAllowsPhotos("Dating", age) };
+  }
+
+  private async photoAppAllowed(personId: string, app: AppId, tx?: SQL): Promise<boolean> {
+    if (isDatingDomain(app)) return true;
+    if (app !== "ntwrk") return false;
+    const people = tx ? new PgPeopleStore(tx) : this.o.people;
+    const domains = await people.listMemberDomains(personId);
+    return domains.some(d => d.domain === "dating" && d.enabled);
   }
 
   async adult(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
@@ -521,15 +586,16 @@ export class PhotoService {
 
   async mayTake(personId: string, app: AppId, tx?: SQL): Promise<PhotoRefusal | undefined> {
     if (!this.o.storage) return "photos_off";
-    if (!PHOTO_APPS.includes(app)) return "app_not_allowed";
+    if (!(await this.photoAppAllowed(personId, app, tx))) return "app_not_allowed";
     if (await (this.o.banned?.(personId, tx) ?? Promise.resolve(false))) return "banned";
     return this.adult(personId, app, tx);
   }
 
   async upload(personId: string, app: AppId, input: Uint8Array, consentVersion: string | undefined, holderRefused?: () => Promise<boolean>, batchId: string = newPhotoBatchId()): Promise<PhotoResult<{ id: string }>> {
     if (!this.o.storage) return { ok: false, reason: "photos_off" };
+    const appAllowed = await this.photoAppAllowed(personId, app);
     let change = stepPhotoChange(photoChangeInitial, {
-      type: "beginUpload", appAllowed: PHOTO_APPS.includes(app), consentCurrent: consentVersion === PHOTO_CONSENT.version,
+      type: "beginUpload", appAllowed, consentCurrent: consentVersion === PHOTO_CONSENT.version,
     });
     if (change.phase === "UnsupportedApp") return { ok: false, reason: "app_not_allowed" };
     if (change.phase === "ConsentMissing") return { ok: false, reason: "consent_required" };
@@ -551,8 +617,16 @@ export class PhotoService {
     const id = newPhotoId();
     const key = randomBytes(24).toString("hex");
     if (!/^[a-f0-9]{32}$/.test(batchId)) throw new Error("bad photo batch id");
-    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: createHash("sha256").update(bytes).digest("hex"), consentVersion: PHOTO_CONSENT.version, createdAt: this.now(), label: null, batchId };
-    const reserved = await this.o.meta.reserve(row, tx => this.ratingRefusal(personId, app, undefined, tx));
+    const rawHash = photoSha256Hex(input);
+    const cleanHash = photoSha256Hex(bytes);
+    const hashBanned = async (tx?: SQL): Promise<boolean> => {
+      if (!this.o.meta.isBannedMediaHash) return false;
+      if (await this.o.meta.isBannedMediaHash(cleanHash, tx)) return true;
+      return rawHash !== cleanHash && (await this.o.meta.isBannedMediaHash(rawHash, tx));
+    };
+    if (await hashBanned()) return { ok: false, reason: "banned" };
+    const row: PhotoRow = { id, personId, app, storageKey: key, contentType: type, bytes: bytes.length, sha256: cleanHash, consentVersion: PHOTO_CONSENT.version, createdAt: this.now(), label: null, batchId };
+    const reserved = await this.o.meta.reserve(row, async tx => (await this.ratingRefusal(personId, app, undefined, tx)) ?? ((await hashBanned(tx)) ? "banned" : undefined));
     change = stepPhotoChange(change, { type: "reserveRow", admitted: reserved === undefined });
     if (!canRecordUploadBytes(change)) return { ok: false, reason: reserved ?? "not_member" };
     await this.o.storage.put(key, bytes, type);
@@ -657,6 +731,14 @@ export class PhotoService {
   async remove(personId: string, app: AppId, id: string): Promise<boolean> {
     const [row] = await this.o.meta.hide(personId, this.now(), { app, id });
     return row?.id === id ? this.erasePhoto(row, personId, app, true) : false;
+  }
+
+  async banMediaForPerson(personId: string, tx?: SQL): Promise<number> {
+    if (!this.o.meta.banMediaHashes) return 0;
+    const rows = await (tx ? new PgPhotoStore(tx) : this.o.meta).list(personId);
+    const hashes = rows.map(r => r.sha256).filter(Boolean);
+    if (!hashes.length) return 0;
+    return this.o.meta.banMediaHashes(hashes, personId, this.now(), tx);
   }
 
   async deleteFor(personId: string, app?: AppId, ownerLocked: boolean | { personLocked?: boolean } = false): Promise<number> {

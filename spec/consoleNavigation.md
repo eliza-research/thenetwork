@@ -441,18 +441,18 @@ pure def sometimesDrawerCollapsed(nav: ConsoleNav): bool = onAppPage(nav) and no
 
 ### The filter bar dims the filters that do not apply to the open tab
 
-The review tab uses the borough, members and origin filters. The feed uses all but the state filter. The pipeline uses every filter. The runs tab uses only the range. The safety and requests tabs use the range, borough and members filters. The metrics tab uses the range, borough and origin filters. The lab, config and game tabs use no filter. While the drawer is open, the filter bar dims each filter that the tab that shows does not use. While the drawer is collapsed, no filter is dimmed.
+The review tab uses the borough, members, origin and domains filters. The feed uses all but the state filter. The pipeline uses every filter. The runs tab uses the range and domains filters. The safety and requests tabs use the range, borough, members and domains filters. The metrics tab uses the range, borough, origin and domains filters. The lab, config and game tabs use no filter. While the drawer is open, the filter bar dims each filter that the tab that shows does not use. While the drawer is collapsed, no filter is dimmed.
 
 ```quint
-type FilterKey = RangeKey | BoroughKey | MembersKey | OriginKey | StateKey
+type FilterKey = RangeKey | BoroughKey | MembersKey | OriginKey | StateKey | DomainsKey
 
 pure def filterApplies(tab: DrawerTab, filterKey: FilterKey): bool =
-  if (tab == ReviewTab) (filterKey == BoroughKey or filterKey == MembersKey or filterKey == OriginKey)
+  if (tab == ReviewTab) (filterKey == BoroughKey or filterKey == MembersKey or filterKey == OriginKey or filterKey == DomainsKey)
   else if (tab == FeedTab) filterKey != StateKey
   else if (tab == PipelineTab) true
-  else if (tab == EngineTab) filterKey == RangeKey
-  else if (tab == SafetyTab or tab == RequestsTab) (filterKey == RangeKey or filterKey == BoroughKey or filterKey == MembersKey)
-  else if (tab == MetricsTab) (filterKey == RangeKey or filterKey == BoroughKey or filterKey == OriginKey)
+  else if (tab == EngineTab) (filterKey == RangeKey or filterKey == DomainsKey)
+  else if (tab == SafetyTab or tab == RequestsTab) (filterKey == RangeKey or filterKey == BoroughKey or filterKey == MembersKey or filterKey == DomainsKey)
+  else if (tab == MetricsTab) (filterKey == RangeKey or filterKey == BoroughKey or filterKey == OriginKey or filterKey == DomainsKey)
   else false
 
 pure def filterDimmed(drawerOpen: bool, tab: DrawerTab, filterKey: FilterKey): bool =

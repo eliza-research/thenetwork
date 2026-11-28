@@ -63,6 +63,10 @@ export function parseDeepVerdict(raw: unknown, attending: string[]): DeepVerdict
   const mp = f.prob("match_probability");
   const rubric = {} as Record<RubricKey, number>;
   for (const k of RUBRIC_KEYS) { const v = f.score(o.rubric?.[k], `rubric.${k}`); if (v !== undefined) rubric[k] = Math.round(v); }
+  const reasoningFirst = f.reasoningFirst(["steelman_for", "steelman_against", "reasoning"]);
+  if (steelmanFor && steelmanAgainst && reasoning && verdict && !reasoningFirst) {
+    f.errs.push("steelman_for, steelman_against, and reasoning must appear before verdict");
+  }
   f.done("schema: ", ", ");
   const thank: Record<string, "yes" | "no" | "unsure"> = {};
   for (const r of attending) {
@@ -76,7 +80,7 @@ export function parseDeepVerdict(raw: unknown, attending: string[]): DeepVerdict
     pass: 3, evidenceReview: str(o.evidence_review), steelmanFor, steelmanAgainst, rubric, wouldThankUs: thank,
     reasoning, citedFacts: f.citedFacts(), verdict: verdict!,
     ...(q && q.question ? { question: q } : {}), matchProbability: mp!, memberWhy: why,
-    reasoningFirst: f.reasoningFirst(["steelman_for", "steelman_against", "reasoning"]),
+    reasoningFirst,
   };
 }
 

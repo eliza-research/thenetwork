@@ -4,7 +4,7 @@ import { laneLimits, laneOffset, type MatchLane } from "../../packages/core/src/
 import { pairValueScale, parityAllowed, standingGap } from "../../packages/core/src/generated/pairValue.ts";
 import { friendsMutuallyOpen, mutuallyOpen } from "../../packages/core/src/generated/mutualOpenness.ts";
 import { cofounderFactsFit } from "../../packages/core/src/generated/cofounderIntent.ts";
-import { resolveConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
+import { configHash, resolveConfig, type EngineConfig, type EngineConfigInput } from "../../packages/engine/src/config.ts";
 import { localEmbed } from "../../packages/engine/src/embed.ts";
 import { canonicalInput, runEngine } from "../../packages/engine/src/engine.ts";
 import { pairReason } from "../../packages/engine/src/filters.ts";
@@ -207,10 +207,23 @@ const mean = (xs: readonly number[]): number => {
   return finite.length ? finite.reduce((t, x) => t + x, 0) / finite.length : NaN;
 };
 
-async function engineGates(pack: AppPack, seed: number, input: EngineInput, truth: PlantedTruth, w: World, s: LaneStats, st: Stated): Promise<void> {
+async function engineGates(
+  pack: AppPack,
+  seed: number,
+  canonical: EngineInput,
+  truth: PlantedTruth,
+  w: World,
+  s: LaneStats,
+  st: Stated,
+  shippedCfg: EngineConfigInput,
+  resolvedShipped: EngineConfig,
+): Promise<void> {
   const lane = s.lane, at = `seed ${seed}`;
-  const shipped = await runEngine(input, shippedConfig(pack, seed), { pack });
-  const greedy = await runEngine(input, greedyConfig(pack, seed), { pack });
+  const greedyCfg = greedyConfig(pack, seed);
+  const shipped = await runEngine(canonical, shippedCfg, { pack });
+  const greedy = configHash(resolvedShipped) === configHash(resolveConfig(greedyCfg))
+    ? shipped
+    : await runEngine(canonical, greedyCfg, { pack });
   s.runs++;
   s.blockingPairs += greedy.runLog.blockingPairs;
   const logged = shipped.runLog.search;
@@ -508,11 +521,13 @@ export async function matchingBlock(b: Block, o: { quick: boolean; matchingPack?
       for (const seed of plan.seeds) for (const s of lanes) {
         const mixed = n === plan.engineN && seed === plan.seeds[0] && pack.id === "ntwrk" && s.lane === "Intro";
         const { input, truth } = plantedEngineInput({ seed: `matching-${seed}`, n, lanes: mixed ? ["Intro", "Friend"] : [s.lane], app: pack.id });
-        // runEngine canonicalizes its input the same way, so this World holds the run's profiles.
-        const w = new World(canonicalInput(input), resolveConfig(shippedConfig(pack, seed)), localEmbed, pack);
-        const st = statedOf(input, s.lane);
+        const canonical = canonicalInput(input);
+        const shippedCfg = shippedConfig(pack, seed);
+        const resolvedShipped = resolveConfig(shippedCfg);
+        const w = new World(canonical, resolvedShipped, localEmbed, pack);
+        const st = statedOf(canonical, s.lane);
         exactness(w, s, `N ${n} seed ${seed}`, st);
-        if (n === plan.engineN) await engineGates(pack, seed, input, truth, w, s, st);
+        if (n === plan.engineN) await engineGates(pack, seed, canonical, truth, w, s, st, shippedCfg, resolvedShipped);
       }
     }
     for (const seed of plan.seeds) for (const s of lanes) {

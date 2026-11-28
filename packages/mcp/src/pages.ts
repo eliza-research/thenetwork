@@ -8,6 +8,7 @@ import { brandIdFor } from "../../ui/src/brand/landing.ts";
 import { AuthCodeView, type CodeFieldError } from "../../ui/src/components/AuthCodeView.tsx";
 import { type AuthMessage, AuthMessageView } from "../../ui/src/components/AuthMessageView.tsx";
 import { AuthPhoneView, type PhoneFieldError } from "../../ui/src/components/AuthPhoneView.tsx";
+import { AuthShell } from "../../ui/src/components/AuthShell.tsx";
 import { AuthSignupView, type AuthSignupViewProps } from "../../ui/src/components/AuthSignupView.tsx";
 import { ConnectedAssistantsView } from "../../ui/src/components/ConnectedAssistantsView.tsx";
 import { ConsentView } from "../../ui/src/components/ConsentView.tsx";
@@ -79,11 +80,22 @@ export function phonePage(at: PageApp, rid: string, o: PhonePageOptions = {}) {
   return respond(app, "Sign in", view, { turnstileSiteKey: o.turnstileSiteKey, formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.reply ? 400 : 200 });
 }
 
-export function codePage(at: PageApp, rid: string, last4: string, o: { reply?: Extract<Reply, "ReplyCodeRejected">; redirectOrigin?: string } = {}) {
+export type CodeReply = Extract<Reply, "ReplyCode" | "ReplyCodeRejected" | "ReplyCodeResent" | "ReplyCodeResendRateLimited" | "ReplyCodeResendFailed">;
+
+const codeReplyStatus: Record<CodeReply, number> = {
+  ReplyCode: 200,
+  ReplyCodeResent: 200,
+  ReplyCodeRejected: 400,
+  ReplyCodeResendRateLimited: 429,
+  ReplyCodeResendFailed: 503,
+};
+
+export function codePage(at: PageApp, rid: string, last4: string, o: { reply?: CodeReply; redirectOrigin?: string } = {}) {
   const { app, siteOrigin } = pageAppOf(at);
-  const shown = pageFor(o.reply ?? "ReplyCode");
+  const reply = o.reply ?? "ReplyCode";
+  const shown = pageFor(reply);
   const view = h(AuthCodeView, { app: appKeyOf(app), siteOrigin, rid, last4, fieldError: shown.fieldError as CodeFieldError });
-  return respond(app, "Enter your code", view, { formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: o.reply ? 400 : 200 });
+  return respond(app, "Enter your code", view, { formTargets: o.redirectOrigin ? [o.redirectOrigin] : [], status: codeReplyStatus[reply] });
 }
 
 /** One pending OAuth connection, not an account page or a sign-in destination. */
@@ -103,6 +115,11 @@ export type SignupPrefill = NonNullable<AuthSignupViewProps["prefill"]>;
 export function signupPage(at: PageApp, rid: string, options: SignupPageOptions) {
   const { app, siteOrigin } = pageAppOf(at);
   return respond(app, "Confirm your signup", h(AuthSignupView, { app: appKeyOf(app), siteOrigin, rid, ...options }), { status: options.error || options.birthdateError ? 400 : 200 });
+}
+
+export function signupCompletePage(at: PageApp, text = "Go back to your assistant and continue. You don't need to reconnect.") {
+  const { app, siteOrigin } = pageAppOf(at);
+  return respond(app, "You're signed up", h(AuthShell, { app: appKeyOf(app), siteOrigin, title: "You're signed up" }, h("p", null, text)), { status: 200 });
 }
 
 const messageReplies = {

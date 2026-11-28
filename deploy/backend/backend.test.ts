@@ -25,6 +25,8 @@ import type { NetworkService } from "../../packages/network/service/service.ts";
 import type { BackendBoot } from "../../packages/core/src/generated/bootPolicy.ts";
 import { createPublicApi } from "../../packages/platform/src/api.ts";
 import { MemoryPeopleStore } from "../../packages/platform/src/store.ts";
+import { buildMeetupIcs } from "../../packages/core/src/ics.ts";
+import { signCalendarToken, verifyCalendarToken } from "../../packages/core/src/runtime/calendar-token.ts";
 
 const SECRET = "s".repeat(40);
 const DEPLOYED = {
@@ -339,6 +341,7 @@ describe("logs", () => {
 
   test("route labels carry no query string and no ids", () => {
     expect(routeLabel("/api/auth/otp/start")).toBe("/api/auth/otp");
+    expect(routeLabel("/cal/eyJhIjoic2xvcCJ9.secret-sig.ics")).toBe("/cal/:token.ics");
     expect(routeLabel("/review/opp_123")).toBe("/review/:id");
     expect(routeLabel("/webhooks/blooio/slop")).toBe("/webhooks/blooio/slop");
   });
@@ -472,10 +475,10 @@ describe("routing", () => {
     }
   });
 
-  test("deployed, an unsigned request names no site: /api and /mcp answer 421 (audit: Host: slop.date was served as slop.date)", async () => {
+  test("deployed, an unsigned request names no site: /api, /cal and /mcp answer 421 (audit: Host: slop.date was served as slop.date)", async () => {
     const { svc, calls } = fakeService();
     const b = createBackend({ svc, config: cfg(), log: silent, ping: async () => true, mcp: async () => new Response("ok") });
-    for (const p of ["/api/app", "/mcp", "/oauth/authorize"]) {
+    for (const p of ["/api/app", "/cal/body.sig.ics", "/mcp", "/oauth/authorize"]) {
       const r = await b.publicFetch(new Request(`https://network-backend.up.railway.app${p}`, { headers: { host: "slop.date" } }));
       expect([p, r.status, (await r.json()).error]).toEqual([p, 421, "edge_required"]);
     }
@@ -483,6 +486,74 @@ describe("routing", () => {
     // Locally (dev), the site ports name their app without a router.
     const local = createBackend({ svc, config: cfg({ deployed: false }), log: silent, ping: async () => true });
     expect((await local.publicFetch(new Request("http://127.0.0.1:8790/api/app", { headers: { host: "slop.date" } }))).status).toBe(200);
+    expect((await local.publicFetch(new Request("http://127.0.0.1:8790/cal/body.sig.ics", { headers: { host: "slop.date" } }))).status).toBe(200);
+  });
+
+  test("GET /cal/:token.ics routes through publicFetch, returns 200 text/calendar for a valid signed token, 404 for invalid tokens, and 405 for non-read methods", async () => {
+    const { handle } = await import("../router.ts");
+    const { svc, calls } = fakeService();
+    const lines: string[] = [];
+    const nowMs = Date.UTC(2026, 9, 8, 15, 0, 0);
+    const calSecret = "calendar-test-secret-key-0123456789";
+    const validToken = signCalendarToken({ app: "slop", oppId: "opp-cal-1", memberId: "mem-1", exp: nowMs + 3_600_000, rev: 0 }, calSecret);
+
+    svc.publicFetch = async (req) => {
+      const pathname = new URL(req.url).pathname;
+      calls.push({ kind: "public", host: req.headers.get("host"), path: pathname, ip: req.headers.get(CLIENT_IP) });
+      const match = /^\/cal\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\.ics$/.exec(pathname);
+      if (!match) return Response.json({ ok: false, error: "not_found" }, { status: 404 });
+      const payload = verifyCalendarToken(match[1]!, calSecret, nowMs);
+      if (!payload) return Response.json({ ok: false, error: "not_found" }, { status: 404, headers: { "cache-control": "private, no-store" } });
+      const ics = buildMeetupIcs({
+        uid: "caltest1234@slop.date",
+        dtstampMs: nowMs,
+        startMs: nowMs + 1_800_000,
+        summary: "Slop meetup",
+        location: "Devocion, Williamsburg",
+      });
+      return new Response(ics, {
+        status: 200,
+        headers: {
+          "content-type": "text/calendar; charset=utf-8",
+          "content-disposition": 'inline; filename="meetup.ics"',
+          "cache-control": "private, no-store",
+        },
+      });
+    };
+
+    const b = createBackend({ svc, config: cfg(), log: jsonLogger(s => lines.push(s)), ping: async () => true, now: () => nowMs });
+    const env = { ASSETS: { fetch: async () => new Response("asset") }, BACKEND_ORIGIN: "https://api.example.test", APP_ID: "slop", SITE_HOST: "slop.date", PLATFORM_PROXY_SECRET: SECRET };
+    const forward = (url: string | URL | Request, init?: RequestInit) => b.publicFetch(new Request(url, init));
+
+    const okRes = await handle(new Request(`https://slop.date/cal/${validToken}.ics`, { headers: { "cf-connecting-ip": "203.0.113.21" } }), env, forward as typeof fetch, () => nowMs);
+    expect(okRes.status).toBe(200);
+    expect(okRes.headers.get("content-type")).toBe("text/calendar; charset=utf-8");
+    expect(okRes.headers.get(BUILD_HEADER)).toBe("test-build");
+    const icsBody = await okRes.text();
+    expect(icsBody).toContain("BEGIN:VCALENDAR");
+    expect(icsBody).toContain("BEGIN:VEVENT");
+    expect(calls.at(-1)).toEqual({ kind: "public", host: "slop.date", path: `/cal/${validToken}.ics`, ip: "203.0.113.21" });
+    expect(lines.join("\n")).toContain('"route":"/cal/:token.ics"');
+    expect(lines.join("\n")).not.toContain(validToken);
+
+    const headRes = await handle(new Request(`https://slop.date/cal/${validToken}.ics`, { method: "HEAD", headers: { "cf-connecting-ip": "203.0.113.21" } }), env, forward as typeof fetch, () => nowMs);
+    expect(headRes.status).toBe(200);
+    expect(headRes.headers.get("content-type")).toBe("text/calendar; charset=utf-8");
+
+    const invalidRes = await handle(new Request("https://slop.date/cal/tampered.token.ics", { headers: { "cf-connecting-ip": "203.0.113.21" } }), env, forward as typeof fetch, () => nowMs);
+    expect(invalidRes.status).toBe(404);
+    expect(await invalidRes.json()).toEqual({ ok: false, error: "not_found" });
+
+    const beforeBad = calls.length;
+    const postRes = await handle(new Request(`https://slop.date/cal/${validToken}.ics`, { method: "POST", headers: { "cf-connecting-ip": "203.0.113.21" } }), env, forward as typeof fetch, () => nowMs);
+    expect(postRes.status).toBe(405);
+    expect(await postRes.json()).toEqual({ ok: false, error: "method_not_allowed" });
+
+    for (const badPath of ["/cal/", "/cal/foo.txt", "/cal/..ics", "/cal/a..b.ics", "/cal/sub/a.b.ics"]) {
+      const r = await b.publicFetch(new Request(`http://api.example.test${badPath}`, { headers: await signed({ host: "slop.date", path: badPath, now: nowMs }) }));
+      expect([badPath, r.status]).toEqual([badPath, 404]);
+    }
+    expect(calls.length).toBe(beforeBad);
   });
 
   test("the staff API never answers on the public port", async () => {

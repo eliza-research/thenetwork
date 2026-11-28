@@ -96,7 +96,7 @@ const NOTICE = {
   swapFailed: "I can't swap numbers right now.",
   late: "I'll pass that on when it's a reasonable hour for them.",
   panicHalted: "Messaging for this meetup has been stopped.",
-  panicExitConfirm: "Got it — I've stopped messaging for this meetup right away. If you're ever in danger, call 911 first.",
+  panicExitConfirm: "Got it — head out whenever you feel ready, no explanation needed. Text me once you're somewhere safe; if you're ever in danger, call 911 first.",
 };
 const SEND_REFUSED = "send:refused";
 const undeliveredNotice = (kind: RelayItem["kind"]) => (kind === "contact_share" ? NOTICE.swapFailed : NOTICE.undelivered);
@@ -113,13 +113,13 @@ export class RelayDesk {
   private s: RelayState = emptyRelayState();
   constructor(private readonly host: RelayHost) {}
 
-  exportState(): RelayState {
+  exportState(clone = true): RelayState {
     const base: RelayState = { threads: this.s.threads, log: this.s.log, swaps: this.s.swaps };
     if (this.s.panics?.length) base.panics = this.s.panics;
-    return JSON.parse(JSON.stringify(base)) as RelayState;
+    return clone ? (JSON.parse(JSON.stringify(base)) as RelayState) : base;
   }
-  importState(s: RelayState | undefined) {
-    const x = s ? (JSON.parse(JSON.stringify(s)) as RelayState) : emptyRelayState();
+  importState(s: RelayState | undefined, clone = true) {
+    const x = s ? (clone ? (JSON.parse(JSON.stringify(s)) as RelayState) : s) : emptyRelayState();
     this.s = {
       threads: x.threads ?? [],
       log: x.log ?? [],
@@ -144,9 +144,10 @@ export class RelayDesk {
         panics.push({ memberId, matchId: id, at: now });
       }
     }
+    const scopeMatch = (id: string) => matchId === undefined || id === matchId;
     const before = this.s.swaps.length;
-    this.s.swaps = this.s.swaps.filter(x => x.from !== memberId && x.to !== memberId);
-    const cancelledSwaps = (before - this.s.swaps.length) + this.cancelSwaps(memberId);
+    this.s.swaps = this.s.swaps.filter(x => !((x.from === memberId || x.to === memberId) && scopeMatch(x.matchId)));
+    const cancelledSwaps = (before - this.s.swaps.length) + this.cancelSwaps(memberId, matchId);
     this.host.onPanicExit?.(memberId, targetIds);
     return { haltedMatches: targetIds, cancelledSwaps, notice: NOTICE.panicExitConfirm };
   }
@@ -342,12 +343,13 @@ export class RelayDesk {
     return { itemId: ask.itemId, decision: "refused", reason: NOTICE.swapFailed };
   }
 
-  cancelSwaps(from: MemberId): number {
+  cancelSwaps(from: MemberId, matchId?: string): number {
+    const scopeMatch = (id: string) => matchId === undefined || id === matchId;
     const before = this.s.swaps.length;
-    this.s.swaps = this.s.swaps.filter(x => x.from !== from);
+    this.s.swaps = this.s.swaps.filter(x => !(x.from === from && scopeMatch(x.matchId)));
     let changed = before - this.s.swaps.length;
     this.s.log = this.s.log.map(record => {
-      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
+      if (record.kind !== "contact_share" || record.decision !== "pass" || (record.from !== from && record.to !== from) || !scopeMatch(record.opportunityId) || record.reasons.includes(SWAP_WITHDRAWN)) return record;
       changed++;
       return { ...record, reasons: [...record.reasons, SWAP_WITHDRAWN].sort() };
     });
@@ -392,9 +394,23 @@ export class RelayDesk {
 
   forget(id: MemberId) {
     this.s.swaps = this.s.swaps.filter(x => x.from !== id && x.to !== id);
-    this.s.panics = (this.s.panics ?? []).filter(p => p.memberId !== id);
+    const remainingPanics = (this.s.panics ?? []).filter(p => p.memberId !== id);
+    if (remainingPanics.length) this.s.panics = remainingPanics;
+    else delete this.s.panics;
     for (const t of this.s.threads) if (t.members.includes(id)) t.messages = [];
   }
+}
+
+export function isPanicHaltedState(
+  relay: Pick<RelayState, "panics"> | undefined,
+  memberIds: readonly MemberId[],
+  matchId?: string
+): boolean {
+  const panics = relay?.panics;
+  if (!panics?.length) return false;
+  return panics.some(
+    p => memberIds.includes(p.memberId) && (matchId === undefined || p.matchId === "*" || p.matchId === matchId)
+  );
 }
 
 export function checkArrivalRelaySafety(input: Parameters<typeof evaluateArrivalRelaySafe>[0]): boolean {

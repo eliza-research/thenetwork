@@ -335,10 +335,12 @@ export interface BackendDeps {
 }
 
 const MCP_PATH = /^\/(mcp(\/.*)?|oauth\/.*|\.well-known\/oauth-[a-z-]+(\/.*)?)$/;
+const CALENDAR_ICS_PATH = /^\/cal\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.ics$/;
 const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
 
 export function routeLabel(path: string): string {
   if (path.startsWith("/api/")) return path.split("/").slice(0, 4).join("/");
+  if (path.startsWith("/cal/")) return "/cal/:token.ics";
   if (path.startsWith("/webhooks/")) return path.split("/").slice(0, 4).join("/");
   if (path.startsWith("/review/")) return "/review/:id";
   return path.length > 64 ? path.slice(0, 64) : path;
@@ -396,6 +398,12 @@ export function createBackend(d: BackendDeps) {
         const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
         app = n.app;
         res = c.deployed && !n.edge ? json(421, { ok: false, error: "edge_required" }) : await track(svc.publicFetch(n.req, server));
+      } else if (CALENDAR_ICS_PATH.test(path)) {
+        const n = await normalizeEdge(req, c.proxySecret, c.hostMap, (d.now ?? Date.now)(), c.proxySecretPrevious);
+        app = n.app;
+        if (c.deployed && !n.edge) res = json(421, { ok: false, error: "edge_required" });
+        else if (req.method !== "GET" && req.method !== "HEAD") res = json(405, { ok: false, error: "method_not_allowed" });
+        else res = await track(svc.publicFetch(n.req, server));
       } else if (isBlooioWebhookPath(path) && !c.blooioWebhook) {
         res = json(404, { ok: false, error: "webhook_not_served" });
       } else if (isBlooioWebhookPath(path) || INTERNAL_PATHS.has(path)) {

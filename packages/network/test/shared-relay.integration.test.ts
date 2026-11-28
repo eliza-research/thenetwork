@@ -454,30 +454,22 @@ test("negative feedback in the check-in after the meeting ends the relay thread 
 
 test("closing the pair or a recipient STOP after classification and the async dispatch checks prevents relay",async()=>{
   const rt=service.runtimeFor("friends")!;
-  // Classification runs inside the unit: a close waits for it, and the dispatch admission then reads the close.
+  // Classification runs outside the unit lock: a close commits without stalling, and re-entering the unit detects the closed pair.
   clock.advance(11*MINUTE);await fixturePair();
   {
     let release!:()=>void,entered!:()=>void;
     classifyGate=new Promise<void>(resolve=>{release=resolve;});const reached=new Promise<void>(resolve=>{entered=resolve;});classifyEntered=entered;
-    const dispatch=gateDispatch();
     try {
       const request=await open("relay-close-classifier","tell Sam I'll meet them outside");const before=posts;
       const pending=post(RELAY_PATH,request);await Promise.race([reached,pending.then(async r=>{throw new Error(`answered before classification: ${await r.clone().text()}`);})]);
       let closedEarly=false;const closing=fixturePair(true).then(()=>{closedEarly=true;});
-      await sleep(50);expect(closedEarly).toBe(false);
-      release();
-      const reachedDispatch=await Promise.race([dispatch.atGate.then(()=>true),pending.then(()=>false)]);
-      expect(await waitFor(pairClosed)).toBe(true);
-      dispatch.resume();
-      expect(await(await pending).json()).toMatchObject({decision:"pass",delivered:false});
+      expect(await waitFor(async()=>closedEarly)).toBe(true);
       await closing;
-      const [outbound]=await sql`select o.status from platform.inbound i
-        cross join lateral jsonb_each(i.action_receipts) receipt
-        join platform.outbound o on o.id=receipt.value->'response'->>'outboundId'
-        where i.id=${`msg:${request.channel}:${request.messageId}`}`;
-      expect(outbound?.status).toBe(reachedDispatch?"suppressed_ineligible":"expired");
+      expect(await waitFor(pairClosed)).toBe(true);
+      release();
+      expect(await(await pending).json()).toMatchObject({decision:"block",delivered:false});
       expect(posts).toBe(before);
-    } finally {classifyGate=undefined;classifyEntered=undefined;release?.();dispatch.resume();}
+    } finally {classifyGate=undefined;classifyEntered=undefined;release?.();}
   }
   for(const scenario of ['close','recipient-stop'] as const) {
     clock.advance(11*MINUTE);await fixturePair();

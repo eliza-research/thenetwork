@@ -10,24 +10,24 @@ import type { Category, City } from "@thenetwork/core";
 import { getCity, listCities } from "../../../packages/core/src/cities.ts";
 import { NEIGHBORHOODS } from "@thenetwork/network/geo";
 import {
-  Alert, AppSwitcher, BrandMark, Button, ConsoleShell, DataCell, DataTable, FilterBar, FilterBarFocus, Input, Legend, LegendItem, ModeIndicator, Popover, PopoverContent,
+  Alert, BrandMark, Button, Checkbox, ConsoleShell, DataCell, DataTable, FilterBar, FilterBarFocus, Input, Label, Legend, LegendItem, ModeIndicator, Popover, PopoverContent,
   PopoverTrigger, ProposeTray, SearchBox, Segments, Select, SelectItem, SignInNotice, Spinner, TableRow, Toast, Toaster, TopBar,
   type DataColumn, type FilterBarItem,
 } from "@thenetwork/ui";
 import { ntwrkBrand } from "../../../packages/core/src/generated/brandIdentity.ts";
 import {
-  backShown, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, switcherShown, tabNow, viewFor,
+  backShown, canOpenPerson, canTypeQuery, type ConsoleNav, conversationSearchShown, type HitGroups, hitGroups, modeSwitchShown, searchShown, tabNow, viewFor,
 } from "../../../packages/core/src/generated/consoleNavigation.ts";
 import { canReceiveProposalAnswer, canSubmitProposal, groupProposal, initial as initialWorkspace, proposalFormShown, receiveProposalAnswer, submitProposal, trayShown, type TrayPhase } from "../../../packages/core/src/generated/consoleWorkspace.ts";
 import { signInView } from "../../../packages/core/src/generated/staffSignIn.ts";
 import type { EnvInfo, Mode, SearchHit } from "../src/types.ts";
-import { AppPage } from "./apps.tsx";
+import { AppPage, PersonLookup } from "./apps.tsx";
 import { Drawer } from "./drawer.tsx";
 import { EDGE_STYLE, GraphView } from "./graph.ts";
 import { MapView } from "./map.ts";
 import { Inspector } from "./panels.tsx";
 import {
-  DAY, EDGE_TYPES, HOUR, LAUNCH_CITY_IDS, MEMBER_FILTERS, originLabel, RANGES, STATE_GROUPS, store, useStore,
+  DAY, DOMAIN_IDS, DOMAIN_LABELS, EDGE_TYPES, HOUR, LAUNCH_CITY_IDS, MEMBER_FILTERS, originLabel, RANGES, STATE_GROUPS, store, useStore,
   type ColorLens, type MemberFilter, type RangeKey, type StateGroup,
 } from "./store.ts";
 import { consoleNav, humanize, localDate, localTime, NAV_FILTER, pickMember, staffSignIn, staffView, stamp } from "./ui.tsx";
@@ -95,23 +95,23 @@ function ConsoleBrand() {
   return <><BrandMark logo={ntwrkBrand.logo} className="size-6" /> Observatory</>;
 }
 
-/** The short banner of the app and the data, such as "SLOP · SIM · seed 1" or "NTWRK · PROD · read-only"; the full label goes on hover. */
+/** The short banner of the data mode, such as "SIM · seed 1", "LOCAL DB · read-only", or "PROD · read-only"; the full label goes on hover. */
 function banner(env?: EnvInfo): { text: string; title: string } {
   if (!env) return { text: "…", title: "" };
-  const app = env.app ? `${env.app.toUpperCase()} · ` : "";
   const title = [env.label, env.dataset, env.database, env.appIsolation === "rls_role" ? "app read role" : env.appIsolation === "app_filter" ? "app filter" : "", env.piiRevealed ? "PII revealed" : "", env.authRequired ? "Token required" : ""].filter(Boolean).join(" · ");
-  if (env.capabilities.canStep) { const seed = /seed (\d+)/.exec(env.label)?.[1]; return { text: `${app}${seed ? `SIM · seed ${seed}` : "SIM"}`, title }; }
+  if (env.capabilities.canStep) { const seed = /seed (\d+)/.exec(env.label)?.[1]; return { text: seed ? `SIM · seed ${seed}` : "SIM", title }; }
   const where = /^LOCAL/.test(env.label) ? "LOCAL DB" : /^PRODUCTION/.test(env.label) ? "PROD" : /not connected/i.test(env.label) ? "NOT CONNECTED" : env.label.split(" · ")[0]!;
-  return { text: `${app}${where}${/not connected/i.test(env.label) ? "" : " · read-only"}${env.piiRevealed ? " · PII" : ""}`, title };
+  return { text: `${where}${/not connected/i.test(env.label) ? "" : " · read-only"}${env.piiRevealed ? " · PII" : ""}`, title };
 }
 
 function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
   const s = useStore();
   const c = s.clock;
   const canStep = !!s.env?.capabilities.canStep;
-  const b = s.page.kind === "app" ? banner(s.env) : { text: `ALL APPS · ${s.mode === "real" ? "real data" : "simulation"}`, title: "Every app you hold a role for" };
+  const b = s.page.kind === "app" ? banner(s.env) : { text: s.mode === "real" ? "REAL · cross-app" : "SIM", title: "Cross-app safety view" };
   const me = s.me;
   const onApp = searchShown(nav);
+  const crossAppOpen = nav.popoverOpen && s.ui.popover === "cross-app";
   const end = (
     <>
       {onApp && (
@@ -121,6 +121,16 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
         />
       )}
       {onApp && <Search nav={nav} />}
+      {canOpenPerson(nav) && (
+        <Popover open={crossAppOpen} onOpenChange={o => store.setUI({ popover: o ? "cross-app" : null })}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm">Cross-app</Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" aria-label="Cross-app lookup" className="w-96">
+            <PersonLookup />
+          </PopoverContent>
+        </Popover>
+      )}
       {me && (
         <span className="text-sm whitespace-nowrap text-muted-foreground" title={`${me.id} · ${me.via === "sso" ? "single sign-on" : "token"} · ${(me.grants ?? []).map(g => `${g.role}@${g.app}`).join(", ")}`}>
           {(s.rolesHere().length ? s.rolesHere() : me.roles).join(" · ")}
@@ -131,9 +141,6 @@ function ConsoleTopBar({ nav }: { nav: ConsoleNav }) {
   );
   return (
     <TopBar brand={<ConsoleBrand />} end={end}>
-      {switcherShown(nav) && (
-        <AppSwitcher page={nav.page} app={s.app} apps={s.apps().map(a => ({ id: a.id, title: a.domain }))} onSelectApp={id => store.setApp(id)} onOpenAllApps={() => store.setApp("all")} />
-      )}
       {modeSwitchShown(nav) && (
         <Segments aria-label="Mode" value={s.mode} onValueChange={v => store.setMode(v as Mode)} options={[{ value: "game", label: "Game" }, { value: "real", label: "Real" }]} />
       )}
@@ -338,6 +345,19 @@ function ConsoleFilterBar({ nav }: { nav: ConsoleNav }) {
         <div className="flex items-center gap-1.5">
           {choose("City", s.selectedCity, v => store.setCity(v as City | "all"), [["all", "All cities"], ...LAUNCH_CITY_IDS.map(c => [c, getCity(c)?.shortName ?? c.toUpperCase()] as [string, string])])}
           {choose("Zone", f.borough, v => store.setFilters({ borough: v }), [["all", "All zones"], ...s.zones().map(b => [b, b] as [string, string])])}
+        </div>
+      ),
+    },
+    {
+      filterKey: NAV_FILTER.domains, label: "Domains",
+      control: (
+        <div className="flex items-center gap-3">
+          {DOMAIN_IDS.map(d => (
+            <Label key={d} className="font-normal">
+              <Checkbox checked={f.domains[d]} onCheckedChange={v => store.toggleDomain(d, v === true)} />
+              {DOMAIN_LABELS[d]}
+            </Label>
+          ))}
         </div>
       ),
     },

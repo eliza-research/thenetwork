@@ -1,3 +1,4 @@
+import { fenceUntrusted } from "./fence.ts";
 import {
   canApproveExternalEventRsvp,
   canInviteExternalEventAttendee,
@@ -12,8 +13,10 @@ import {
   type InviteExternalEventAttendeeInput,
   type PublishExternalEventInput,
 } from "./generated/externalEventBridge.ts";
-import { canBeMatched } from "./policy.ts";
-import type { LaunchCity } from "./types.ts";
+import { textVariants } from "./guard.ts";
+import { canBeMatched, isMinor, relayMinorAge, relayMinorEstimate } from "./policy.ts";
+import { clampSms, cleanPhrase, formatCrowdExpectation, validateOutboundSms } from "./smsCopy.ts";
+import type { CityId } from "./types.ts";
 
 export const LUMA_API_BASE = "https://public-api.luma.com";
 export const MEETUP_GRAPHQL_ENDPOINT = "https://api.meetup.com/gql-ext";
@@ -34,7 +37,7 @@ export type ExternalRsvpStatus = "approved" | "pending_approval" | "waitlist" | 
 
 export interface ExternalEventDraft {
   id: string;
-  city: LaunchCity;
+  city: CityId;
   platform: ExternalEventPlatform;
   source: ExternalEventSource;
   title: string;
@@ -86,6 +89,8 @@ export interface NormalizedExternalRsvpEvent {
   confirmedAdult18Plus: boolean;
   answeredScreeningQuestion: boolean;
   screeningAnswerText?: string;
+  fencedScreeningAnswer?: string;
+  injectionDetected?: boolean;
   occurredAtIso: string;
 }
 
@@ -104,7 +109,7 @@ export type NormalizedExternalEventWebhook =
 
 export interface PartifulEventKit {
   eventId: string;
-  city: LaunchCity;
+  city: CityId;
   platform: "partiful";
   source: "host_native";
   humanAssistedOnly: true;
@@ -213,8 +218,26 @@ export function checkInviteExternalEventAttendee(input: InviteExternalEventAtten
   return canInviteExternalEventAttendee(input);
 }
 
+function screeningPromptAction(interest: string): string {
+  const lower = interest.toLowerCase();
+  if (/\b(?:tcg|pokemon|mtg|magic|board|chess|game|games|tabletop|d&d|dnd|tennis|pickleball|basketball|volleyball|soccer|mahjong|poker|bridge|trivia)\b/.test(lower)) {
+    return "play or chat about";
+  }
+  if (/\b(?:hik|walk|run|climb|boulder|cycl|bik|trail|park|kayak|sail|surf|yoga|swim|outdoor)\b/.test(lower)) {
+    return "explore or try";
+  }
+  if (/\b(?:cook|bak|food|coffee|tea|din(?:e|ing)|restaurant|tasting|brunch|ramen|taco|pastry|espresso)\b/.test(lower)) {
+    return "make, taste, or chat about";
+  }
+  if (/\b(?:book|read|writ|poetry|film|movie|cinema|art|museum|gallery|photo|music|jazz|concert|ceramic|pottery|paint|knit|craft|theat(?:er|re))\b/.test(lower)) {
+    return "explore or discuss";
+  }
+  return "explore or chat about";
+}
+
 export function buildStandardScreeningQuestions(interest: string): ScreeningQuestionSpec[] {
-  const cleanInterest = interest.trim() || "this meetup";
+  const cleanInterest = interest.replace(/_/g, " ").trim() || "this meetup";
+  const action = screeningPromptAction(cleanInterest);
   return [
     {
       id: "adult_18_plus",
@@ -224,7 +247,7 @@ export function buildStandardScreeningQuestions(interest: string): ScreeningQues
     },
     {
       id: "interest_detail",
-      label: `What are you most into around ${cleanInterest}, or what are you hoping to play/chat about?`,
+      label: `What are you most into around ${cleanInterest}, or what are you hoping to ${action}?`,
       required: true,
       kind: "interest_screening",
     },
@@ -232,6 +255,26 @@ export function buildStandardScreeningQuestions(interest: string): ScreeningQues
 }
 
 const TEXT_ENCODER = new TextEncoder();
+const MAX_CACHED_HMAC_KEYS = 32;
+const hmacKeyCache = new Map<string, Promise<CryptoKey>>();
+
+function getCachedHmacKey(secret: string): Promise<CryptoKey> {
+  const cached = hmacKeyCache.get(secret);
+  if (cached) return cached;
+  if (hmacKeyCache.size >= MAX_CACHED_HMAC_KEYS) {
+    const oldest = hmacKeyCache.keys().next().value;
+    if (oldest !== undefined) hmacKeyCache.delete(oldest);
+  }
+  const keyPromise = crypto.subtle.importKey(
+    "raw",
+    TEXT_ENCODER.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  hmacKeyCache.set(secret, keyPromise);
+  return keyPromise;
+}
 
 function toHex(buf: ArrayBuffer): string {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
@@ -247,15 +290,33 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 async function hmacSha256Hex(secret: string, message: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    TEXT_ENCODER.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"]
-  );
+  const key = await getCachedHmacKey(secret);
   const sig = await crypto.subtle.sign("HMAC", key, TEXT_ENCODER.encode(message));
   return toHex(sig);
+}
+
+const EXTERNAL_INJECTION_PATTERNS: Array<{ label: string; re: RegExp }> = [
+  { label: "ignore_instructions", re: /\b(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+(?:instructions|prompts?|rules|directives?)\b/i },
+  { label: "system_prompt_exfil", re: /\b(?:system\s+prompt|developer\s+instructions?|reveal\s+(?:all\s+)?(?:(?:member|user|private)\s+){0,2}(?:phone|email|number|data|secret|pii|prompt)s?|dump\s+(?:all\s+)?(?:member|user|database|phone|pii))\b/i },
+  { label: "role_override", re: /\b(?:you\s+are\s+now\s+(?:in\s+)?(?:admin|root|unrestricted|developer|dan)|jailbreak|override\s+(?:the\s+)?(?:safety|policy|rules|rubric|guard|filter)|bypass\s+(?:the\s+)?(?:safety|age|review|filter|guard))\b/i },
+  { label: "review_manipulation", re: /\b(?:pre-?approved|already\s+approved|auto-?approve|approve\s+this\s+(?:rsvp|event|match|item|packet)|set\s+verdict\s+to\s+approve|output\s+["']?approve["']?)\b/i },
+  { label: "delimiter_breakout", re: /<<<\s*(?:end\s+)?untrusted|<\|(?:im_start|im_end|system|assistant)\|>|\{\s*"verdict"\s*:/i },
+];
+
+/** Detect prompt-injection / exfiltration directives in untrusted external event or prospect text. */
+export function detectExternalPromptInjection(text: string): string | null {
+  if (!text || !text.trim()) return null;
+  for (const variant of textVariants(text)) {
+    for (const rule of EXTERNAL_INJECTION_PATTERNS) {
+      if (rule.re.test(variant)) return rule.label;
+    }
+  }
+  return null;
+}
+
+/** Wrap untrusted external event fields with a nonced fence before passing to any LLM or reviewer. */
+export function fenceExternalEventText(text: string, label = "external_event"): string {
+  return fenceUntrusted(text, label);
 }
 
 function extractFirstName(rawName: unknown): string {
@@ -265,20 +326,128 @@ function extractFirstName(rawName: unknown): string {
   return cleaned.split(/\s+/)[0] ?? "";
 }
 
-function parseAdult18PlusAnswer(answer: unknown): boolean {
+const DEFAULT_ADULT_CHECK_YEAR = 2026;
+
+function isoYearOf(iso: string | undefined): number | undefined {
+  if (!iso) return undefined;
+  const m = /^(\d{4})-/.exec(iso.trim());
+  if (!m) return undefined;
+  const y = Number(m[1]);
+  return y >= 2020 && y <= 2100 ? y : undefined;
+}
+
+const MINOR_EXPLICIT_RE =
+  /\b(?:not\s+(?:yet\s+)?(?:18|an?\s+adult|of\s+age)|under\s*(?:18|age)|underage|minor|below\s*18|less\s+than\s*18|almost\s*18|nearly\s*18|turning\s*18|turn\s+18|be\s+18\s+(?:soon|next|in\b)|about\s+to\s+(?:be|turn)\s*18|high\s+school|middle\s+school|hs\s+(?:student|junior|senior|freshman|sophomore)|(?:\d{1,2}(?:st|nd|rd|th)|ninth|tenth|eleventh|twelfth)\s+grade|soy\s+menor|menor\s+de\s+edad|menos\s+de\s*18|no\s+tengo\s*18|no\s+soy\s+mayor|cumplo\s*18|por\s+cumplir\s*18|secundaria|preparatoria|prepa)\b/i;
+const SPELLED_MINOR_AGE_RE =
+  /\b(?:eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|trece|catorce|quince|dieciseis|diecisiete)\b|(?:^|[\s,.:;-])(?:one|two|three|four|five|six|seven|eight|nine|ten)\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o)\b|\btengo\s+(?:uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|catorce|quince|dieciseis|diecisiete)\b|\b(?:once|doce)\s*anos\b/i;
+const FRACTIONAL_MINOR_AGE_RE = /(?:^|[^\d.])(?:1[0-7]|[1-9])\.\d+(?!\d)/;
+const NEGATIVE_ANSWER_RE =
+  /^(?:no|nope|nah|not\b|false\b|under\b|(?:absolutely|definitely|certainly|of\s+course|surely|claro\s+que)\s+not?\b)|\b(?:nope|nah|todavia\s+no|aun\s+no|no\s+soy|no\s+tengo)\b|\bno\b(?!\s+(?:dietary|allerg|problem|worries|issue|issues|restrictions|preference|preferences|limits|thanks|pressure|rush))/i;
+const NON_AGE_AFTER_RE =
+  /^\s*(?:am\b|pm\b|:\d|\/\d|(?:st|nd|rd|th)\b|min(?:s|utes?)?\b|hr(?:s)?\b|hours?\b|miles?\b|km\b|blocks?\b|dollars?\b|bucks?\b|decks?\b|cards?\b|games?\b|spots?\b|tickets?\b|seats?\b|friends?\b|people\b|persons?\b|players?\b|guests?\b|books?\b|cups?\b|years?\s+(?:ago|in|of)\b)/i;
+const NON_AGE_BEFORE_RE =
+  /(?:\$|#|@|\b(?:at|around|bringing|have|got|with|for|level|gen|edition|top|plus)\s*)$/i;
+const AGE_UNIT_AFTER_RE = /^\s*(?:y\/?o|y(?:ears?|rs?)?[\s-]*old|anos)\b/i;
+const TENGO_BEFORE_RE = /\btengo\s+$/i;
+
+export interface ParseAdult18PlusOptions {
+  /** Current calendar year from Clock (never new Date() without argument). */
+  nowYear?: number;
+}
+
+/**
+ * Fail-closed adult 18+ screening parser backed by policy.ts (`canBeMatched`, `isMinor`,
+ * `relayMinorAge`, `relayMinorEstimate`). Rejects minors, fractional/spelled minor ages,
+ * negated/turning-18/high-school/Spanish-minor cues, minor birth years, and prompt injections
+ * while accepting polite/formal/senior/ESL adult confirmations, birth years, `"I'm a 25yo ..."`,
+ * `"Turning 30 next week"`, `"Sí, tengo 28 años"`, `"18+"`/`"21+"`, and benign tails.
+ */
+export function parseAdult18PlusAnswer(answer: unknown, opts: ParseAdult18PlusOptions = {}): boolean {
   if (typeof answer === "boolean") return answer;
-  if (typeof answer === "number") return canBeMatched(answer);
+  if (typeof answer === "number") return Number.isInteger(answer) && canBeMatched(answer) && !isMinor(answer);
   if (typeof answer !== "string") return false;
-  const s = answer.trim().toLowerCase();
+  const trimmed = answer.trim();
+  if (!trimmed) return false;
+  if (detectExternalPromptInjection(trimmed)) return false;
+  const s = trimmed
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[‘’ʼ`´]/g, "'")
+    .normalize("NFD")
+    .replace(/\p{Mn}/gu, "")
+    .normalize("NFC");
   if (!s) return false;
-  if (/\b(no|nope|nah|under\s*18|minor|1[3-7])\b/.test(s)) return false;
-  if (/^(yes|y|yeah|yep|yup|true|18\+|21\+|confirmed|i am 18\+|yes,? i am 18\+?)\b/.test(s)) {
+  if (detectExternalPromptInjection(s)) return false;
+  if (relayMinorAge(s, true) !== undefined || relayMinorEstimate(s)) return false;
+  if (MINOR_EXPLICIT_RE.test(s) || SPELLED_MINOR_AGE_RE.test(s) || FRACTIONAL_MINOR_AGE_RE.test(s)) return false;
+  if (NEGATIVE_ANSWER_RE.test(s)) return false;
+
+  const nowYear = opts.nowYear ?? DEFAULT_ADULT_CHECK_YEAR;
+  let hasValidBirthYear = false;
+  for (const match of s.matchAll(/\b(?:(?:born(?:\s+in)?|naci(?:do|da)?(?:\s+en)?)\s+|birth\s*year\s*[:=]?\s*)(19\d{2}|20\d{2})\b/gi)) {
+    const birthYear = Number(match[1]);
+    // Conservative without birth month/day: someone born in (nowYear - 18) may still be 17.
+    const minAge = nowYear - birthYear - 1;
+    if (birthYear > nowYear || minAge < 18) return false;
+    if (canBeMatched(minAge) && !isMinor(minAge)) hasValidBirthYear = true;
+  }
+
+  let hasValidTurningAdult = false;
+  for (const match of s.matchAll(/\b(?:turning|turn|almost|nearly|cumplo)\s+(\d{1,3})\b/gi)) {
+    const upcoming = Number(match[1]);
+    const current = upcoming - 1;
+    if (current < 18) return false;
+    if (canBeMatched(current) && !isMinor(current)) hasValidTurningAdult = true;
+  }
+
+  for (const match of s.matchAll(/(?<![a-z0-9.])(\d{1,3})(\+?)(?=\s*(?:y\/?o|y(?:ears?|rs?)?[\s-]*old|anos)\b|(?![a-z0-9.]))/gi)) {
+    const rawNum = Number(match[1]);
+    const hasPlus = match[2] === "+";
+    if (hasPlus) {
+      if (!canBeMatched(rawNum) || isMinor(rawNum)) return false;
+      continue;
+    }
+    const startIdx = match.index ?? 0;
+    const endIdx = startIdx + match[0].length;
+    const before = s.slice(Math.max(0, startIdx - 20), startIdx);
+    const after = s.slice(endIdx, endIdx + 24);
+    if (rawNum < 18) {
+      if (AGE_UNIT_AFTER_RE.test(after) || TENGO_BEFORE_RE.test(before)) return false;
+      if (NON_AGE_AFTER_RE.test(after) || NON_AGE_BEFORE_RE.test(before)) continue;
+      return false;
+    }
+  }
+
+  if (
+    /^(?:yes(?:\s+(?:ma'?am|sir|indeed|of\s+course|i\s+am|i'm))?|y|yeah|yep|yup|sure(?:\s+(?:am|thing|i\s+am|i'm))?|absolutely|of\s+course|certainly|indeed|definitely|totally|for\s+sure|si|claro|por\s+supuesto|true|confirmed|adult|mayor\s+de\s+edad|over\s*18|over\s*21|older\s+than\s*18|i(?:'m| am)\s+(?:over\s+)?(?:18\+|21\+|an?\s+adult)|(?:18|21)\+)(?=$|[\s,.:;!?)/-])/i.test(
+      s
+    )
+  ) {
     return true;
   }
-  const ageMatch = s.match(/^(\d{2,3})$/);
-  if (ageMatch) {
-    const n = Number(ageMatch[1]);
-    return canBeMatched(n);
+
+  if (hasValidBirthYear || hasValidTurningAdult) return true;
+
+  const spanishAge = s.match(/\btengo\s+(\d{2,3})(?:\s*anos)?(?=$|[\s,.:;!?)/-])/i);
+  if (spanishAge) {
+    const n = Number(spanishAge[1]);
+    return canBeMatched(n) && !isMinor(n);
+  }
+
+  const selfAge = s.match(
+    /\b(?:i(?:'m| am)|im)\s+(?:an?\s+)?(\d{2,3})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|\+))?(?=$|[\s,.:;!?)/-])/i
+  );
+  if (selfAge) {
+    const n = Number(selfAge[1]);
+    return canBeMatched(n) && !isMinor(n);
+  }
+
+  const explicitAge = s.match(
+    /(?:^(?:yes|y|yeah|yep|yup|si|claro|sure|absolutely|of\s+course|certainly|indeed)?[\s,.:;-]*(?:i(?:'m| am)|im|age)?[\s:]*|^)(\d{2,3})(?:\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|\+|anos))?(?=$|[\s,.:;!?)/-])/i
+  );
+  if (explicitAge) {
+    const n = Number(explicitAge[1]);
+    return canBeMatched(n) && !isMinor(n);
   }
   return false;
 }
@@ -288,6 +457,9 @@ export function buildLumaCreateEventRequest(
   apiKey: string
 ): { ok: true; request: HttpRequestSpec; approvedExternalCap: number; plannedTotal: number } | { ok: false; reason: string } {
   if (!apiKey.trim()) return { ok: false, reason: "missing_luma_api_key" };
+  if (detectExternalPromptInjection(draft.title) || detectExternalPromptInjection(draft.description)) {
+    return { ok: false, reason: "prompt_injection_detected" };
+  }
   const gate = checkPublishExternalEvent(draft);
   if (!gate.allowed) return { ok: false, reason: "publish_gate_rejected" };
   const questions = buildStandardScreeningQuestions(draft.interest);
@@ -354,12 +526,42 @@ export function buildLumaUpdateGuestStatusRequest(
   };
 }
 
+export interface VerifyLumaWebhookOptions {
+  timestampHeader?: string | number | null;
+  nowMs?: number;
+  maxSkewMs?: number;
+}
+
+function parseWebhookTimestampMs(raw: string | number): number | undefined {
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) return undefined;
+    return raw < 1e12 ? raw * 1000 : raw;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  if (/^\d+$/.test(trimmed)) {
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return undefined;
+    return n < 1e12 ? n * 1000 : n;
+  }
+  const parsed = Date.parse(trimmed);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function verifyLumaWebhookSignature(
   webhookSecret: string,
   rawBody: string,
-  signatureHeader: string | null | undefined
+  signatureHeader: string | null | undefined,
+  opts?: VerifyLumaWebhookOptions
 ): Promise<boolean> {
   if (!webhookSecret || !signatureHeader) return false;
+  if (opts?.timestampHeader !== undefined) {
+    if (opts.timestampHeader === null || opts.nowMs === undefined || !Number.isFinite(opts.nowMs)) return false;
+    const tsMs = parseWebhookTimestampMs(opts.timestampHeader);
+    if (tsMs === undefined) return false;
+    const maxSkew = opts.maxSkewMs ?? 5 * 60_000;
+    if (Math.abs(opts.nowMs - tsMs) > maxSkew) return false;
+  }
   const cleaned = signatureHeader.trim().replace(/^sha256=/i, "").toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(cleaned)) return false;
   const expected = await hmacSha256Hex(webhookSecret, rawBody);
@@ -406,16 +608,21 @@ export function normalizeLumaWebhookEvent(
 
     let confirmedAdult18Plus = false;
     let interestAnswer = "";
+    let injectionDetected = false;
     for (const a of answers) {
       const label = String(a.label ?? a.question_id ?? "").toLowerCase();
       const value = a.answer ?? a.value;
+      if (typeof value === "string" && detectExternalPromptInjection(value)) {
+        injectionDetected = true;
+      }
       if (label.includes("18+") || label.includes("18 or older") || label.includes("adult_18_plus")) {
-        confirmedAdult18Plus = parseAdult18PlusAnswer(value);
+        confirmedAdult18Plus = parseAdult18PlusAnswer(value, { nowYear: isoYearOf(occurredAtIso) });
       } else if (typeof value === "string" && value.trim().length > 0) {
         interestAnswer = value.trim().slice(0, 240);
       }
     }
 
+    const safeAnswer = interestAnswer || undefined;
     return {
       kind: "rsvp",
       platform: "luma",
@@ -424,9 +631,11 @@ export function normalizeLumaWebhookEvent(
       guestExternalId,
       firstName: extractFirstName(data.user_first_name ?? data.name),
       status: mapLumaApprovalStatus(data.approval_status),
-      confirmedAdult18Plus,
-      answeredScreeningQuestion: confirmedAdult18Plus && interestAnswer.length >= 2,
-      screeningAnswerText: interestAnswer || undefined,
+      confirmedAdult18Plus: !injectionDetected && confirmedAdult18Plus,
+      answeredScreeningQuestion: !injectionDetected && confirmedAdult18Plus && interestAnswer.length >= 2,
+      screeningAnswerText: safeAnswer,
+      fencedScreeningAnswer: safeAnswer ? fenceExternalEventText(safeAnswer, "luma_screening_answer") : undefined,
+      ...(injectionDetected ? { injectionDetected: true } : {}),
       occurredAtIso,
     };
   }
@@ -491,6 +700,9 @@ export function buildMeetupCreateEventRequest(
 ): { ok: true; request: HttpRequestSpec; approvedExternalCap: number; plannedTotal: number } | { ok: false; reason: string } {
   if (!oauthAccessToken.trim() || !groupUrlname.trim()) {
     return { ok: false, reason: "missing_meetup_credentials" };
+  }
+  if (detectExternalPromptInjection(draft.title) || detectExternalPromptInjection(draft.description)) {
+    return { ok: false, reason: "prompt_injection_detected" };
   }
   const gate = checkPublishExternalEvent(draft);
   if (!gate.allowed) return { ok: false, reason: "publish_gate_rejected" };
@@ -582,8 +794,20 @@ export function normalizeMeetupRsvpPoll(
       ? node.rsvpQuestionAnswer
       : {}) as Record<string, unknown>;
     const rawAnswer = typeof qObj.answer === "string" ? qObj.answer.trim() : "";
-    const confirmedAdult18Plus = parseAdult18PlusAnswer(rawAnswer);
-    const hasHobbyDetail = rawAnswer.replace(/^(yes|y|yeah|yep|18\+|21\+)\b[\s,.:;-]*/i, "").trim().length >= 3;
+    const injectionDetected = detectExternalPromptInjection(rawAnswer) !== null;
+    const occurredAtIso = typeof node.updated === "string" ? node.updated : fallbackIso;
+    const confirmedAdult18Plus = !injectionDetected && parseAdult18PlusAnswer(rawAnswer, { nowYear: isoYearOf(occurredAtIso) });
+    const hasHobbyDetail =
+      rawAnswer
+        .normalize("NFD")
+        .replace(/\p{Mn}/gu, "")
+        .normalize("NFC")
+        .replace(
+          /^(?:(?:yes(?:\s+(?:ma'?am|sir))?|y|yeah|yep|yup|sure(?:\s+am)?|absolutely|of\s+course|certainly|indeed|definitely|si|claro|por\s+supuesto|i(?:'m| am)\s+(?:an?\s+)?|tengo\s+)(?:[\s,.:;!-]+)?)?(?:(?:i(?:'m| am)\s+(?:an?\s+)?|tengo\s+)?(?:18\+|21\+|over\s*18|over\s*21|\d{2,3}\s*(?:y(?:ears?|rs?)?[\s-]*old|y\/?o|anos)?)|yes|y|yeah|yep|yup|si|claro)(?=$|[\s,.:;!?)/-])[\s,.:;!?)/-]*/i,
+          ""
+        )
+        .trim().length >= 3;
+    const safeAnswer = rawAnswer ? rawAnswer.slice(0, 240) : undefined;
 
     rsvps.push({
       kind: "rsvp",
@@ -594,9 +818,11 @@ export function normalizeMeetupRsvpPoll(
       firstName: extractFirstName(member.name),
       status: mapMeetupRsvpStatus(node.status),
       confirmedAdult18Plus,
-      answeredScreeningQuestion: confirmedAdult18Plus && hasHobbyDetail,
-      screeningAnswerText: rawAnswer ? rawAnswer.slice(0, 240) : undefined,
-      occurredAtIso: typeof node.updated === "string" ? node.updated : fallbackIso,
+      answeredScreeningQuestion: !injectionDetected && confirmedAdult18Plus && hasHobbyDetail,
+      screeningAnswerText: safeAnswer,
+      fencedScreeningAnswer: safeAnswer ? fenceExternalEventText(safeAnswer, "meetup_screening_answer") : undefined,
+      ...(injectionDetected ? { injectionDetected: true } : {}),
+      occurredAtIso,
     });
   }
 
@@ -613,16 +839,56 @@ const PARTIFUL_TELECOM_REWRITES: Array<{ pattern: RegExp; replacement: string; l
   { pattern: /\bbeer\s*(?:hall|garden)\b/gi, replacement: "communal patio", label: "beer hall" },
   { pattern: /\b(?:brewery|breweries|taproom|taprooms)\b/gi, replacement: "neighborhood hangout", label: "brewery/taproom" },
   { pattern: /\b(?:cocktails?|mocktails?\s+and\s+cocktails?)\b/gi, replacement: "bites and refreshments", label: "cocktail" },
-  { pattern: /\b(?:alcohol|booze|boozy|liquor|spirits|tequila|whiskey|vodka|bourbon|gin|rum|shots|drunk|drinks|beer|wine)\b/gi, replacement: "refreshments", label: "alcohol" },
+  {
+    pattern: /\b(?:alcohol|booze|boozy|liquor|spirits|tequila|whiskey|vodka|bourbon|gin|rum|drunk|beer|wine)\b|(?<!\b(?:espresso|coffee|photo|camera|flu|booster|head|action|mug|long|moon|trick|jump|slap|free)\s+)\bshots\b|(?<!\b(?:soft|hot|cold|warm|non-?alcoholic|iced|coffee|tea|energy|sports)\s+)\bdrinks\b/gi,
+    replacement: "refreshments",
+    label: "alcohol",
+  },
   { pattern: /\b(?:cannabis|marijuana|weed|dispensary|edibles|thc|cbd|420|smoke\s*sesh|vape|vaping)\b/gi, replacement: "hangout", label: "cannabis" },
   { pattern: /\b(?:gambling|casino|sportsbook|betting|wager|poker|blackjack|roulette|slots)\b/gi, replacement: "tabletop games", label: "gambling" },
   { pattern: /\b(?:strip\s*club|lingerie|nsfw|xxx|hookup|hookups|fetish|bdsm|adult[\s-]*only)\b/gi, replacement: "18+ social", label: "adult_content" },
 ];
 
+const PARTIFUL_LEET_MAP: Record<string, string> = {
+  "0": "o",
+  "1": "i",
+  "3": "e",
+  "4": "a",
+  "5": "s",
+  "7": "t",
+  "8": "b",
+  "@": "a",
+  "$": "s",
+  "!": "i",
+  "|": "l",
+};
+
+const INNOCENT_ALNUM_TOKEN_RE = /^(?:\d+(?:am|pm|h|hr|hrs|min|st|nd|rd|th|yo|k|m|x)|[a-z]+\d{1,2}|\d{1,2}[a-z])$/i;
+
+function decodeTelecomLeetTokens(text: string): string {
+  return text.replace(/[a-zA-Z0-9@$!|]{3,}/g, rawToken => {
+    const trailingMatch = rawToken.match(/[!|]+$/);
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    const token = trailing ? rawToken.slice(0, -trailing.length) : rawToken;
+    if (token.length < 3 || !/[a-zA-Z]/.test(token) || !/[0134578@$!|]/.test(token)) return rawToken;
+    if (INNOCENT_ALNUM_TOKEN_RE.test(token)) return rawToken;
+    const decoded = token.replace(/[0134578@$!|]/g, ch => PARTIFUL_LEET_MAP[ch] ?? ch);
+    for (const rule of PARTIFUL_TELECOM_REWRITES) {
+      rule.pattern.lastIndex = 0;
+      if (rule.pattern.test(decoded)) {
+        rule.pattern.lastIndex = 0;
+        return `${decoded}${trailing}`;
+      }
+    }
+    return rawToken;
+  });
+}
+
 export function scrubPartifulTelecomCopy(text: string): { text: string; scrubbedTerms: string[] } {
-  let out = text;
+  let out = decodeTelecomLeetTokens(text);
   const scrubbed: string[] = [];
   for (const rule of PARTIFUL_TELECOM_REWRITES) {
+    rule.pattern.lastIndex = 0;
     if (rule.pattern.test(out)) {
       rule.pattern.lastIndex = 0;
       scrubbed.push(rule.label);
@@ -636,6 +902,9 @@ export function scrubPartifulTelecomCopy(text: string): { text: string; scrubbed
 export function buildPartifulEventKit(
   draft: ExternalEventDraft
 ): { ok: true; kit: PartifulEventKit } | { ok: false; reason: string } {
+  if (detectExternalPromptInjection(draft.title) || detectExternalPromptInjection(draft.description)) {
+    return { ok: false, reason: "prompt_injection_detected" };
+  }
   const gate = checkPublishExternalEvent({
     ...draft,
     platform: "partiful",
@@ -644,12 +913,14 @@ export function buildPartifulEventKit(
   if (!gate.allowed) return { ok: false, reason: "publish_gate_rejected" };
 
   const titleScrub = scrubPartifulTelecomCopy(draft.title);
-  const rawDescription = [
-    draft.description.trim(),
+  const bodyScrub = scrubPartifulTelecomCopy(draft.description.trim());
+  const fullDescription = [
+    bodyScrub.text,
     `Meet at ${draft.venueName} (${draft.venueAddress}) — ${draft.arrivalLandmark}.`,
     `Order your own snacks/coffee at the counter. Hosted by ${draft.anchorFirstName} via Friends / The Network (18+).`,
-  ].join("\n\n");
-  const descScrub = scrubPartifulTelecomCopy(rawDescription);
+  ]
+    .filter(Boolean)
+    .join("\n\n");
   const coverPrompt =
     draft.coverPrompt?.trim() ||
     `Warm candid square editorial photo of a cozy ${draft.interest} neighborhood hangout in ${draft.city.toUpperCase()}, inviting lighting, no text overlay`;
@@ -663,7 +934,7 @@ export function buildPartifulEventKit(
       source: "host_native",
       humanAssistedOnly: true,
       title: titleScrub.text,
-      description: descScrub.text,
+      description: fullDescription,
       venueName: draft.venueName,
       venueAddress: draft.venueAddress,
       arrivalLandmark: draft.arrivalLandmark,
@@ -685,7 +956,7 @@ export function buildPartifulEventKit(
         approvedExternalCap: gate.approvedExternalCap,
         plannedTotal: gate.plannedTotal,
       },
-      scrubbedTerms: [...new Set([...titleScrub.scrubbedTerms, ...descScrub.scrubbedTerms])],
+      scrubbedTerms: [...new Set([...titleScrub.scrubbedTerms, ...bodyScrub.scrubbedTerms])],
     },
   };
 }
@@ -711,32 +982,19 @@ export function attachPartifulUrl(
   };
 }
 
-export function validateSmsCopyRules(text: string): string[] {
-  const violations: string[] = [];
-  if (text.length > 360) violations.push(`too_long:${text.length}`);
-  const questionCount = (text.match(/\?/g) ?? []).length;
-  if (questionCount > 1) violations.push(`too_many_questions:${questionCount}`);
-  if (/\breply\s+["']?cancel["']?\b/i.test(text) || /\btext\s+["']?cancel["']?\b/i.test(text)) {
-    violations.push("forbidden_reply_cancel");
-  }
-  return violations;
-}
-
 export function buildCrowdExpectationCopy(
   mode: ExternalCrowdMode,
   params: { interest?: string; cityName?: string; platforms?: string } = {}
 ): string {
-  const interest = params.interest?.trim() || "this meetup";
-  const cityName = params.cityName?.trim() || "your city";
-  const platforms = params.platforms?.trim() || "Luma/Meetup";
-
   if (mode === "dense_curated") {
-    return "This is a curated Network match — everyone coming is already vetted in The Network.";
+    return formatCrowdExpectation("network_curated");
   }
-  if (mode === "mixed_impromptu") {
-    return `Heads up so you know what to expect: this is an open interest meetup with 1–2 Network folks plus local ${platforms} guests we screened. Free public meetups can have a couple of last-minute flakes, so we invite a few extra.`;
-  }
-  return `Since you're helping kick off ${interest} in ${cityName}, you'll be the first Network face there while we pull in local fans from ${platforms}. If RSVPs stay under 3 by 24h out, we'll call it early so you don't waste a trip.`;
+  return formatCrowdExpectation("external_open", {
+    interest: params.interest,
+    cityName: params.cityName,
+    platforms: params.platforms,
+    sparseAnchor: mode === "sparse_anchor",
+  });
 }
 
 export function buildPostEventExternalInviteMessage(
@@ -746,13 +1004,15 @@ export function buildPostEventExternalInviteMessage(
   if (!canInviteExternalEventAttendee(gateInput)) {
     return { ok: false, reason: "quality_gate_failed" };
   }
-  const firstName = extractFirstName(params.attendeeFirstName) || "there";
-  const anchorName = extractFirstName(params.anchorFirstName) || "Our host";
-  const title = params.eventTitle.trim().slice(0, 60);
-  const venue = params.venueName.trim().slice(0, 50);
+  const firstName = cleanPhrase(extractFirstName(params.attendeeFirstName)) || "there";
+  const anchorName = cleanPhrase(extractFirstName(params.anchorFirstName)) || "Our host";
+  const title = cleanPhrase(params.eventTitle).slice(0, 60);
+  const venue = cleanPhrase(params.venueName).slice(0, 50);
   const url = params.inviteUrl.trim();
-  const text = `Hey ${firstName}, thanks for coming to ${title} at ${venue}! ${anchorName} said you brought great energy. We run small local hangouts through The Network — if you'd like an invite for future ones, here's your link: ${url}. No pressure either way.`;
-  const violations = validateSmsCopyRules(text);
+  const full = `Hey ${firstName}, thanks for coming to ${title} at ${venue}! ${anchorName} said you brought great energy. We run small local hangouts through The Network — if you'd like an invite for future ones, here's your link: ${url}. No pressure either way. Reply STOP anytime.`;
+  const compact = `Hey ${firstName}, thanks for coming! ${anchorName} said you brought great energy. Here's your invite link for future small local hangouts: ${url}. No pressure. Reply STOP anytime.`;
+  const text = clampSms(full, compact);
+  const violations = validateOutboundSms(text, { firstContact: true, contactAllow: url ? [url] : undefined });
   if (violations.length > 0) {
     return { ok: false, reason: `style_violation:${violations.join(",")}` };
   }

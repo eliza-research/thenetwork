@@ -6,6 +6,10 @@ export type MemberId = string;
 export const LAUNCH_CITIES = ["sf", "nyc", "la", "chicago", "miami"] as const;
 export type City = (typeof LAUNCH_CITIES)[number];
 export type LaunchCity = City;
+/** Open city identifier for data-driven city expansion without widening exhaustive Record<City, ...> maps. */
+export type CityId = string;
+/** Per-city launch lifecycle status; only nyc defaults to active until staff flips another city live. */
+export type CityLaunchStatus = "active" | "waitlist" | "planned";
 export const isCity = (v: unknown): v is City =>
   typeof v === "string" && (LAUNCH_CITIES as readonly string[]).includes(v);
 export const isLaunchCity = isCity;
@@ -19,6 +23,49 @@ export type ParticipationState = "open" | "normal" | "quiet" | "receiving" | "pa
 export const APP_IDS = ["ntwrk", "slop", "peon", "friends"] as const;
 export type AppId = (typeof APP_IDS)[number];
 export const isAppId = (v: unknown): v is AppId => typeof v === "string" && (APP_IDS as readonly string[]).includes(v);
+
+export const DOMAIN_IDS = ["dating", "friendship", "business"] as const;
+export type DomainId = (typeof DOMAIN_IDS)[number];
+export const DOMAIN_LABELS: Record<DomainId, string> = {
+  dating: "Dating",
+  friendship: "Friendship",
+  business: "Business",
+};
+export function isDomainId(value: unknown): value is DomainId {
+  return typeof value === "string" && (DOMAIN_IDS as readonly string[]).includes(value);
+}
+export const DOMAIN_TO_APP: Record<DomainId, AppId> = {
+  dating: "slop",
+  friendship: "friends",
+  business: "peon",
+};
+export const APP_TO_DOMAIN: Record<AppId, DomainId | null> = {
+  slop: "dating",
+  friends: "friendship",
+  peon: "business",
+  ntwrk: null,
+};
+export const BRAND_DEFAULT_DOMAINS: Record<AppId, readonly DomainId[]> = {
+  slop: ["dating"],
+  peon: ["business"],
+  friends: ["friendship"],
+  ntwrk: ["dating", "friendship", "business"],
+};
+export function toDomainId(value: string): DomainId | undefined {
+  if (value === "dating" || value === "slop") return "dating";
+  if (value === "friendship" || value === "friends") return "friendship";
+  if (value === "business" || value === "peon") return "business";
+  return undefined;
+}
+export function isDatingDomain(value: string): boolean {
+  return value === "dating" || value === "slop";
+}
+export function isBusinessDomain(value: string): boolean {
+  return value === "business" || value === "peon";
+}
+export function isFriendshipDomain(value: string): boolean {
+  return value === "friendship" || value === "friends";
+}
 export type PrivacyScope = "agent_private" | "matchable" | "shareable" | "opportunity_specific";
 export type Provenance = "said" | "connected_source" | "inferred" | "vouched";
 export type FacetKind =
@@ -153,12 +200,46 @@ export interface NetworkEvent {
   listing?: { url: string; venue: string; lat: number; lng: number };
 }
 
+export interface ReliabilityEvidence {
+  readonly noShows: number;
+  readonly completedSinceLastNoShow: number;
+  readonly strikes?: number;
+  readonly lateCancels4h?: number;
+  readonly lateCancels24h?: number;
+  readonly rescheduleChurn?: number;
+  readonly resolved90d?: number;
+  readonly completed90d?: number;
+  readonly provisionalNoShow?: boolean;
+}
+
+export interface QualitySignals {
+  readonly provenanceScore: number;
+  readonly specificityScore: number;
+  readonly hygieneScore: number;
+  readonly completionScore: number;
+  readonly voipOrPumping: boolean;
+  readonly sybilFlagged: boolean;
+  readonly chronicLowEffort: boolean;
+  readonly unverifiedHype: boolean;
+  readonly newcomerDays: number;
+}
+
+export interface VampireTelemetry {
+  readonly introsReceived90d: number;
+  readonly positiveCounterpartVotes90d: number;
+  readonly asymmetricNegativeVotes90d: number;
+  readonly pitchSignals90d: number;
+  readonly distinctSelfPromoReports90d: number;
+}
+
 /** Snapshot the engine reads. Built from Postgres in production, from the simulator in tests. */
 export interface WorldSnapshot {
   now: number; members: Member[]; facets: Facet[]; intents: Intent[];
   presence: Presence[]; edges: Edge[]; recentProposals: Proposal[];
   events?: NetworkEvent[];
   teenIntros?: boolean;
+  qualityByMember?: Record<MemberId, QualitySignals>;
+  vampireByMember?: Record<MemberId, VampireTelemetry>;
 }
 
 // ---- Five-city registry, curated venues, arrival coordination, follow-ups and work intros ----
@@ -209,10 +290,12 @@ export interface VenuePersonaPrior {
   beta: number;
 }
 
+export type VenueSource = "curated" | "seed" | "google_places" | "places_api" | "overture" | "listing" | "bd_partner" | "member_suggested";
+
 export interface VenueRecord {
   id: string;
   name: string;
-  city: LaunchCity;
+  city: CityId;
   neighborhood: string;
   address: string;
   lat: number;
@@ -242,7 +325,7 @@ export interface VenueRecord {
   hours: VenueHoursSlot[];
   yelpRating?: number;
   externalPlaceId?: string;
-  source: "curated" | "google_places" | "overture" | "listing";
+  source: VenueSource;
   lastVerifiedAt: number;
   geoExpiresAt?: number;
   closureReports: number;
@@ -380,10 +463,13 @@ export interface CityBarrier {
 }
 
 export interface CitySpec {
-  id: LaunchCity;
+  id: CityId;
   name: string;
   shortName: string;
   tz: string;
+  country?: string;
+  currency?: string;
+  launchStatus?: CityLaunchStatus;
   primaryMode: "transit" | "car" | "hybrid";
   anchorZip: string;
   aliases: string[];
@@ -396,4 +482,38 @@ export interface CitySpec {
   neighborhoods: NeighborhoodSpec[];
   barriers: CityBarrier[];
   seedVenues: VenueRecord[];
+}
+
+export type MeetingModality = "irl_venue" | "async_or_video" | "sanctioned_event";
+
+export interface ConnectionOntologySpecLike {
+  readonly id: string;
+  readonly label?: string;
+  readonly defaultCategory: Category;
+  readonly defaultFormat: "one_to_one" | "small_group" | "event";
+  readonly sizeRange: readonly [number, number];
+  readonly defaultFreeAnchor: boolean;
+  readonly requiresHighDiscretion: boolean;
+  readonly adultOnly?: boolean;
+}
+
+export interface OutcomePolicyProfile {
+  readonly app: AppId;
+  readonly ontologyId: string;
+  readonly modality: MeetingModality;
+  readonly venueMode: "date" | "group" | "solo" | "professional";
+  readonly adultOnly: boolean;
+  readonly teenFriendEligible: boolean;
+  readonly minGroupSize: number;
+  readonly maxGroupSize: number;
+  readonly maxBudgetTier?: VenuePriceTier;
+  readonly lowNoiseRequired: boolean;
+  readonly daytimeOnly: boolean;
+  readonly alcoholExcluded: boolean;
+  readonly aestheticReadAllowed: boolean;
+  readonly peonCapitalAllowed: boolean;
+  readonly externalProspectReadAllowed: boolean;
+  readonly externalEventsAllowed: boolean;
+  readonly followupCadence: "next_day_local" | "work_48h_90d";
+  readonly firewallScope: AppId;
 }

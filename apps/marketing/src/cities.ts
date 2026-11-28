@@ -1,3 +1,4 @@
+import { getCity, LAUNCH_CITIES } from "@thenetwork/core";
 import {
   CITY_LAUNCH_STAGES,
   UnknownCityError,
@@ -26,6 +27,10 @@ import {
   type OpenDataConnectorSpec,
 } from "./city-registry.ts";
 
+import type { BrandAppId } from "./types.ts";
+
+const LAUNCH_CITY_SET = new Set<string>(LAUNCH_CITIES);
+
 export const SUPPORTED_CITIES = [
   "nyc",
   "sf",
@@ -37,8 +42,11 @@ export const SUPPORTED_CITIES = [
 ] as const;
 
 export type SupportedCity = (typeof SUPPORTED_CITIES)[number];
+export type CityId = string;
+export type CityLaunchStatus = "active" | "waitlist" | "planned";
+export type CityDensityTier = "sparse" | "medium" | "dense";
 export type CityCurrency = "USD" | "GBP" | (string & {});
-export type CityLaunchConfig = CityPack;
+export type CityLaunchConfig = CityPack & { readonly launchStatus: CityLaunchStatus };
 
 export {
   CITY_LAUNCH_STAGES,
@@ -100,14 +108,73 @@ export interface CityActivationReadiness {
   readonly blockers: readonly string[];
 }
 
+export interface CityDensitySnapshot {
+  readonly city: CityId;
+  readonly appId: BrandAppId;
+  readonly qualifiedAdultCount: number;
+  readonly densityTier: CityDensityTier;
+  readonly activeVenueCount: number;
+  readonly observedAt?: string;
+}
+
+export interface CityExpansionTrackMultipliers {
+  readonly bd_venue: number;
+  readonly event_activation: number;
+  readonly street_fliering: number;
+  readonly organic_play: number;
+}
+
+export interface CityDensityIntakeResult {
+  readonly city: CityId;
+  readonly supported: boolean;
+  readonly appId: BrandAppId;
+  readonly launchStatus: CityLaunchStatus;
+  readonly densityTier: CityDensityTier;
+  readonly qualifiedAdultCount: number;
+  readonly activeVenueCount: number;
+  readonly expansionReadiness: CityActivationReadiness | null;
+  readonly readyForExpansion: boolean;
+  readonly blockers: readonly string[];
+  readonly trackMultipliers: CityExpansionTrackMultipliers;
+  readonly recommendExternalActivation: boolean;
+  readonly observedAt: string | null;
+}
+
+const LAUNCH_STATUS_BY_CITY: Readonly<Record<SupportedCity, CityLaunchStatus>> = {
+  nyc: "active",
+  sf: "waitlist",
+  la: "waitlist",
+  chicago: "waitlist",
+  miami: "waitlist",
+  austin: "planned",
+  london: "planned",
+};
+
+function withLaunchStatus(pack: CityPack): CityLaunchConfig {
+  const code = pack.code as SupportedCity;
+  const launchStatus: CityLaunchStatus = Object.hasOwn(LAUNCH_STATUS_BY_CITY, code)
+    ? LAUNCH_STATUS_BY_CITY[code]
+    : pack.platformActive
+      ? "active"
+      : pack.stage === "waitlist_kindling" || pack.stage === "liquidity_seeding"
+        ? "waitlist"
+        : "planned";
+  const core = LAUNCH_CITY_SET.has(pack.code) ? getCity(pack.code) : undefined;
+  return {
+    ...pack,
+    ...(core ? { label: core.name, timezone: core.tz } : {}),
+    launchStatus,
+  };
+}
+
 export const CITY_CONFIGS: Readonly<Record<SupportedCity, CityLaunchConfig>> = {
-  nyc: requireCityPack("nyc"),
-  sf: requireCityPack("sf"),
-  la: requireCityPack("la"),
-  chicago: requireCityPack("chicago"),
-  miami: requireCityPack("miami"),
-  austin: requireCityPack("austin"),
-  london: requireCityPack("london"),
+  nyc: withLaunchStatus(requireCityPack("nyc")),
+  sf: withLaunchStatus(requireCityPack("sf")),
+  la: withLaunchStatus(requireCityPack("la")),
+  chicago: withLaunchStatus(requireCityPack("chicago")),
+  miami: withLaunchStatus(requireCityPack("miami")),
+  austin: withLaunchStatus(requireCityPack("austin")),
+  london: withLaunchStatus(requireCityPack("london")),
 };
 
 export function isSupportedCity(city: string): city is SupportedCity {
@@ -127,13 +194,19 @@ export function normalizeCityCode(
 
 export function getCityConfig(city: string | undefined | null): CityLaunchConfig {
   if (!city || city.trim().length === 0) {
-    return requireCityPack("nyc");
+    return withLaunchStatus(requireCityPack("nyc"));
   }
-  return requireCityPack(city);
+  return withLaunchStatus(requireCityPack(city));
+}
+
+export function marketingCityTimezone(city: CityId | undefined | null): string | undefined {
+  if (!city) return undefined;
+  const normalized = city.trim().toLowerCase();
+  return isSupportedCity(normalized) ? CITY_CONFIGS[normalized].timezone : undefined;
 }
 
 export function listCityConfigs(): readonly CityLaunchConfig[] {
-  return listCityPacks();
+  return listCityPacks().map(withLaunchStatus);
 }
 
 export function detectCityNeighborhood(
@@ -240,4 +313,119 @@ export function canActivateCityExpansion(
     requiredVenues: config.activationMinSignedVenues,
     blockers,
   };
+}
+
+const VALID_BRAND_APPS: ReadonlySet<BrandAppId> = new Set(["slop", "peon", "friends", "ntwrk"]);
+const VALID_DENSITY_TIERS: ReadonlySet<CityDensityTier> = new Set(["sparse", "medium", "dense"]);
+
+function sanitizeNonNegativeInt(value: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  return Math.max(0, Math.floor(value));
+}
+
+function deriveDensityTierFallback(qualifiedAdultCount: number): CityDensityTier {
+  if (qualifiedAdultCount >= 150) return "dense";
+  if (qualifiedAdultCount >= 30) return "medium";
+  return "sparse";
+}
+
+function trackMultipliersForTier(
+  densityTier: CityDensityTier,
+  supported: boolean,
+): CityExpansionTrackMultipliers {
+  if (!supported) {
+    return {
+      bd_venue: 0,
+      event_activation: 0,
+      street_fliering: 0,
+      organic_play: 0,
+    };
+  }
+  if (densityTier === "sparse") {
+    return {
+      bd_venue: 1.5,
+      event_activation: 1.5,
+      street_fliering: 1.15,
+      organic_play: 1.0,
+    };
+  }
+  if (densityTier === "medium") {
+    return {
+      bd_venue: 1.25,
+      event_activation: 1.25,
+      street_fliering: 1.05,
+      organic_play: 1.0,
+    };
+  }
+  return {
+    bd_venue: 0.9,
+    event_activation: 0.85,
+    street_fliering: 1.0,
+    organic_play: 1.15,
+  };
+}
+
+export function applyCityDensitySnapshot(
+  snapshot: CityDensitySnapshot,
+): CityDensityIntakeResult {
+  const rawCity = typeof snapshot.city === "string" ? snapshot.city.trim().toLowerCase() : "";
+  const supported = rawCity.length > 0 && isSupportedCity(rawCity);
+  const appId: BrandAppId = VALID_BRAND_APPS.has(snapshot.appId) ? snapshot.appId : "ntwrk";
+  const qualifiedAdultCount = sanitizeNonNegativeInt(snapshot.qualifiedAdultCount);
+  const activeVenueCount = sanitizeNonNegativeInt(snapshot.activeVenueCount);
+  const densityTier: CityDensityTier = VALID_DENSITY_TIERS.has(snapshot.densityTier)
+    ? snapshot.densityTier
+    : deriveDensityTierFallback(qualifiedAdultCount);
+  const observedAt =
+    typeof snapshot.observedAt === "string" && Number.isFinite(Date.parse(snapshot.observedAt))
+      ? new Date(Date.parse(snapshot.observedAt)).toISOString()
+      : null;
+
+  if (!supported) {
+    const cityLabel = rawCity || "unknown";
+    return {
+      city: cityLabel,
+      supported: false,
+      appId,
+      launchStatus: "planned",
+      densityTier,
+      qualifiedAdultCount,
+      activeVenueCount,
+      expansionReadiness: null,
+      readyForExpansion: false,
+      blockers: [`City "${cityLabel}" is not registered in the marketing launch registry.`],
+      trackMultipliers: trackMultipliersForTier(densityTier, false),
+      recommendExternalActivation: false,
+      observedAt,
+    };
+  }
+
+  const config = CITY_CONFIGS[rawCity];
+  const expansionReadiness = canActivateCityExpansion(
+    config.code,
+    qualifiedAdultCount,
+    activeVenueCount,
+  );
+
+  return {
+    city: config.code,
+    supported: true,
+    appId,
+    launchStatus: config.launchStatus,
+    densityTier,
+    qualifiedAdultCount,
+    activeVenueCount,
+    expansionReadiness,
+    readyForExpansion: expansionReadiness.ready,
+    blockers: expansionReadiness.blockers,
+    trackMultipliers: trackMultipliersForTier(densityTier, true),
+    recommendExternalActivation: densityTier !== "dense",
+    observedAt,
+  };
+}
+
+export function canActivateCityExpansionFromSnapshot(
+  snapshot: CityDensitySnapshot,
+): CityActivationReadiness | null {
+  return applyCityDensitySnapshot(snapshot).expansionReadiness;
 }

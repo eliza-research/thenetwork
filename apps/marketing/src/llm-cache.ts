@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { RealClock, type Clock } from "../../../packages/core/src/clock.ts";
 import { DEFAULT_MODEL, OPENAI_PRICES, priceFor } from "../../../packages/core/src/llm.ts";
 import { parseOptOut } from "../../../packages/core/src/replies.ts";
+import { detectUnderageText, type UnderageDetectionResult } from "./constants.ts";
 import type { PersonaId, SubscriptionProvider } from "./types.ts";
+import { VIP_ARCHETYPE_KEYWORDS } from "./vip-engine.ts";
+
+export { detectUnderageText, type UnderageDetectionResult };
 
 export interface PromptCacheKeyInput {
   readonly provider: SubscriptionProvider | (string & {});
@@ -10,6 +14,7 @@ export interface PromptCacheKeyInput {
   readonly systemPrompt: string;
   readonly prompt: string;
   readonly personaId?: PersonaId | (string & {});
+  readonly scope?: string;
 }
 
 export interface PromptCacheEntry {
@@ -96,15 +101,16 @@ export function hashPromptText(systemPrompt: string, prompt: string): string {
 }
 
 export function buildPromptCacheKey(input: PromptCacheKeyInput): string {
-  return sha256Hex(
-    JSON.stringify([
-      String(input.personaId ?? "").trim().toLowerCase(),
-      String(input.provider).trim().toLowerCase(),
-      input.model.trim().toLowerCase(),
-      normalizePromptWhitespace(input.systemPrompt),
-      normalizePromptWhitespace(input.prompt),
-    ]),
-  );
+  const scope = input.scope ? normalizePromptWhitespace(input.scope) : "";
+  const parts = [
+    String(input.personaId ?? "").trim().toLowerCase(),
+    String(input.provider).trim().toLowerCase(),
+    input.model.trim().toLowerCase(),
+    normalizePromptWhitespace(input.systemPrompt),
+    normalizePromptWhitespace(input.prompt),
+  ];
+  if (scope) parts.push(scope);
+  return sha256Hex(JSON.stringify(parts));
 }
 
 export function estimateTokens(text: string): number {
@@ -147,8 +153,16 @@ export class PromptCache {
 
   constructor(opts: PromptCacheOptions = {}) {
     this.clock = opts.clock ?? new RealClock();
-    this.maxEntries = Math.max(1, Math.floor(opts.maxEntries ?? DEFAULT_MAX_CACHE_ENTRIES));
-    this.defaultTtlMs = Math.max(1_000, Math.floor(opts.defaultTtlMs ?? DEFAULT_CACHE_TTL_MS));
+    const rawMax = opts.maxEntries;
+    this.maxEntries =
+      typeof rawMax === "number" && Number.isFinite(rawMax) && rawMax >= 1
+        ? Math.floor(rawMax)
+        : DEFAULT_MAX_CACHE_ENTRIES;
+    const rawTtl = opts.defaultTtlMs;
+    this.defaultTtlMs =
+      typeof rawTtl === "number" && Number.isFinite(rawTtl) && rawTtl >= 1_000
+        ? Math.floor(rawTtl)
+        : DEFAULT_CACHE_TTL_MS;
   }
 
   get(key: string): PromptCacheEntry | null {
@@ -247,27 +261,6 @@ export class PromptCache {
   }
 }
 
-const VIP_KEYWORDS: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ["startup_founder", ["founder", "co-founder", "ceo", "seed", "series a", "form d", "yc"]],
-  ["vc_lp", ["venture", "general partner", "angel", "lp", "fund", "form adv"]],
-  ["patent_inventor", ["patent", "inventor", "uspto", "hardware prototype"]],
-  ["scientist_academic", ["professor", "openalex", "nsf", "nih", "h-index", "phd"]],
-  ["ai_biotech_researcher", ["arxiv", "biorxiv", "neurips", "icml", "iclr", "biotech", "robotics"]],
-  ["quant_finance", ["quant", "hedge fund", "13f", "portfolio manager", "macro strategist"]],
-  ["author_journalist", ["author", "journalist", "pulitzer", "substack", "essayist", "novelist"]],
-  ["filmmaker_artist", ["filmmaker", "director", "sundance", "musician", "biennial", "composer"]],
-  ["elite_athlete", ["olympian", "athlete", "marathon", "championship", "all-american"]],
-  ["michelin_chef_hospitality", ["chef", "michelin", "james beard", "sommelier", "restaurateur"]],
-  ["architect_designer", ["architect", "industrial designer", "aia", "pritzker"]],
-  ["oss_maintainer", ["open source", "maintainer", "principal engineer", "github", "committer"]],
-  ["policymaker_diplomat", ["policy", "diplomat", "senate", "think tank", "commissioner"]],
-  ["podcaster_curator", ["podcast", "curator", "super-host", "radio"]],
-  ["leading_physician", ["surgeon", "physician", "clinical trial", "longevity", "oncology"]],
-  ["philanthropist_foundation", ["foundation", "museum", "nonprofit", "990", "philanthropist"]],
-  ["legal_rainmaker", ["litigator", "appellate", "prosecutor", "general counsel", "courtlistener"]],
-  ["defense_space_energy", ["aerospace", "fusion", "sbir", "darpa", "orbital", "satellite"]],
-];
-
 const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re: RegExp }> = [
   {
     code: "clef_secrecy_violation",
@@ -275,7 +268,7 @@ const SCRIPT_FORBIDDEN_RULES: ReadonlyArray<{ readonly code: string; readonly re
   },
   {
     code: "minor_targeting_violation",
-    re: /\b(high\s*school(er)?s?|under\s*18|16[\s-]year[\s-]old|17[\s-]year[\s-]old|middle\s*school|prom\s*date|teen\s*dating)\b/i,
+    re: /\b(high\s*school(er)?s?|high\s*school\s*(?:freshman|sophomore|junior|senior|student)|under\s*18|1[3-7]\s*y\/?o|16[\s-]year[\s-]old|17[\s-]year[\s-]old|turning\s+18|middle\s*school(er)?s?|prom\s*date|teen\s*dating)\b/i,
   },
   {
     code: "raw_phone_number_exposure",
@@ -355,14 +348,13 @@ export function tryDeterministicRoute(
         costCents: 0,
       };
     }
-    const ageMatch = /\b(?:age\s*[:=]?\s*|i\s*(?:am|'m)\s*)(\d{1,3})\b/i.exec(body);
-    const statedAge = ageMatch?.[1] ? Number.parseInt(ageMatch[1], 10) : null;
-    if (statedAge !== null && statedAge < 18) {
+    const underage = detectUnderageText(body);
+    if (underage.isMinor) {
       const data = {
         decision: "rejected_underage",
         score: 0,
-        statedAge,
-        reasons: ["worker_must_be_18_plus"],
+        statedAge: underage.statedAge,
+        reasons: ["worker_must_be_18_plus", ...(underage.reason ? [underage.reason] : [])],
       };
       return {
         handled: true,
@@ -408,7 +400,7 @@ export function tryDeterministicRoute(
     const body = stripPrefix(trimmed, /^CLASSIFY_VIP:/i).toLowerCase();
     let bestSlug = "startup_founder";
     let bestHits = 0;
-    for (const [slug, keywords] of VIP_KEYWORDS) {
+    for (const [slug, keywords] of VIP_ARCHETYPE_KEYWORDS) {
       let hits = 0;
       for (const kw of keywords) {
         if (body.includes(kw)) hits += 1;

@@ -8,7 +8,7 @@ import { setTimeout as waitForMs } from "node:timers/promises";
 // ground truth; the judge scorer checks the run records for invariants, leaks and minor contacts.
 import { fileAt } from "../../../../packages/core/src/runtime/files.ts";
 import {
-  ALL_SEED_VENUES, CITIES, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
+  ALL_SEED_VENUES, CITIES, CITY_IDS, DAY, getCity, HOUR, listCities, MIN_MEMBER_AGE, MINUTE, seedVenuesForCity,
   type City, type MemberId, type Proposal, type ScoreComponents,
 } from "@thenetwork/core";
 import type { RunRecord } from "@thenetwork/core";
@@ -20,7 +20,7 @@ import { loadPersonas } from "../../../../scripts/synthetic/load.ts";
 import { DATA_DIR, readJsonl, type EdgeRecord, type HiddenTruthRecord, type MemberRecord } from "../../../../scripts/synthetic/common.ts";
 import { CapturingEngine, summarizeRun } from "../engineCapture.ts";
 import { ConsentNetwork, holdEveryItem, OUTREACH, reviewStateOf, simulatedReviewJudge, type ReviewOptions } from "@thenetwork/network";
-import { appBanner, APPS, DEFAULT_APP, slaHours, type AppId } from "../apps.ts";
+import { APP_TO_DOMAIN, appBanner, APPS, DEFAULT_APP, inferDomain, slaHours, type AppId, type DomainId } from "../apps.ts";
 import { friendFactory, SCENARIOS, ScriptedJoinAgent } from "@thenetwork/network/harness";
 import { describe, eventOf, onTimeline, requestLabel, toMs } from "../events.ts";
 import { memberFacets } from "../appProfile.ts";
@@ -186,10 +186,12 @@ export class GameSource implements DataSource {
     this.scenarioIds = cast?.ids ?? {};
 
     const cityTag = o.city === "all" ? "All cities" : getCity(o.city)?.shortName ?? o.city.toUpperCase();
+    const appTag = this.app === DEFAULT_APP ? "" : `${appBanner(this.app)} · `;
+    const defaultDomains = (): DomainId[] => { const d = APP_TO_DOMAIN[this.app]; return d ? [d] : ["friendship"]; };
     const clock: ClockInfo = { now: this.start, start: this.start, end: this.start + o.days * DAY, day: 1, playing: false, speed: SPEEDS.sixHours, waitingForPlayer: false };
     this.store = new Store({
       mode: "game", app: this.app,
-      label: `SIMULATION · ${appBanner(this.app)} · seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${cityTag})` : `${o.personas} generated personas (${cityTag})`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
+      label: `SIMULATION · ${appTag}seed ${o.seed}${o.timeAware ? " · time-aware" : ""} · ${synthetic ? `synthetic v1 (${personas.length} ${cityTag})` : `${o.personas} generated personas (${cityTag})`} · ${o.network === "consent" ? "consent-first Network" : "stub Network"}${o.scenario ? ` · level: ${o.scenario}` : ""}${minAge > MIN_MEMBER_AGE ? ` · join ${minAge}+` : ""}`,
       dataset: synthetic ? "synthetic-v1" : `generated-${o.personas}`,
       capabilities: { canStep: true, canIntervene: true, hiddenTruth: true, readOnly: false },
     }, clock);
@@ -199,6 +201,7 @@ export class GameSource implements DataSource {
         id: p.id, name: p.name, city: p.homeCity, area: prof?.neighborhood ?? p.routine.homeArea, state: "not_joined", joined: false,
         minor: p.public.claimedAge < 18, age: p.public.claimedAge, invitedBy: p.invitedBy,
         community: this.communities.get(p.id) ?? `${p.homeCity}:${p.routine.homeArea}`, occupation: prof?.occupation, counters: emptyCounters(),
+        domains: defaultDomains(), sourceApp: this.app,
       };
       this.store.upsertMember(m);
     }
@@ -219,13 +222,20 @@ export class GameSource implements DataSource {
     this.records = [];
     this.judgeHour = -1; this.healthHour = -1;
     this.recent = []; this.stopHistory.clear(); this.inviters.clear(); this.guardFallback.clear(); this.configHistory = [];
-    const runCity: City = o.city === "all" ? "nyc" : o.city;
+    const activeCities: City[] = o.city === "all"
+      ? (() => {
+          const present = [...new Set(personas.map(p => p.homeCity))];
+          return present.length ? present : [...CITY_IDS];
+        })()
+      : [o.city];
+    const runCity: City | undefined = activeCities.length === 1 ? activeCities[0] : undefined;
+    const runCityLabel = runCity ? runCity.toUpperCase() : activeCities.map(c => c.toUpperCase()).join("+");
     this.consent = o.network === "consent" ? new ConsentNetwork({
-      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: [runCity] }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
+      seed: o.seed, inlineJudge: o.judge === "hold-every-item" ? holdEveryItem.inline : simulatedReviewJudge({ exceptions: true }), engine: { cities: activeCities }, ...(o.engine === "off" ? { maxNewPerDay: 0 } : {}),
       onEngineRun: (log, proposals, at) => {
-        const sum = summarizeRun(log, proposals, { at, city: runCity, wallMs: Math.round(log.timingsMs.total ?? 0) });
+        const sum = summarizeRun(log, proposals, { at, ...(runCity ? { city: runCity } : {}), wallMs: Math.round(log.timingsMs.total ?? 0) });
         this.store.addRun(sum);
-        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCity.toUpperCase()}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
+        this.store.pushFeed({ t: at, kind: "engine", text: `engine-v1 · ${runCityLabel}: ${proposals.length} candidates proposed from ${sum.funnel.generated}; the Network gates them (skeptical) and checks availability first` });
       },
     }) : undefined;
     this.engine = o.engine === "engine-v1" && !this.consent
@@ -237,6 +247,7 @@ export class GameSource implements DataSource {
       }, city => { this.store.clock.busy = `engine-v1 · ${city?.toUpperCase() ?? "all"}`; })
       : undefined;
     this.projector = new Projector(this.store, {
+      app: this.app,
       joinState: id => (this.personas.get(id)?.archetype === "busy_parent" ? "quiet" : "normal"),
       runOf: pid => this.engine?.runOf.get(pid),
       onOpp: (opp, rec) => {
@@ -297,10 +308,11 @@ export class GameSource implements DataSource {
     const p = this.world.personaList().find(x => x.id === id);
     if (!p) return;
     this.personas.set(p.id, p);
+    const appDomain = APP_TO_DOMAIN[this.app];
     this.store.upsertMember({
       id: p.id, name: p.name, city: p.homeCity, area: p.routine.homeArea, state: "not_joined", joined: false, minor: p.public.claimedAge < 18,
       age: p.public.claimedAge, invitedBy: p.invitedBy, community: p.invitedBy ? this.store.member(p.invitedBy)?.community : `${p.homeCity}:${p.routine.homeArea}`,
-      counters: emptyCounters(),
+      counters: emptyCounters(), domains: appDomain ? [appDomain] : ["friendship"], sourceApp: this.app,
     });
     if (p.invitedBy) this.store.addEdge({ from: p.invitedBy, to: p.id, type: "invited_by", strength: 0.7, createdAt: this.world.clock.now(), origin: "learned" });
     if (this.store.truth) this.store.truth[p.id] = truthOf(p);
@@ -335,6 +347,7 @@ export class GameSource implements DataSource {
     return n.requests.map((r): ObsRequest => ({
       id: r.id, memberId: r.memberId, kind: r.kind, category: r.category, label: requestLabel(r), outcome: r.outcome ?? "open", tries: r.tries ?? 0,
       openedAt: r.at, ageHours: hours(now - r.at),
+      domain: inferDomain({ app: this.app, category: r.category }),
       ...(r.fulfilledAt !== undefined ? { fulfilledAt: r.fulfilledAt, hoursToFulfil: hours(r.fulfilledAt - r.at) } : {}),
       ...(r.oppId ? { opportunityId: r.oppId } : {}),
     })).reverse();

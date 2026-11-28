@@ -45,10 +45,11 @@ phone number.
    Only if this client cannot add a remote connector at all, or the person cannot
    add it, say “Signup isn't supported in this agent yet.” Stop before asking for a
    profile. Use the client's supported authorization flow.
-2. Read the public app facts at `https://friends.help/api/app` without credentials. <!-- agentSignup: readAppFacts -->
-   Confirm `id` is `friends`. Use this app's `joinMode`, `minJoinAge`, `minMatchAge`,
-   and exact current `consent.text` and `consent.version`. Stop if you cannot confirm
-   these facts.
+2. Read the public app facts at `https://friends.help/api/app` without credentials <!-- agentSignup: readAppFacts -->
+   (or call `app_info` with `app: "friends"`, which returns the same `cities`, `ages`,
+   and exact current `consent.text` and `consent.version`). Confirm `id` is `friends`.
+   Use this app's `joinMode`, `minJoinAge`, `minMatchAge`, and exact current
+   `consent.text` and `consent.version`. Stop if you cannot confirm these facts.
 3. Ask for their birthday first, not only their age. Use it in this conversation only, <!-- agentSignup: draftProfile -->
    to explain what they get. Use the lowest age that any statement gives. Never send a
    birthday or an age through a tool; the person types their birthday on the app's
@@ -58,10 +59,13 @@ phone number.
    help, with answers, public events and plans for themselves. They are never matched
    for work. Never promise them an introduction.
    Draft their confirmed first name and home region.
-   Confirm the Bay Area (`sf`) or New York City (`nyc`) and keep their neighborhood
-   separate. Ask if the region is ambiguous. Do not guess it from a neighborhood
-   or ZIP code or pick an incorrect region.
-   Draft a friendship profile with interests, availability and whether they prefer
+   Confirm their home city — New York City (`nyc`), San Francisco / Bay Area (`sf`),
+   Los Angeles (`la`), Chicago (`chicago`), or Miami (`miami`) — and keep their
+   neighborhood separate. Ask if the region is ambiguous. Do not guess it from a
+   neighborhood or ZIP code or pick an incorrect region.
+   Draft a friendship profile with interests, availability, any venue red lines
+   (dietary, alcohol-free/sober, severe allergies, wheelchair accessibility, or
+   low-noise/daytime preferences), and whether they prefer
    groups or one-on-one. Leave out private information intended for other apps.
 4. Show the exact draft and the app's current text consent wording. Explain <!-- agentSignup: decideApproval -->
    recurring texts, variable frequency, possible message and data rates, STOP
@@ -87,17 +91,19 @@ phone number.
    connector. An existing membership goes to the status check below. If the
    person changed the approved details, cannot confirm signup or authorization,
    or sees a refusal, stop and report the actual result.
-7. Use the authorized connector's `check_status` and confirm its app is friends. <!-- agentSignup: checkSiteStatus -->
+7. Use the authorized connector's `check_status` (or `get_context`) and confirm its app is friends. <!-- agentSignup: checkSiteStatus -->
    If the browser recognized an existing membership, report its current status.
    Do not enroll them again or replace their profile. Stop for
    `not_joined`, `invited`, `stopped`, `on_hold` or the wrong app, and tell the
-   person the returned `next_step`: for `not_joined` it is to disconnect the connector, connect
-   it again and choose **Finish signup** on the connection page. Before that, for
+   person the returned `next_step`: for `not_joined` or `invited`, give the
+   returned `finish_signup_url` so the person can open **Finish signup** directly
+   in their browser without disconnecting or reconnecting. Before that, for
    `not_joined` or `invited`, you may call `prepare_signup` once with the approved
-   first name and home city. The server keeps them for 10 minutes. The person
-   still enters their details on the Finish signup page. It never joins anyone. For a new
-   signup confirmed in the browser, only `onboarding` or `active` allows the
-   approved draft to be submitted. Never submit across apps.
+   first name and home city; it keeps the draft for 10 minutes and returns a
+   single-use `finish_signup_url` that prefills those details once. The person
+   still enters their birthday and ticks the text consent on the Finish signup
+   page. It never joins anyone. For a new signup confirmed in the browser, only
+   `onboarding` or `active` allows the approved draft to be submitted. Never submit across apps.
 8. Call `submit_profile` once on this exact connection with the approved <!-- agentSignup: submitProfile -->
    profile as `about` (10–1200 characters). Do not include credentials, invitation
    secrets, a birthday, an age or details from another app. If there is a refusal, a timeout or
@@ -107,12 +113,18 @@ phone number.
    Then report that the approved profile was recorded. Otherwise report an
    unconfirmed save. Do not claim matching, an introduction or a profile update
    in another app.
-10. To show what friends.help is looking for for the person, call `list_looking_for`.
-   Sending a profile only adds; leaving something out never removes it. If the
-   person asks to pause one thing, call `pause_looking_for` with its ref; to
-   turn a paused thing back on, call `resume_looking_for` with its ref; to
-   close it for good they reply CLOSE to the text they get. Never pause or
-   resume anything the person did not ask about.
+10. To inspect status and unseen updates in one call (plus saved profile and
+    active searches when `profile:read` is granted), call `get_context`. To save
+    recurring availability, windows, quiet hours or timezone, call
+    `set_availability`. To save private venue red lines (`strict_sober`,
+    `non_drinker`, `halal`, `kosher`, `gluten_free`, `vegetarian`, `vegan`,
+    `severe_allergen`, `wheelchair`, `smoke_free`, `low_noise`, `daytime_only`),
+    call `set_red_lines`. To show what friends.help is looking for for the person,
+    call `list_looking_for`. Sending a profile only adds; leaving something out
+    never removes it. If the person asks to pause one thing, call
+    `pause_looking_for` with its ref; to turn a paused thing back on, call
+    `resume_looking_for` with its ref; to close it for good they reply CLOSE to
+    the text they get. Never pause or resume anything the person did not ask about.
 
 ## Safety, privacy and account controls
 
