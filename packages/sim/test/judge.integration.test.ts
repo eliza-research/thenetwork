@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { DAY, HOUR, type MemberId, type RunRecord } from "@thenetwork/core";
 import { computeMetrics } from "../src/judge/metrics.ts";
-import { StubNetwork, evaluateExpectations, runScenario, type NetworkUnderTest, type Scenario, type ScenarioPersonaSpec } from "../src/index.ts";
+import { StubNetwork, checkMessage, countQuestions, evaluateExpectations, runScenario, type NetworkUnderTest, type Scenario, type ScenarioPersonaSpec } from "../src/index.ts";
 import { join } from "node:path";
 import { fileAt } from "../../core/src/runtime/files.ts";
 
@@ -118,5 +118,11 @@ describe("simulator judge and scenario regressions", () => {
     // The flagged member is still not a declared minor: run.minors counts
     // declared minors only, and must stay 0 here.
     expect(run.run.minors).toBe(0);
+  });
+
+  test("one_question: a question inside typographic quotes does not count against one-question-at-a-time", () => {
+    const body = "He asked \u201cwhere?\u201d and left. When can we meet? Reply STOP to pause.";
+    expect(countQuestions(body)).toBe(1);
+    expect(checkMessage(body).violations.some(v => v.rule === "one_question")).toBe(false);
   });
 });
