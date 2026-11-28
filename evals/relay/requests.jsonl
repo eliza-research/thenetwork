@@ -501,3 +501,13 @@
 {"text": "Tell him only after Ari agrees. Ari agreed? Send him my number.", "want": "text"}
 {"text": "Tell him only after Ari agrees. Ari agreed. Send him my number.", "want": "contact_share"}
 {"text": "Tell him “If it rains, bring a jacket.” Send him my number.", "want": "contact_share"}
+{"text": "go ahead, send them my number", "want": "contact_share"}
+{"text": "I don't mind, send them my number", "want": "contact_share"}
+{"text": "don't wait, send them my number", "want": "contact_share"}
+{"text": "no problem, send them my number", "want": "contact_share"}
+{"text": "can't wait, send them my number", "want": "contact_share"}
+{"text": "don't hesitate, send them my number", "want": "contact_share"}
+{"text": "no need to wait, send them my number", "want": "contact_share"}
+{"text": "go ahead, send them my number if she asks", "want": "none"}
+{"text": "Ana said go ahead, send them my number", "want": "none"}
+{"text": "go ahead lol, send them my number", "want": "none"}

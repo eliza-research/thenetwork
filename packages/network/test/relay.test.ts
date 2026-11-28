@@ -517,6 +517,13 @@ test.each([
   "Ari said “I would not send them my number.” Send Ari my number.",
   "Ari said 'I won't send them my number.' Send Ari my number.",
   "I would not send that calendar invite, but send Ari my number.",
+  "Go ahead, send Ari my number",
+  "I don't mind, send Ari my number",
+  "Don't wait, send Ari my number",
+  "No problem, send Ari my number",
+  "Can't wait, send Ari my number",
+  "Don't hesitate, send Ari my number",
+  "No need to wait, send Ari my number",
 ])("the signed action preserves the same pending request after %s", async (text) => {
   const id = "affirmed-swap-" + randomUUID();
   const before = await sharesQueued();

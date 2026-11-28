@@ -492,6 +492,7 @@ const PHOTO_REQ = new RegExp(
 );
 const DIRECT_RELAY_LEAD = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:(?:(?:can|could|would|will)\s+(?:you|u)(?:\s+(?:please|kindly|pls))?|go ahead(?: and)?|feel free to|you (?:can|may)|i (?:want|need|would like) you to|i'd like you to)\s+)?$/i;
 const RELAY_ASIDE = /^\s*i(?:'ll\s+not|\s+(?:can'?t|cannot|couldn'?t|didn'?t|mustn'?t|won'?t|wouldn'?t|(?:can|could|did|will|would|must)\s+not))\s+\S/i;
+const RELAY_GO_AHEAD_ASIDE = /^\s*(?:(?:yes|yeah|yep|ok|okay|sure|please|kindly|pls|just)[,\s:]+)*(?:go ahead|(?:i\s+)?(?:don'?t|do not)\s+(?:mind|care|wait|worry|hesitate|delay|hold back)|no\s+(?:problem|worries|prob|rush|hurry)|not a problem|no need to\s+(?:wait|hesitate)|(?:can'?t|cannot|won'?t|mustn'?t)\s+wait)\s*$/i;
 const INCOMPLETE_RELAY_ASIDE = /\b(?:to|that|if|and|or|because|for|with)\s*$/i;
 const RELAY_SPEECH_CUE = /\b(?:say|says|said|tell|tells|told|ask|asks|asked|asking|hear|heard|quote|quoted|reply|replied|repeat|repeated|report|reported|instruct|instructed|request|requested|let|letting)\b/i;
 
@@ -814,7 +815,7 @@ function directRelayLead(prefix: string): boolean {
   const aside = clause.slice(0, comma);
   const afterComma = clause.slice(comma + 1).replace(/^\s*(?:and|but|then|however)\b/i, "");
   if (!DIRECT_RELAY_LEAD.test(afterComma)) return false;
-  if (RELAY_ASIDE.test(aside) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)) return true;
+  if ((RELAY_ASIDE.test(aside) || RELAY_GO_AHEAD_ASIDE.test(aside)) && !INCOMPLETE_RELAY_ASIDE.test(aside) && !RELAY_SPEECH_CUE.test(aside)) return true;
   return /^\s*(?:please\s+)?(?:tell|ask|let)\s/i.test(aside)
     && !/[,:;]/.test(aside)
     && !/\b(?:said|says|say|told|tells|texted|wrote|joking|kidding|jk|hypothetically|imagine|lol)\b/i.test(aside)
