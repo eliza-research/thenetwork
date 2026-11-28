@@ -178,3 +178,8 @@
 {"text":"just my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
 {"text":"my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
 {"text":"anywhere in my city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"I don't mind anywhere in the city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"no just the city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"nah anywhere in the city","asked":"distance","expect":{"distance":{"mode":"city"}}}
+{"text":"not just the city","asked":"distance","expect":{"distance":null}}
+{"text":"not anywhere in my city","asked":"distance","expect":{"distance":null}}

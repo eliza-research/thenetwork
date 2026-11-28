@@ -585,7 +585,8 @@ function readDistance(t: string, asked: OnboardField | undefined): Cand<Distance
       best = cand<Distance>(mergeDistance(best?.value, { mode: "radius", miles: Math.round(n) }), s, m, /^k/.test(m[3]!) ? 0.85 : 0.95);
     }
     for (const m of all(/\b(?:anywhere|any where|all over|wherever)\s+(?:in\s+)?(?:the\s+|my\s+|your\s+)?(?:city|nyc|new york|sf|san francisco|la|los angeles|chicago|chi|miami|mia|town)\b|\b(?:the\s+)?(?:whole|entire)\s+(?:city|nyc|chicago|miami|town|bay)\b|\bcity\s*-?\s*wide\b|\b(?:just|only)\s+(?:the\s+|my\s+|your\s+)?(?:city|nyc|sf|la|chicago|chi|miami|mia)\b(?!\s+(?:for|to))|\b(?:all|any of the|any)\s+(?:5|five)\s+boroughs\b|\b(?:the\s+)?(?:city|nyc|chicago|miami)\s+is\s+(?:fine|good|ok|okay|cool)\b|\bdistance (?:doesn'?t|does not|dont) (?:really )?matter\b|\b(?:i'?ll|i will|happy to|can|could) (?:go|travel) anywhere\b|\bdon'?t care (?:about|how) (?:the )?(?:distance|far)\b|\banywhere is fine\b/, s.text)) {
-      if (negated(s.text, m.index, 2)) continue;
+      const cityBefore = s.text.slice(0, m.index).split(/,|\bbut\b|\bhowever\b|\bthough\b/).pop() ?? "";
+      if (/(?:\bnot|n't)$/.test(cityBefore.trim())) continue;
       best = cand<Distance>({ mode: "city" }, s, m, 0.9);
     }
     for (const m of all(MULTI_MARKET_RX, s.text)) {
