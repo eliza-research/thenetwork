@@ -8255,7 +8255,7 @@ export class ConsentNetwork implements NetworkUnderTest {
 
   private resolveCrew(offer: CrewOffer) {
     offer.resolved = true;
-    const yes = this.crewApart(offer.yes);
+    const yes = this.crewApart(offer.yes.filter(id => { const m = this.members.get(id); return !!m && this.planSeatOk(m, undefined, { busyOk: true }); }));
     // spec/opportunityLifecycle.md, "A minor signal ends the recurring plans that the minor knows"
     const formed = this.recurrenceOk(this.opps.get(offer.planId), offer.crew.members) ? plans.crewOptIn(offer.crew, yes, this.pcfg) : undefined;
     const a = plans.activityById.get(offer.crew.activityId)!;
