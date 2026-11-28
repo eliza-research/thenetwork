@@ -42,7 +42,7 @@ describe("probe time mention prefix tests on clock-dense repeats", () => {
   test("repeated bare clocks stay fast and read the same as a named time check", () => {
     const unit = "maybe 3pm or 4pm ";
     const t0 = performance.now();
-    const r = isNamedProbeTime(unit.repeat(3200));
+    const r = isNamedProbeTime(unit.repeat(6400));
     const ms = performance.now() - t0;
     expect(r).toEqual(isNamedProbeTime(unit));
     expect(ms).toBeLessThan(150);
