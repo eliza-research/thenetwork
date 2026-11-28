@@ -1,6 +1,6 @@
-import { DAY, quietEndAfterText, quietStartAfterText, type Category } from "@thenetwork/core";
+import { cityTimezone, DAY, fromLocal, localParts, quietEndAfterText, quietStartAfterText, type Category } from "@thenetwork/core";
 import {
-  changeParticipationCategory, controlRomanceOptIn,
+  changeParticipationCategory, controlRomanceOptIn, pauseUntilWeekdayDaysAhead,
   participationCategoryAllowed, participationControlAllowed, participationControlState,
   quietHoursCommandComplete, quietHoursEmpty, quietHoursOffHour,
 } from "../../core/src/generated/participationControls.ts";
@@ -9,9 +9,12 @@ import type { Accounts } from "../../platform/src/accounts.ts";
 import { canMatchInApp } from "../../platform/src/age.ts";
 import { memberCommandOwner, type MemberCommandOwner } from "./member-command.ts";
 
-type ParticipationCommand = { kind: "mode"; pause: boolean; durationDays?: number }
+type ParticipationCommand = { kind: "mode"; pause: boolean; durationDays?: number; untilWeekday?: number; untilTomorrow?: boolean }
   | { kind: "quiet"; hours?: [number, number]; start?: number; end?: number }
   | { kind: "category"; category: Category; enable: boolean };
+
+const WEEKDAYS: Record<string, number> = { monday: 0, tuesday: 1, wednesday: 2, thursday: 3, friday: 4, saturday: 5, sunday: 6 };
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 const CATEGORY_NAMES = new Map<string, Category>([
   ["social", "social"], ["friend", "social"], ["friends", "social"], ["friendship", "social"],
@@ -49,10 +52,13 @@ export function participationCommand(text: string): ParticipationCommand | undef
   const line = text.normalize("NFKC").trim().toLowerCase().replace(/[.!]$/, "").replace(/\s+/g, " ").replace(/^please /, "");
   const mode = /^(pause|resume) (?:my )?(?:matching|introductions|matches)$/.exec(line);
   if (mode) return { kind: "mode", pause: mode[1] === "pause" };
-  const naturalPause = /^(?:(?:pause(?: me| my matching| matching| my matches| matches| my introductions| introductions)?|put me on pause)(?: (for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?)))?|(?:i need to |let me )?take a break(?: (for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?)))?)$/.exec(line);
+  const naturalPause = /^(?:(?:pause(?: me| my matching| matching| my matches| matches| my introductions| introductions)?|put me on pause)(?: (?:(for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?))|until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)))?|pause(?: my texts| texts| my messages| messages) until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)|(?:i need to |let me )?take a break(?: (?:(for (?:a|an|one|two|three|four|\d{1,2}) (?:days?|weeks?|months?))|until (?:next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow)))?)$/.exec(line);
   if (naturalPause && line !== "pause") {
-    const durationDays = durationDaysOf(naturalPause[1] ?? naturalPause[2]);
-    return { kind: "mode", pause: true, ...(durationDays !== undefined ? { durationDays } : {}) };
+    const durationDays = durationDaysOf(naturalPause[1] ?? naturalPause[4]);
+    const untilWord = naturalPause[2] ?? naturalPause[3] ?? naturalPause[5];
+    return { kind: "mode", pause: true,
+      ...(durationDays !== undefined ? { durationDays } : {}),
+      ...(untilWord === "tomorrow" ? { untilTomorrow: true } : untilWord ? { untilWeekday: WEEKDAYS[untilWord] } : {}) };
   }
   if (/^(?:unpause(?: me| my matching| matching)?|resume me)$/.test(line)) return { kind: "mode", pause: false };
   if (/^(?:quiet hours off|(?:turn off|clear) (?:my )?quiet hours)$/.test(line)) return { kind: "quiet", hours: [quietHoursOffHour, quietHoursOffHour] };
@@ -66,7 +72,7 @@ export function participationCommand(text: string): ParticipationCommand | undef
   const bounded = /^(?:don't|do not|dont|never|stop|quit|cease|no more|no) (?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?: (?:me|us))?(?: (?:texts?|messages?|msgs?))? (after|before) (.+)$/.exec(line);
   if (bounded) {
     const hour = hourOf(bounded[2]!.trim());
-    if (hour !== undefined && Number.isInteger(hour)) {
+    if (hour !== undefined) {
       return bounded[1] === "after" ? { kind: "quiet", start: hour } : { kind: "quiet", end: hour };
     }
   }
@@ -89,7 +95,14 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   const { app, memberId, e164 } = owner;
   if (command.kind === "mode") {
     const state = participationControlState(command.pause);
-    const until = command.pause && command.durationDays ? new Date(now + command.durationDays * DAY).toISOString() : null;
+    let until = command.pause && command.durationDays ? new Date(now + command.durationDays * DAY).toISOString() : null;
+    if (command.pause && (command.untilWeekday !== undefined || command.untilTomorrow)) {
+      const tz = cityTimezone(member.home_city) ?? "UTC";
+      const parts = localParts(now, tz);
+      const daysAhead = command.untilTomorrow ? 1 : pauseUntilWeekdayDaysAhead(parts.weekday, command.untilWeekday!);
+      const end = new Date(Date.UTC(parts.year, parts.month - 1, parts.day + daysAhead));
+      until = new Date(fromLocal(end.getUTCFullYear(), end.getUTCMonth() + 1, end.getUTCDate(), 0, tz)).toISOString();
+    }
     const windowPayload = until ? { state: "paused", from: new Date(now).toISOString(), until } : null;
     const saved = await tx`update network.members set participation_state=${state}, participation_window=${windowPayload}::jsonb
       where app_id=${app.id} and id=${memberId} and (participation_state is distinct from ${state} or participation_window is distinct from ${windowPayload}::jsonb) returning id`;
@@ -100,6 +113,10 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
       const span = command.durationDays % 7 === 0 ? `${command.durationDays / 7} week${command.durationDays === 7 ? "" : "s"}` : `${command.durationDays} day${command.durationDays === 1 ? "" : "s"}`;
       return `Matching is paused for this app for ${span}. Say ‘resume matching’ when you're ready.`;
     }
+    if (command.pause && (command.untilWeekday !== undefined || command.untilTomorrow)) {
+      const resumeDay = command.untilTomorrow ? "tomorrow" : WEEKDAY_NAMES[command.untilWeekday!];
+      return `Matching is paused for this app until ${resumeDay}. Say ‘resume matching’ when you're ready.`;
+    }
     return command.pause ? "Matching is paused for this app. Say ‘resume matching’ when you're ready." : "Matching is no longer paused for this app. Your category choices and quiet hours still apply.";
   }
 
@@ -108,7 +125,8 @@ export async function saveParticipationControl(tx: SQL, accounts: Pick<Accounts,
   let reply: string;
   if (command.kind === "quiet") {
     const saved = Array.isArray(prefs.quietHours) && prefs.quietHours.length === 2
-      && prefs.quietHours.every(h => Number.isInteger(h) && h >= 0 && h < 24) ? prefs.quietHours as [number, number] : [21, 9] as [number, number];
+      && prefs.quietHours.every((h: unknown) => typeof h === "number" && Number.isFinite(h) && h >= 0 && h < 24 && Math.round(h * 2) === h * 2)
+      ? prefs.quietHours as [number, number] : [21, 9] as [number, number];
     const hours = command.hours ?? (command.start !== undefined || command.end !== undefined
       ? [quietStartAfterText(saved[0], command.start ?? saved[0], command.start !== undefined),
         quietEndAfterText(saved[1], command.end ?? saved[1], command.end !== undefined)] as [number, number]

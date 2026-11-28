@@ -112,19 +112,19 @@ export function travelPresenceCommand(text: string, now?: number): TravelCommand
 
 const CITY_RX = "(new york city|new york|nyc|san francisco|bay area|sf|los angeles|la|chicago|chi|miami|mia)";
 const CANCELLED_RX = "(?:cancelled|canceled)";
+const TRAVEL_CANCEL_RX = new RegExp(
+  `^(?:my trip to ${CITY_RX} (?:is|was|has been) ${CANCELLED_RX}`
+  + `|my ${CITY_RX} trip (?:is|was|has been) ${CANCELLED_RX}`
+  + `|i ${CANCELLED_RX} my trip to ${CITY_RX}`
+  + `|i ${CANCELLED_RX} my ${CITY_RX} trip`
+  + `|(?:please )?cancel my trip to ${CITY_RX}`
+  + `|(?:please )?cancel my ${CITY_RX} trip)$`,
+  "i",
+);
 
-/** A direct first-person cancellation of the member's own trip to a named city. */
 export function travelCancellationCommand(text: string): { city: City } | undefined {
   const line = text.trim().replace(/[.!]$/, "").replace(/[^\S\n]+/g, " ");
-  const match = new RegExp(
-    `^(?:my trip to ${CITY_RX} (?:is|was|has been) ${CANCELLED_RX}`
-    + `|my ${CITY_RX} trip (?:is|was|has been) ${CANCELLED_RX}`
-    + `|i ${CANCELLED_RX} my trip to ${CITY_RX}`
-    + `|i ${CANCELLED_RX} my ${CITY_RX} trip`
-    + `|(?:please )?cancel my trip to ${CITY_RX}`
-    + `|(?:please )?cancel my ${CITY_RX} trip)$`,
-    "i",
-  ).exec(line);
+  const match = TRAVEL_CANCEL_RX.exec(line);
   if (!match) return;
   const named = match.slice(1).find(part => part !== undefined)!.toLowerCase();
   const resolved = homeCityOf(named) ?? resolveCity(named);
@@ -168,7 +168,6 @@ export async function saveTravelPresence(tx: SQL, accounts: Pick<Accounts, "acti
   return `${decision === "TravelSave" ? "Saved" : "Already saved"} in ${app.domain}: ${name} from ${dates!.from} until ${dates!.to} (end date excluded).`;
 }
 
-/** Removes the owner's earliest current or future trip to the named city in the routed app. */
 export async function cancelTravelPresence(tx: SQL, accounts: Pick<Accounts, "activeMembership">, owner: MemberCommandOwner, city: City, now: number): Promise<string | undefined> {
   const authorized = await travelOwner(tx, accounts, owner);
   const { app, memberId } = owner;

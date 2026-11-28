@@ -2436,8 +2436,8 @@ export class NetworkService implements RuntimeHost {
     if (!memberId && surveyAnswer) return "handled";
     const accountIntent = !!intentCommand
       && !refusedCommandPasses(intentCommand.kind, "target" in intentCommand && intentCommand.target.kind === "pending");
-    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || soloEvents || contributionPage !== undefined)) {
-      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
+    if (!memberId && (profileRead || accountIntent || controls || calendar || travel || travelCancel || soloEvents || contributionPage !== undefined)) {
+      return controls ? "participation_controls" : calendar ? "calendar_invite" : travel || travelCancel ? "travel_presence" : soloEvents ? "solo_events" : contributionPage !== undefined ? "contribution_history" : "handled";
     }
 
     if (kw === "start" && e164) {

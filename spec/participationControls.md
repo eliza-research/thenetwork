@@ -61,8 +61,15 @@ pure def lawNonDatingCategoryLeavesDatingPermission(priorOptIn: bool, category: 
 
 ### Pause and resume apply immediately to matching
 
-Set paused participation until the member changes it, or resume normal participation. Either explicit change replaces a temporary participation window. A member who opted out of carrier messages must use the separate START path. An idempotent repeat confirms the setting without creating another setting-change event.
+Set paused participation until the member changes it, or resume normal participation. Either explicit change replaces a temporary participation window. A pause that names a weekday ends at the start of the next such weekday in the member's local time, counting the same weekday as seven days ahead. A member who opted out of carrier messages must use the separate START path. An idempotent repeat confirms the setting without creating another setting-change event.
 
 ```quint
 pure def participationControlState(pause: bool): str = if (pause) "paused" else "normal"
+
+pure def pauseUntilWeekdayDaysAhead(todayWeekday: int, namedWeekday: int): int =
+  if ((namedWeekday - todayWeekday + 7) % 7 == 0) 7 else (namedWeekday - todayWeekday + 7) % 7
+
+pure def lawPauseUntilWeekdayEndsAhead(todayWeekday: int, namedWeekday: int): bool =
+  (0 <= todayWeekday and todayWeekday < 7 and 0 <= namedWeekday and namedWeekday < 7) implies
+    (pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) >= 1 and pauseUntilWeekdayDaysAhead(todayWeekday, namedWeekday) <= 7)
 ```

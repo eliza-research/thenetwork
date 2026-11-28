@@ -499,7 +499,7 @@ function readsTextRefusal(clause: string): boolean {
   return match !== null && textRefusalStops(match[1] !== undefined, match[2] !== undefined);
 }
 
-const TIME_BOUNDED_REFUSAL = /\b(?:don't|do not|dont|never|stop|quit|cease|no more|no)\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\s+(?:me|us))?(?:\s+(?:texts?|messages?|msgs?))?\s+(?:after|before)\s+\d{1,2}(?:\s*\d{2})?\s*(?:am|pm)\b/g;
+const TIME_BOUNDED_REFUSAL = /\b(?:don't|do not|dont|never|stop|quit|cease|no more|no)\s+(?:text|message|contact|msg|sms|send|texting|messaging|contacting|sending|write to|email|texts|messages|msgs)(?:\s+(?:me|us))?(?:\s+(?:texts?|messages?|msgs?))?\s+(?:after|before)\s+(?:\d{1,2}(?:\s*\d{2})?\s*(?:am|pm)|(?:[01]?\d|2[0-3])\s+(?:00|30))\b/g;
 
 function clauseRefusalStops(clause: string, refuses: (value: string) => boolean): boolean {
   const hasRefusal = refuses(clause);
