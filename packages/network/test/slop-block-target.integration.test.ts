@@ -103,7 +103,8 @@ describe.skipIf(!pgAvailable)("slop.date: block and report resolve the member's 
       await run(s, clock, HOUR);
       for (const [id, e164] of [[ivy, IVY], [leo, LEO]] as const) {
         const ask = (await inbox(id)).filter(m => m.opp === item.oppId).at(-1);
-        if (ask && !answered.has(ask.body) && /\?/.test(ask.body)) { answered.add(ask.body); await text(s, clock, e164, "Yes, the first time works"); }
+        const key = ask ? `${id}:${ask.body}` : "";
+        if (ask && !answered.has(key) && /\?/.test(ask.body)) { answered.add(key); await text(s, clock, e164, "Yes, the first time works"); }
       }
       if ((await sql`select state from network.opportunities where app_id = 'slop' and id = ${item.oppId}`)[0]?.state === "SCHEDULED") break;
     }

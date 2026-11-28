@@ -3502,14 +3502,20 @@ export class NetworkService implements RuntimeHost {
     if (!optedIn) { await this.stopped(app, who.id, "app", undefined, e164); return "joined"; }
     const welcomed = stepTextJoin(stored, { type: "recordWelcome", hasOtherApp: others.length > 0, sharedNetwork, invited });
     if (welcomed.phase === "JoinedWithLookingFor") {
-      const askText = lookingForAsk(Math.min(age, check.effective ?? age));
-      const greeting = `Hi ${name}, welcome to ${app.name}.`;
-      await rt.unitOfWork(async n => {
-        n.registerJoined(membership.memberId as MemberId);
-        rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
-        rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
-        rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
-      });
+      const effectiveAge = Math.min(age, check.effective ?? age);
+      const askText = lookingForAsk(effectiveAge);
+      if (isMinor(effectiveAge)) {
+        await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);
+        await rt.unitOfWork(() => { rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info"); });
+      } else {
+        const greeting = `Hi ${name}, welcome to ${app.name}.`;
+        await rt.unitOfWork(async n => {
+          n.registerJoined(membership.memberId as MemberId);
+          rt.unit.inbound = { id: rowId, member_id: membership.memberId, direction: "inbound", channel: ev.transport === "sms" ? "sms" : "imessage", body: ev.text, status: "received", type: null, opportunity_id: null, proactive: false, system: false, ts: new Date(t) };
+          rt.system(membership.memberId, `welcome:${rowId}`, greeting, "reply", "info");
+          rt.system(membership.memberId, `ask:${rowId}`, askText, "reply", "info");
+        });
+      }
       await this.people.putPending({ phoneHash: key, kind: "looking_for", app: "ntwrk", name: null, age: null, at: t });
     } else {
       await this.memberMessage(rt, membership.memberId, ev, rowId, undefined);

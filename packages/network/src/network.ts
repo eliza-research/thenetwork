@@ -1445,7 +1445,7 @@ export class ConsentNetwork implements NetworkUnderTest {
       reviewSlaHours: opts.reviewSlaHours ?? 12, matchingEnabled: opts.matchingEnabled ?? true,
       engine: opts.engine, onEngineRun: opts.onEngineRun, store: opts.store, onLedger: opts.onLedger, capital: opts.capital, plans: opts.plans ?? true,
       understand: opts.understand, workIntroEmailOf: opts.workIntroEmailOf, venueProvider: opts.venueProvider,
-      arrivalBriefs: opts.arrivalBriefs ?? isCity(resolvedCity),
+      arrivalBriefs: opts.arrivalBriefs ?? false,
       onAgeStated: opts.onAgeStated, onMinorSignal: opts.onMinorSignal, onTeenBar: opts.onTeenBar, onTeenPairAvoid: opts.onTeenPairAvoid, engineLLM: opts.engineLLM, pack: opts.pack, hooks: opts.hooks, onPosting: opts.onPosting,
       issueMemberInvite: opts.issueMemberInvite,
       memberInviteTurnAllowed: opts.memberInviteTurnAllowed, onPrivateInviteTurn: opts.onPrivateInviteTurn,
@@ -2106,7 +2106,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (confirms) {
           m.awaiting = undefined;
           this.confirmPlan(o, m.id, true);
-          this.ack(m, copy.bookedThanks, { direct: !whoQuestion });
+          this.ack(m, copy.bookedThanks, { direct: !whoQuestion && !checkIn });
           return;
         }
       }
@@ -2128,7 +2128,7 @@ export class ConsentNetwork implements NetworkUnderTest {
           m.hints = evidence === "RecordWindows" ? activityHints(extractProfile(body).interests) : [];
         }
         this.ctx.log("availability_stated", { memberId: m.id, tags, windows: stated?.windows.length ?? 0 });
-        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks.", { direct: true }); return; }
+        if (c.kind !== "people_request" && c.kind !== "plans_request") { this.ack(m, "Got it, thanks."); return; }
       }
     }
     const isRequest = c.kind === "people_request" || c.kind === "plans_request";
@@ -2876,7 +2876,7 @@ export class ConsentNetwork implements NetworkUnderTest {
     // An app with its own onboarding loop takes over after the first answer.
     if (m.stage === "q1" && this.opts.hooks?.onboarding && !m.minor) {
       this.activate(m);
-      if (!silentMcp && !this.onboardNext(m, [])) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp && !this.onboardNext(m, [])) this.ack(m, copy.ackLearned);
       return;
     }
     const ask = (next: "q2" | "q3", text: string) => {
@@ -2889,17 +2889,17 @@ export class ConsentNetwork implements NetworkUnderTest {
       if (!hasQ2) return ask("q2", copy.interview.availability);
       if (!hasQ3) return ask("q3", copy.interview.format);
       this.activate(m);
-      if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp) this.ack(m, copy.ackLearned);
       return;
     }
     if (m.stage === "q2") {
       if (!hasQ3) return ask("q3", copy.interview.format);
       this.activate(m);
-      if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+      if (!silentMcp) this.ack(m, copy.ackLearned);
       return;
     }
     if (m.stage === "q3") this.activate(m);
-    if (!silentMcp) this.ack(m, copy.ackLearned, { direct: true });
+    if (!silentMcp) this.ack(m, copy.ackLearned);
   }
 
   /**
@@ -5554,7 +5554,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (o.participants.length === 2 && counterSource && this.tryRelayCounterProposal(m, o, counterSource, this.now())) {
           return;
         }
-        this.ack(m, "No problem.", { direct: true });
+        this.ack(m, "No problem.");
         if (o.participants.length <= 2) return this.closeNoCommonTime(o, m.id);
         // A group goes on without this member, as after a no (docs/network.md 4.1). The times only
         // they turned down are not held against the others.
@@ -5585,7 +5585,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         const r = this.requests.find(x => x.oppId === o.id && x.memberId === m.id);
         if (r) { r.noCount = (r.noCount ?? 0) + 1; if (r.noCount >= 2) r.closed = true; }
       }
-      o.status.set(m.id, "unavailable"); pendingAck = { text: "No problem.", direct: true }; this.replaceOrClose(o, m.id);
+      o.status.set(m.id, "unavailable"); pendingAck = { text: "No problem.", direct: false }; this.replaceOrClose(o, m.id);
     }
     this.advanceProbes(o);
     if (pendingAck && !this.sentThisTurn) this.ack(m, pendingAck.text, { direct: pendingAck.direct });
@@ -5611,7 +5611,7 @@ export class ConsentNetwork implements NetworkUnderTest {
         if (yes || notThen) m.availHistory = [...(m.availHistory ?? []), { at: o.plan!.window.start, outcome: yes ? "accepted" as const : "declined_time" as const }].slice(-availabilityHistoryLimit);
       }
     });
-    if (answeredPlan && !this.sentThisTurn) this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.", { direct: !yes });
+    if (answeredPlan && !this.sentThisTurn) this.ack(m, yes ? "Great, thanks. I'll tell you once enough people are in." : "No problem.");
     // A yes that the deadline turned away, here or in an earlier tick, still hears how the plan ended.
     const closedPending = outcome === undefined && o.planRun?.stage === "closed" && o.planRun.answers[m.id] === "pending";
     if (yes && (outcome === "expired" || closedPending)) this.noteFor(m.id, copy.planNotTogether);

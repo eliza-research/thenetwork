@@ -102,7 +102,7 @@ const view = (p: SlopOnboarding) => ({
 export const SLOP_ONBOARD_QUESTIONS: Record<string, { field: OnboardField; text: string }> = {
   slop_age: { field: "age", text: "First, how old are you?" },
   slop_orientation: { field: "orientation", text: SLOP_ASK_QUESTIONS.slop_orientation! },
-  slop_seeks: { field: "seeks", text: "Which genders are you open to dating: women, men, or nonbinary people? Name all that fit (for example, women and men)." },
+  slop_seeks: { field: "seeks", text: "Who are you hoping to meet: women, men, nonbinary people, or a mix? Name them so I get it right." },
   slop_seeks_genders: { field: "seeks", text: "Which genders are you open to dating: women, men, nonbinary people? You can name more than one." },
   slop_gender: { field: "gender", text: "And how do you describe yourself: a woman, a man, nonbinary, or something else?" },
   slop_age_range: { field: "ageRange", text: SLOP_ASK_QUESTIONS.slop_age_range! },

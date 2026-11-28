@@ -1916,8 +1916,9 @@ export class NetworkRuntime {
         return contextMatchItemShown(true, this.net.teenItemListed(match.id, ageEligible), !!otherFirstName && itemSafe(summary) && itemSafe(match.id)) ? [{ id: match.id, kind: "match", summary }] : [];
       });
       const listedIds = new Set(shown.map(item => item.id));
+      const liveIds = new Set(live.map(item => item.match.id));
       for (const opp of storedState.opps) {
-        if (listedIds.has(opp.id) || !opp.participants.includes(memberId as MemberId)) continue;
+        if (listedIds.has(opp.id) || liveIds.has(opp.id) || !opp.participants.includes(memberId as MemberId)) continue;
         if (!this.net.teenItemListed(opp.id, ageEligible) || !turnBaseSafe(opp.id)) continue;
         const statusEntry = opp.status.find(([id]) => id === memberId);
         if (opp.stage === "probing" && opp.contacted.includes(memberId as MemberId) && statusEntry?.[1] === "probing") {

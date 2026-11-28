@@ -866,7 +866,8 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
     expect(await (await staff(s, REVIEWER, "POST", `/apps/slop/review/${encodeURIComponent(oppId)}`, { decision: "approve", revision })).json()).toEqual({ ok: true });
     const probes = () => sql<{ id: string; member_id: string }[]>`select id,member_id from network.messages where app_id='slop' and opportunity_id=${oppId} and type='probe' and direction='outbound' order by ts,id`;
     for (let hour = 0; hour < 24 && !(await probes()).length; hour++) await run(s, clock, HOUR);
-    const [first] = await probes();
+    const initialProbes = await probes();
+    const [first] = initialProbes;
     expect(first).toBeDefined();
     const firstPhone = phones[ids.indexOf(first!.member_id)]!;
     const secondPhone = phones.find(phone => phone !== firstPhone)!;
@@ -879,7 +880,8 @@ describe.skipIf(!pgAvailable)("slop.date: join to report after the date (Network
       const firstStatus = async () => (await rt.pg.load())?.opps.find(o => o.id === oppId)?.status.find(([id]) => id === first!.member_id)?.[1];
       await text(s, clock, firstPhone, "Yes, the first time works");
       expect(await firstStatus()).toBe("probing");
-      expect(await probes()).toHaveLength(1);
+      expect(await probes()).toHaveLength(initialProbes.length);
+      for (const probe of initialProbes) expect(attempted).not.toContain(`tn:${probe.id}`);
       await adapter.queue.setLineSafety(undefined);
       clock.advance(HOUR);
       await rt.deliver();
