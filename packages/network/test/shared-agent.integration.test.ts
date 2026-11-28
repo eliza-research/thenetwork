@@ -340,6 +340,9 @@ test("a quiet hours text updates the saved quiet hours", async () => {
   const emptying = await say("quiet-after-9", "Don't text me after 9am.");
   expect(((await emptying.json()).replies as string[]).join(" ")).toContain("turn quiet hours off");
   expect(await quiet()).toEqual([21, 9]);
+  const hey = await say("quiet-hey-after-10", "Hey, don't text me after 10pm.");
+  expect(((await hey.json()).replies as string[]).join(" ")).toContain("22:00");
+  expect(await quiet()).toEqual([22, 9]);
   const later = await say("quiet-after-10", "Please don't text me after 10 pm");
   expect(((await later.json()).replies as string[]).join(" ")).toContain("22:00");
   expect(await quiet()).toEqual([22, 9]);
