@@ -102,6 +102,7 @@ describe("seed venues, indexed midpoints, open-hours hoisting, and localParts", 
       expect(Number.isInteger(v.ageMin), `${v.id} ageMin integer`).toBe(true);
       expect(v.ageMin!, `${v.id} ageMin >= 0`).toBeGreaterThanOrEqual(0);
       expect(typeof v.allAges, `${v.id} allAges`).toBe("boolean");
+      expect(v.name, `${v.id} name`).not.toContain(`(${v.neighborhood})`);
       if (v.isAlcoholCentric || v.isBarOnly || (v.ageMin ?? 0) > 0) {
         expect(v.allAges, `${v.id} must have allAges=false`).toBe(false);
       }

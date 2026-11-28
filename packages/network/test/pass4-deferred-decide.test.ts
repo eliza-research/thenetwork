@@ -250,8 +250,9 @@ describe("Pass 4 [DECIDE-3]: Pure ConsentNetwork availability/red-lines & expand
   test("setMemberAvailability and setMemberRedLines update state cleanly without Date.now", async () => {
     const w = new Mini([
       { id: "a", name: "Ana Diaz", age: 30, area: "Williamsburg", interests: ["coffee"] },
+      { id: "b", name: "Ben Ito", age: 30, area: "Williamsburg", interests: ["coffee"] },
     ], { plans: false, growth: false });
-    await w.onboard("a");
+    await w.onboard("a", "b");
 
     const avail = w.net.setMemberAvailability("a", {
       days: ["Tue", "Thu"],
@@ -275,6 +276,11 @@ describe("Pass 4 [DECIDE-3]: Pure ConsentNetwork availability/red-lines & expand
     expect(rl2).toEqual({ ok: true, redLines: ["halal", "severe_allergen", "strict_sober"] });
     const rl3 = w.net.setMemberRedLines("a", ["wheelchair"], "replace");
     expect(rl3).toEqual({ ok: true, redLines: ["wheelchair"] });
+
+    const oppId = w.propose(["a", "b"], { category: "social", objective: "coffee meetup" });
+    await w.answerProbes(["a", "b"]);
+    const reveal = w.to("b").find(m => m.meta.proposalId === oppId && m.meta.booked)?.body ?? "";
+    expect(reveal).toContain(" at Devoción (Williamsburg) — Under the living plant wall");
   });
 
   test("networkTextCanProduceInboxItem projects reveal, pre_brief, venue_pivot, checkin, relay and excludes system: true", () => {
