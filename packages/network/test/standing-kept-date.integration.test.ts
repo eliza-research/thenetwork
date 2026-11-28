@@ -16,8 +16,6 @@ test("the KEEP confirmation dates the deadline in the member's own time zone", a
   await x.onboard("a");
   await x.say("a", "Find me a climbing partner.");
   await x.net.tick(x.clock.now());
-  // The member lives in San Francisco and keeps the want at 22:30 Pacific,
-  // when New York is already on the next calendar day.
   x.members.find(m => m.id === "a")!.homeCity = "sf";
   x.clock.set(Date.UTC(2026, 9, 6, 5, 30));
   expect(command(x, "what am I looking for", "list-1").kind).toBe("reply");
