@@ -19,9 +19,7 @@ pure def participationControlAllowed(signedDirect: bool, ownActiveMembership: bo
 
 Save two explicitly specified whole hours. Ask for clarification when a quiet hours command does not determine both endpoints. Accept overnight windows. A window with the same start and end hour is empty. Explicitly turning quiet hours off sets both endpoints to midnight. A signup or an update to a different setting keeps the saved hours.
 
-A direct refusal bounded by a clock time, such as "don't text me after 10 pm" or "don't text me before 7 am", sets the named endpoint and keeps the saved value of the other endpoint. A refusal that names both endpoints sets both. The reply confirms the saved window. The [quiet hours rules](quietHours.md) define the endpoint update.
-
-A bound that would make the saved window empty does not save. The reply asks the member for both hours and the saved hours stay. A bound that is not a whole hour, or that names only some days, also does not save. The reply asks for whole local hours and the saved hours stay.
+A direct refusal bounded by a clock time, such as "don't text me after 10 pm" or "don't text me before 7 am", sets the named endpoint and keeps the saved value of the other endpoint. The reply confirms the saved window. The [quiet hours rules](quietHours.md) define the endpoint update.
 
 ```quint
 pure def controlQuietHoursValid(startHour: int, endHour: int): bool =
@@ -33,12 +31,6 @@ pure def quietHoursCommandComplete(startKnown: bool, endKnown: bool, startHour: 
 pure val quietHoursOffHour: int = 0
 
 pure def quietHoursEmpty(startHour: int, endHour: int): bool = startHour == endHour
-
-pure def boundedQuietHoursSave(startHour: int, endHour: int): bool =
-  not(quietHoursEmpty(startHour, endHour))
-
-pure def lawBoundedEmptyWindowDoesNotSave(hour: int): bool =
-  not(boundedQuietHoursSave(hour, hour))
 
 pure def lawMissingEndpointNeedsClarification(known: bool, startHour: int, endHour: int): bool =
   not(quietHoursCommandComplete(false, known, startHour, endHour)) and not(quietHoursCommandComplete(known, false, startHour, endHour))

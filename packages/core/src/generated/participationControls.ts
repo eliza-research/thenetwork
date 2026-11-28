@@ -31,19 +31,6 @@ export function quietHoursEmpty(startHour: number, endHour: number): boolean {
 
 /** Story: Change when and about what Eliza can contact me / Quiet hours use the member's local clock (spec/participationControls.md) */
 //@ pure
-export function boundedQuietHoursSave(startHour: number, endHour: number): boolean {
-  return !quietHoursEmpty(startHour, endHour);
-}
-
-/** Story: Change when and about what Eliza can contact me / Quiet hours use the member's local clock (spec/participationControls.md) */
-//@ pure
-export function lawBoundedEmptyWindowDoesNotSave(hour: number): boolean {
-  //@ ensures \result === true
-  return !boundedQuietHoursSave(hour, hour);
-}
-
-/** Story: Change when and about what Eliza can contact me / Quiet hours use the member's local clock (spec/participationControls.md) */
-//@ pure
 export function lawMissingEndpointNeedsClarification(known: boolean, startHour: number, endHour: number): boolean {
   //@ ensures \result === true
   return !quietHoursCommandComplete(false, known, startHour, endHour) && !quietHoursCommandComplete(known, false, startHour, endHour);

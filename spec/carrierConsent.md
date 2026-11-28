@@ -33,7 +33,7 @@ pure def lawBareTextRefusalNeedsPermanence(permanentEnding: bool): bool =
 
 ### A refusal bounded by a clock time does not stop the shared line
 
-A direct refusal that names a clock bound, such as "don't text me after 10 pm" or "don't text me before 7 am", limits when texts may arrive. It sets quiet hours and does not stop the shared line. When the bound cannot save as stated, the reply asks the member instead of dropping the refusal. A refusal with no clock bound still stops the line. A separate unbounded refusal in the same message, including a bare "stop", still stops it. The text reader identifies the clock bound and any separate refusal.
+A direct refusal that names a clock bound, such as "don't text me after 10 pm" or "don't text me before 7 am", limits when texts may arrive. It sets quiet hours and does not stop the shared line. A refusal with no clock bound still stops the line. A separate unbounded refusal in the same message still stops it. The text reader identifies the clock bound.
 
 ```quint
 pure def refusalStopsLine(hasRefusal: bool, timeBounded: bool): bool =
