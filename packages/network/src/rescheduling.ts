@@ -229,15 +229,7 @@ export function parseRescheduleCommand(raw: string, tz: string = NY, ctx?: Resch
   return undefined;
 }
 
-const WEEKDAY_INDEX: Record<string, number> = {
-  sun: 0, sunday: 0,
-  mon: 1, monday: 1,
-  tue: 2, tues: 2, tuesday: 2,
-  wed: 3, weds: 3, wednesday: 3,
-  thu: 4, thur: 4, thurs: 4, thursday: 4,
-  fri: 5, friday: 5,
-  sat: 6, saturday: 6,
-};
+
 
 const SIMPLE_VOTE_YES = /^(?:yes|yeah|yep|yup|ya|sure|sounds?\s+good|works?(?:\s+for\s+me)?|that\s+works|perfect|great|ok|okay|fine\s+by\s+me|all\s+good|👍)[.!\s]*$/i;
 const SIMPLE_VOTE_NO = /^(?:no|nope|nah|can'?t(?:\s+make\s+it)?|cannot|doesn'?t\s+work|won'?t\s+work|keep\s+(?:the\s+)?original|decline|pass)[.!\s]*$/i;
@@ -351,7 +343,7 @@ export function parseNaturalReschedule(raw: string, opts: NaturalRescheduleOptio
     } else {
       const explicitNext = token.startsWith("next ");
       const wdName = token.replace(/^next\s+/, "");
-      const targetWd = WEEKDAY_INDEX[wdName];
+      const targetWd = DAY_TO_LOCAL_WEEKDAY[wdName];
       if (targetWd !== undefined) {
         let delta = (targetWd - nowLocal.weekday + 7) % 7;
         if (delta === 0) delta = 7;
