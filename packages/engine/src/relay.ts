@@ -1133,8 +1133,21 @@ export function parseRelayRequest(text: string): RelayRequest {
   const start = own.length - own.trimStart().length;
   const contacts = [...spoken.matchAll(CONTACT_REQ)];
   const photos = [...spoken.matchAll(PHOTO_REQ)];
+    // A quotation at the edge of the message is blanked by ownRelayWords and
+  // trimmed from spoken, so the new can-have branch's ^/$ checks cannot see
+  // it. A new-branch grant only counts when no quotation was trimmed off at
+  // either edge: `start` is the leading blanked span, and anything past the
+  // trimmed tail is a trailing blanked span. (t is already trimmed, so edge
+  // whitespace in `own` can only come from a blanked quotation.) Old-branch
+  // candidates are untouched: the old number branch shares `She can have my
+  // number "jk"` on develop, and this gate must not change that.
+  const NEW_CAN_HAVE_GRANT = /\b(?:they|she|he) can have my (?:email|cell|contact(?:\s+info)?|phone(?!\s+number))\b/i;
+  const newCanHaveAtQuotedEdge = (candidate: RegExpMatchArray): boolean =>
+    NEW_CAN_HAVE_GRANT.test(candidate[0])
+    && (start !== 0 || start + spoken.length !== own.length);
   const direct = (candidate: RegExpMatchArray) => directRelayLead(t.slice(0, start + candidate.index!))
     && !reportsPrivateRequest(spoken, candidate);
+    && !newCanHaveAtQuotedEdge(candidate);
   let contact = contacts.find(direct);
   const modal = RELAY_MODAL.exec(t);
   const afterModal = t.slice(modal?.[0].length ?? 0);
