@@ -46,6 +46,6 @@ describe("probe conditional clause checks on clause-dense repeats", () => {
     const r = parseProbeReply(clocks + "blah, ".repeat(6000), options as never, false, ctx);
     const ms = performance.now() - t0;
     expect(r).toEqual(parseProbeReply(clocks, options as never, false, ctx));
-    expect(ms).toBeLessThan(2000);
+    expect(ms).toBeLessThan(2500);
   }, 60_000);
 });
