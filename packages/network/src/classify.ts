@@ -1781,9 +1781,6 @@ const OFFER_DAY_WORD = String.raw`fifth|sixth|seventh|eighth|ninth|tenth|elevent
 const BOUNDABLE_OFFER_DATE = new RegExp(String.raw`\b(?:(${OFFER_MONTH})\.?\s+(\d{1,2})(?:st|nd|rd|th)\b|(\d{1,2})(st|nd|rd|th)?\s+(${OFFER_MONTH})\b|the\s+(?:((?:[5-9]|[12]\d|3[01]))(?:st|nd|rd|th)|(${OFFER_DAY_WORD}))\b)`, "g");
 const OFFER_MONTH_NUMBER = new Map([["jan", 1], ["january", 1], ["feb", 2], ["february", 2], ["mar", 3], ["march", 3], ["apr", 4], ["april", 4], ["may", 5], ["jun", 6], ["june", 6], ["jul", 7], ["july", 7], ["aug", 8], ["august", 8], ["sep", 9], ["sept", 9], ["september", 9], ["oct", 10], ["october", 10], ["nov", 11], ["november", 11], ["dec", 12], ["december", 12]]);
 const OFFER_DAY_NUMBER = new Map([["fifth", 5], ["sixth", 6], ["seventh", 7], ["eighth", 8], ["ninth", 9], ["tenth", 10], ["eleventh", 11], ["twelfth", 12], ["thirteenth", 13], ["fourteenth", 14], ["fifteenth", 15], ["sixteenth", 16], ["seventeenth", 17], ["eighteenth", 18], ["nineteenth", 19], ["twentieth", 20], ["twenty-first", 21], ["twenty first", 21], ["twenty-second", 22], ["twenty second", 22], ["twenty-third", 23], ["twenty third", 23], ["twenty-fourth", 24], ["twenty fourth", 24], ["twenty-fifth", 25], ["twenty fifth", 25], ["twenty-sixth", 26], ["twenty sixth", 26], ["twenty-seventh", 27], ["twenty seventh", 27], ["twenty-eighth", 28], ["twenty eighth", 28], ["twenty-ninth", 29], ["twenty ninth", 29], ["thirtieth", 30], ["thirty-first", 31], ["thirty first", 31]]);
-const boundDateGap = (gap: string) => !/[.!?\n]/.test(gap.replace(/\.{2,}/g, "").replace(/\.(?=[,;:)\]])/g, ""))
-  && !/\w/.test(gap.replace(/\b(?:at|on|the)\b/g, ""));
-
 function removeBoundOfferDates(text: string, options: readonly TimeOption[]): string {
   const slots = options.flatMap(option => {
     if (typeof option.start !== "number") return [];
@@ -1815,13 +1812,9 @@ function removeBoundOfferDates(text: string, options: readonly TimeOption[]): st
     const candidates = slots.filter(slot => slot.dayOfMonth === dayOfMonth && (month === undefined || slot.month === month));
     if (!candidates.length) continue;
     const at = match.index!, end = at + match[0].length;
-    let bound = options.length === 1;
-    if (!bound) {
-      const adjacent = mentions.filter(mention => (mention.end <= at && boundDateGap(text.slice(mention.end, at)))
-        || (mention.at >= end && boundDateGap(text.slice(end, mention.at))));
-      bound = candidates.some(slot => adjacent.length > 0
-        && adjacent.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute)));
-    }
+    const [slot] = candidates.length === 1 ? candidates : [];
+    const bound = slot !== undefined && (options.length === 1 || (mentions.length > 0
+      && mentions.every(mention => (!mention.day || mention.day === slot.day) && (mention.minute === undefined || mention.minute === slot.minute))));
     if (bound) spans.push([at, end]);
   }
   let out = text;
