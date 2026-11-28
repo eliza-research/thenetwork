@@ -179,7 +179,7 @@ const SF_SPEC: CitySpec = {
       personaPriors: { creative: { alpha: 9, beta: 2 }, minimalist: { alpha: 9, beta: 2 } },
     }),
     seedVenue({
-      id: "sf-reveille-north-beach", name: "Réveille Coffee Co. (North Beach)", city: "sf", neighborhood: "North Beach",
+      id: "sf-reveille-north-beach", name: "Réveille Coffee Co.", city: "sf", neighborhood: "North Beach",
       address: "200 Columbus Ave, San Francisco, CA 94133", lat: 37.7972, lng: -122.4055, category: "coffee_shop",
       priceTier: 1, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 6, reservationRequired: false,
@@ -399,7 +399,7 @@ const NYC_SPEC: CitySpec = {
       personaPriors: { creative: { alpha: 9, beta: 2 }, builder: { alpha: 9, beta: 2 } },
     }),
     seedVenue({
-      id: "nyc-devocion-williamsburg", name: "Devoción (Williamsburg)", city: "nyc", neighborhood: "Williamsburg",
+      id: "nyc-devocion-williamsburg", name: "Devoción", city: "nyc", neighborhood: "Williamsburg",
       address: "69 Grand St, Brooklyn, NY 11249", lat: 40.7161, lng: -73.9647, category: "coffee_shop",
       priceTier: 2, isBarOnly: false, alcoholOptional: true, servesVegetarian: true, servesVegan: true,
       wheelchairAccessible: true, separateChecks: true, walkInGroupCapacity: 8, reservationRequired: false,
