@@ -168,9 +168,22 @@ test("bounded help holds a home request privately and refuses an out-of-scope ta
     await w.say("requester", "Find someone to help move a couch and " + task + ".");
     expect(w.sent.at(-1)?.body).toContain("won't look for it");
   }
+  const substances = ["weed", "marijuana", "methamphetamine", "amphetamines", "ritalin", "opiates", "morphine", "codeine",
+    "hydrocodone", "vicodin", "valium", "klonopin", "benzos", "benzodiazepines", "ayahuasca", "mescaline"];
+  const refused: string[] = [];
+  for (const substance of substances) {
+    await w.say("requester", "Find someone to help me buy " + substance + ".");
+    if (w.sent.at(-1)?.body.includes("won't look for it")) refused.push(substance);
+  }
+  expect(refused).toEqual(substances);
   expect(cases()).toMatchObject([{ events: [{ kind: "home_entry_help", points: 0 }] }]);
   expect(w.net.reviewQueue()).toEqual([]);
   expect(w.net.exportState().requests).toEqual([]);
+  for (const request of ["Find someone to help me with a history paper on the opium wars.", "Find someone to help me find a dance movement therapist (DMT)."]) {
+    await w.say("requester", request);
+    expect(w.sent.at(-1)?.body).not.toContain("won't look for it");
+  }
+  expect(w.net.exportState().requests).toMatchObject([{ category: "help" }]);
   expect(w.sent.slice(mark).every(m => m.to === "requester")).toBe(true);
 }, T);
 
