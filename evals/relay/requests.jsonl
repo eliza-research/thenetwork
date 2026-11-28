@@ -253,6 +253,12 @@
 {"text": "Send him my photo. Wait, send it, she said.", "want": "none"}
 {"text": "Send him my photo. 🚫📸 I'll show him myself.", "want": "none"}
 {"text": "give him my number if he asks", "want": "none"}
+{"text": "Give him my number should he ask", "want": "none"}
+{"text": "Send her my number should she want it", "want": "none"}
+{"text": "Give him my number in the event he asks", "want": "none"}
+{"text": "Give him my number were he to ask", "want": "none"}
+{"text": "Send him my number subject to him asking", "want": "none"}
+{"text": "Give him my number on condition he asks", "want": "none"}
 {"text": "send him my number whenever he asks", "want": "none"}
 {"text": "send him my number. but wait until he asks", "want": "none"}
 {"text": "give him my number every time he asks", "want": "none"}
