@@ -462,7 +462,9 @@ function Metrics() {
   const game = metricsSectionShown("TruthSection", staff);
   const n = s.network;
   const learned = ["introduced", "met", "enjoyed", "would_interact_again", "avoid", "blocked"];
-  const proactive = st.proactive / Math.max(1, st.joined) / weeks;
+  const proactiveRate = st.scorecard?.find(metric => metric.key === "attention_burden")?.value;
+  const proactiveHundredths = proactiveRate != null && Number.isFinite(proactiveRate)
+    ? Math.ceil(Math.round(proactiveRate * 1000) / 10) : null;
   const showDen = st.attended + st.noShows + st.cancelledWithNotice;
   const c = (k: string) => n?.counters[k] ?? 0;
   const inviteYes = n?.kind === "consent" ? (c("reveals") ? c("revealYes") / c("reveals") : 0) : st.invites ? st.accepts / st.invites : 0;
@@ -474,7 +476,7 @@ function Metrics() {
     <div className="flex flex-col gap-4">
       <KpiGrid className="lg:grid-cols-4">
         <Kpi label="messages / member / week" value={(st.messages / Math.max(1, st.joined) / weeks).toFixed(1)} />
-        <Kpi label="proactive / member / week" value={proactive.toFixed(2)} tone={proactiveWarns(Math.ceil(proactive * 100)) ? "warn" : undefined} title={`Budget: normal ≤ ${maxProactiveHundredths / 100} proactive messages per member per week`} />
+        <Kpi label="proactive / member / week" value={proactiveHundredths === null ? "–" : (proactiveHundredths / 100).toFixed(2)} tone={proactiveHundredths !== null && proactiveWarns(proactiveHundredths) ? "warn" : undefined} title={`Budget: normal ≤ ${maxProactiveHundredths / 100} proactive messages per member per week`} />
         <Kpi label="invite yes rate" value={pct(inviteYes)} title={n?.kind === "consent" ? "Yes answers to revealed invitations" : "Accepts per invite sent"} />
         <Kpi label={`show rate · ${st.noShows} no-shows · ${st.cancelledWithNotice} with notice`} value={pct(showDen ? st.attended / showDen : 0)} />
         <Kpi label="mean enjoyment" value={st.enjoymentN ? pct(st.enjoymentSum / st.enjoymentN) : "–"} />
