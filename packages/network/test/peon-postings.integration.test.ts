@@ -166,7 +166,7 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
     expect((await call("POST", verifyPath, { company: "Acme", note: "called the office" })).body.ok).toBe(true);
     const audited = await sql`select ok, detail->>'phase' as phase from network.staff_audit where app_id = 'peon' and action = 'verify_employer' and target_id = ${rowan} order by id`;
     expect(audited).toEqual([{ ok: true, phase: "requested" }, { ok: true, phase: "result" }]);
-    const minor = await call("POST", "/postings", { managerId: kai, title: "cashier", openings: 1, payMin: 30, payMax: 35, mode: "onsite" });
+    const minor = await call("POST", "/postings", { managerId: kai, title: "cashier", openings: 1, payMin: 30, payMax: 35, mode: "onsite", area: "queens" });
     expect(minor).toMatchObject({ status: 409, body: { ok: false, reason: "adults_only" } });
     const listed = await call("GET", `/postings?managerId=${encodeURIComponent(rowan)}`);
     expect(listed.body.postings).toHaveLength(1);
@@ -241,4 +241,45 @@ describe.skipIf(!pgAvailable)("peon postings: text intake, restart, staff API (N
       status: 200, body: { ok: true, posting: { status: "active", openings: 2 } },
     });
   }, T);
+test("staff API requires an area for onsite postings but not remote ones", async () => {
+  const clock = new SimClock(START);
+  const s = service(clock);
+  await s.start();
+  try {
+    await text(s, clock, ROWAN, "peon");
+    await text(s, clock, ROWAN, "Rowan, 34");
+    const rowan = (await memberId(ROWAN))!;
+    const callAs = async (token: string | undefined, method: string, path: string, b?: unknown) => {
+      const headers: Record<string, string> = { ...(token ? { authorization: `Bearer ${token}` } : {}), ...(b ? { "content-type": "application/json" } : {}) };
+      const res = await s.fetch(new Request(`http://127.0.0.1/apps/peon${path}`, { method, headers, ...(b ? { body: JSON.stringify(b) } : {}) }));
+      return { status: res.status, body: await res.json() as any };
+    };
+    const call = (method: string, path: string, b?: unknown) => callAs("adm-tok", method, path, b);
+    expect((await call("POST", `/employers/${encodeURIComponent(rowan)}/verify`, { company: "Acme", note: "called the office" })).body.ok).toBe(true)
+        
+    // Onsite, no area -> 400 missing_area.
+    const onsite = await call("POST", "/postings", {
+      managerId: rowan, title: "barista", openings: 1,
+      payMin: 30, payMax: 35, mode: "onsite",
+    });
+    expect(onsite).toMatchObject({ status: 400, body: { error: "missing_area" } });
+        
+    // Same body, remote, no area -> 200 (remote posts need no area).
+    const remote = await call("POST", "/postings", {
+      managerId: rowan, title: "barista", openings: 1,
+      payMin: 30, payMax: 35, mode: "remote",
+    });
+    expect(remote.status).toBe(200);
+    
+    // Onsite with a supported area -> 200.
+    const withArea = await call("POST", "/postings", {
+      managerId: rowan, title: "barista", openings: 1,
+      payMin: 30, payMax: 35, mode: "onsite", area: "queens",
+    });
+    expect(withArea.status).toBe(200);
+  } finally { await s.close(); }
+}, T);
+  
+  
+    
 });
