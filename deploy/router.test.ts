@@ -44,8 +44,8 @@ const TS = Math.floor(NOW / 1000);
 const sig = (method: string, path: string, ip: string, secret = SECRET) => proxySignature(secret, { method, path, host: "slop.date", ip, ts: TS });
 
 describe("which paths reach the backend", () => {
-  const backend = ["/api", "/api/app", "/api/auth/otp/start", "/mcp", "/mcp/", "/oauth/authorize", "/oauth/token", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp"];
-  const assets = ["/", "/SKILL.md", "/.well-known/agent-skills/index.json", "/apiary", "/api.html", "/mcpx", "/oauth", "/.well-known/openai-apps-challenge", "/styles.css"];
+  const backend = ["/api", "/api/app", "/api/auth/otp/start", "/cal/eyJhIjoic2xvcCJ9.sig_123-abc.ics", "/mcp", "/mcp/", "/oauth/authorize", "/oauth/token", "/.well-known/oauth-authorization-server", "/.well-known/oauth-protected-resource/mcp"];
+  const assets = ["/", "/SKILL.md", "/.well-known/agent-skills/index.json", "/apiary", "/api.html", "/cal", "/cal/", "/cal/x", "/cal/foo.txt", "/cal/.ics", "/cal/..ics", "/cal/a..b.ics", "/cal/sub/a.b.ics", "/cal/%2e%2e.ics", "/mcpx", "/oauth", "/.well-known/openai-apps-challenge", "/styles.css"];
 
   test.each(backend)("%s is forwarded", async (p) => {
     const { seen, assets: a, run } = setup();
@@ -93,9 +93,35 @@ describe("which paths reach the backend", () => {
     }
     // Backend patterns forward. Local routing also requires the Worker.
     for (const pat of RUN_WORKER_FIRST) {
-      const sample = pat.endsWith("*") ? pat.slice(0, -1) + "x" : pat;
+      const sample = pat === "/cal/*" ? "/cal/body.sig.ics" : pat.endsWith("*") ? pat.slice(0, -1) + "x" : pat;
       expect(isBackendPath(sample), pat).toBe(![...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS].includes(pat));
     }
+  });
+
+  test("calendar .ics links forward with signed proxy headers while path traversal and non-.ics /cal/* paths never reach the backend", async () => {
+    const { seen, assets: a, run } = setup();
+    const calPath = "/cal/eyJhIjoic2xvcCJ9.AbC_123-xyz.ics";
+    const res = await run(calPath, {
+      headers: { "cf-connecting-ip": "203.0.113.7", "x-network-proxy-host": "peon.biz", "x-forwarded-for": "6.6.6.6" },
+    });
+    expect(res.status).toBe(200);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.url).toBe(`https://api.example.test${calPath}`);
+    expect(await verifyProxyHeaders(new Request(seen[0]!.url, { headers: seen[0]!.headers }), SECRET, TS)).toEqual({
+      ip: "203.0.113.7",
+      host: "slop.date",
+    });
+    expect(a).toEqual([]);
+
+    for (const bad of ["/cal/..", "/cal/../api/app.ics", "/cal/%2e%2e/api/app.ics", "/cal/%2e%2e.ics", "/cal/..ics", "/cal/a..b.ics", "/cal/token.txt", "/cal/sub/a.b.ics", "/cal/"]) {
+      expect(isBackendPath(bad), bad).toBe(false);
+    }
+    const before = seen.length;
+    for (const bad of ["/cal/..", "/cal/../secret.ics", "/cal/%2e%2e/secret.ics", "/cal/%2e%2e.ics", "/cal/..ics", "/cal/a..b.ics", "/cal/token.txt"]) {
+      const r = await run(bad);
+      expect(await r.text(), bad).toBe("asset");
+    }
+    expect(seen).toHaveLength(before);
   });
 });
 

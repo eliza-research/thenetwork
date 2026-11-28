@@ -43,7 +43,7 @@ export const RETIRED_SIGNUP_PATHS: readonly string[] = retiredJoinPaths;
 const updateHandoffRoot = updateHandoffPrefix.slice(0, -1);
 export const UPDATE_HANDOFF_PATHS = [updateHandoffRoot, `${updateHandoffPrefix}*`, `${updateHandoffAssetPath}*`];
 /** Cloudflare Pages _routes.json includes the handoff, retired paths and backend paths. */
-export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, "/api", "/api/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
+export const RUN_WORKER_FIRST = [...RETIRED_SITE_PATHS, ...RETIRED_SIGNUP_PATHS, ...UPDATE_HANDOFF_PATHS, "/api", "/api/*", "/cal/*", "/mcp", "/mcp/*", "/oauth/*", "/.well-known/oauth-*"];
 
 const appKeys: Readonly<Record<AppId, AppKey>> = { ntwrk: "Ntwrk", slop: "Slop", peon: "Peon", friends: "Friends" };
 
@@ -135,10 +135,13 @@ export async function updateHandoffPage(req: Request, app: string, asset: Env["A
   return new Response(answer.hasBody ? html.replaceAll(UPDATE_HANDOFF_TEMPLATE_REFERENCE, reference) : null, { status: answer.status, headers });
 }
 
+const CALENDAR_ICS_PATH = /^\/cal\/[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)*\.ics$/;
+
 /** True for a path that belongs to the shared backend. */
 export function isBackendPath(pathname: string): boolean {
   return (
     pathname === "/api" || pathname.startsWith("/api/") ||
+    CALENDAR_ICS_PATH.test(pathname) ||
     pathname === "/mcp" || pathname.startsWith("/mcp/") ||
     pathname.startsWith("/oauth/") ||
     pathname.startsWith("/.well-known/oauth-")
