@@ -854,7 +854,7 @@ export function explicitBookingCancellation(text: string): BookingCancellation |
   const dayTime = DAY_TIME_CANCEL.exec(command) ?? ATTENDANCE_DAY_TIME_CANCEL.exec(command);
   if (dayTime) return parseCancelClock(dayTime);
   const namedDay = ATTENDANCE_DAY_CANCEL.exec(command);
-  if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true } : { day: namedDay[1]!.toLowerCase() };
+  if (namedDay) return /\bto .+ on\s+/i.test(command) ? { needsExactStart: true, day: namedDay[1]!.toLowerCase() } : { day: namedDay[1]!.toLowerCase() };
   return STANDALONE_CANCEL.test(command) ? {} : undefined;
 }
 
@@ -1955,7 +1955,8 @@ export class ConsentNetwork implements NetworkUnderTest {
       : namedCancellation;
     // spec/opportunityLifecycle.md, "An explicit cancellation selects the named upcoming meeting"
     if (cancellation?.needsExactStart) {
-      if (upcomingBookings.length === 1 && aw?.kind !== "booked") {
+      if (upcomingBookings.length === 1 && aw?.kind !== "booked" && cancelDay !== undefined
+        && localDateParts(upcomingBookings[0]!.meetingAt!, tz).day === cancelDay) {
         this.handleDrop(m, upcomingBookings[0]!, true, true);
         return;
       }
